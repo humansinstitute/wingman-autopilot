@@ -1624,7 +1624,11 @@ export class WorkspaceSubscriptionManager {
       return false;
     }
     this.stopRuntime(subscriptionId, true);
-    return this.store.delete(subscriptionId);
+    const removed = this.store.delete(subscriptionId);
+    if (removed) {
+      this.dispatchPipelineRuntime?.deleteRoutesForSubscriptionForManager(subscriptionId, npub);
+    }
+    return removed;
   }
 
   async handleAccessGrantRevocation(input: {

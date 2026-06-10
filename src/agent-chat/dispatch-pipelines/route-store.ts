@@ -178,6 +178,13 @@ export class DispatchRouteStore {
     return result.changes > 0;
   }
 
+  deleteForSubscriptionForManager(subscriptionId: string, managedByNpub: string): number {
+    const result = this.db
+      .query('DELETE FROM agent_dispatch_pipeline_routes WHERE subscription_id = ?1 AND managed_by_npub = ?2')
+      .run(subscriptionId, managedByNpub);
+    return result.changes;
+  }
+
   private listWhere(whereSql: string, bindings: SQLQueryBindings[]): DispatchRouteRecord[] {
     const rows = this.db
       .query(`SELECT * FROM agent_dispatch_pipeline_routes WHERE ${whereSql} ORDER BY priority ASC, updated_at DESC`)

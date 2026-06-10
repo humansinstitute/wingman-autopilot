@@ -152,6 +152,10 @@ export class DispatchPipelineRuntime {
     return this.routeStore.deleteForManager(routeId, managedByNpub);
   }
 
+  deleteRoutesForSubscriptionForManager(subscriptionId: string, managedByNpub: string): number {
+    return this.routeStore.deleteForSubscriptionForManager(subscriptionId, managedByNpub);
+  }
+
   async dispatch(input: DispatchPipelineEventInput): Promise<DispatchPipelineRuntimeResult> {
     const storedRoutes = this.routeStore.listForSubscriptionTrigger({
       subscriptionId: input.subscription.subscriptionId,

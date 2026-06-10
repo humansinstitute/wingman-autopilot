@@ -651,6 +651,46 @@ describe('WorkspaceSubscriptionManager', () => {
     expect(routeStore.listForSubscription(imported.subscription.subscriptionId)).toHaveLength(3);
   });
 
+  test('removes dispatch routes when deleting a manual subscription', async () => {
+    const dbPath = makeTempDb();
+    const routeStore = new DispatchRouteStore(dbPath);
+    const dispatchPipelineRuntime = new DispatchPipelineRuntime({
+      routeStore,
+      pipelineStore: new PipelineStore(makeTempDb()),
+      getSessionApiContext: () => null,
+      callbackOrigin: 'http://localhost:3600',
+      requirePipelineRoutes: true,
+    });
+    const { manager } = createTestManager(
+      dbPath,
+      new Map(),
+      undefined,
+      makeInstanceIdentity(),
+      dispatchPipelineRuntime,
+    );
+    const subscription = await manager.createOrUpdate({
+      managedByNpub: 'npub1manager',
+      workspaceOwnerNpub: 'npub1workspace',
+      backendBaseUrl: 'https://tower.example.com',
+      sourceAppNpub: 'npub1sourceapp',
+    });
+    routeStore.save({
+      managedByNpub: 'npub1manager',
+      subscriptionId: subscription.subscriptionId,
+      workspaceOwnerNpub: 'npub1workspace',
+      botNpub: subscription.botNpub,
+      sourceAppNpub: subscription.sourceAppNpub,
+      triggerKind: 'chat',
+      capability: 'chat_intercept',
+      pipelineDefinitionId: 'agent-dispatch-chat',
+      enabled: true,
+    });
+
+    expect(routeStore.listForSubscription(subscription.subscriptionId).length).toBeGreaterThan(0);
+    expect(manager.removeForManager(subscription.subscriptionId, 'npub1manager')).toBe(true);
+    expect(routeStore.listForSubscription(subscription.subscriptionId)).toHaveLength(0);
+  });
+
   test('marks confirmed 33357 revocation as local tombstone and disables SSE', async () => {
     const dbPath = makeTempDb();
     const instanceIdentity = makeInstanceIdentity();
