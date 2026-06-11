@@ -423,6 +423,15 @@ function isDiscussionIntent(rawIntent: string | null, text: string): boolean {
     || /\bbefore we (build|implement|code|ship),?\s+let'?s\b/i.test(text);
 }
 
+function isSimpleDirectChatText(text: string): boolean {
+  const normalized = text.trim().toLowerCase().replace(/\s+/g, " ");
+  if (!normalized) return false;
+  if (/^(hi|hello|hey|yo|ping|test|testing|gm|good morning|good afternoon|good evening)[!.?]*$/.test(normalized)) {
+    return true;
+  }
+  return /\b(can you hear me|can you see this|are you there|you there|can you respond|please respond|respond here)\b/i.test(text);
+}
+
 function isDocumentDiscussionIntent(rawIntent: string | null, text: string): boolean {
   const intent = (rawIntent ?? "").toLowerCase();
   return [
@@ -795,6 +804,26 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const selectedDiscussionPipeline = isDiscussionPipelineIdentifier(selectedPipelineId);
     const documentDiscussion = isDocumentDiscussionPipelineIdentifier(selectedPipelineId)
       || isDocumentDiscussionIntent(rawIntent, latestText);
+    const simpleDirectResponse = Boolean(chatResponseBody)
+      && raw.dispatchTask !== true
+      && !selectedPipelineId
+      && !documentDiscussion
+      && isSimpleDirectChatText(latestText);
+    if (simpleDirectResponse) {
+      return {
+        ...decision,
+        intent: rawIntent ?? "direct_chat_response",
+        dispatchTask: false,
+        requestedDispatchTask: false,
+        pipelineDefinitionId: null,
+        scopeId: null,
+        workdir: null,
+        dispatchDiscussion: false,
+        shouldRespond: true,
+        responseDraft: chatResponseBody,
+        reasoningSummary: "Preserved simple direct chat reply without launching a discussion pipeline.",
+      };
+    }
     const discussion = (selectedDiscussionPipeline && !directChatResponse)
       || isDiscussionIntent(rawIntent, latestText)
       || documentDiscussion;

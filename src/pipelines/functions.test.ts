@@ -987,6 +987,34 @@ describe("memory pipeline functions", () => {
     });
   });
 
+  test("shared chat dispatch execution preserves simple direct replies misclassified as discussion", async () => {
+    const execution = await runChatDispatchSpec({
+      latestMessage: "Can you hear me",
+      agentDecision: {
+        intent: "discussion-chat-response",
+        dispatchTask: false,
+        recommendedPipelineId: null,
+        chatResponse: { body: "Yes, I can hear you. What can I help you with?" },
+        confidence: 1,
+      },
+    });
+
+    const result = currentAfterStep(execution, "prepare-chat-response");
+    const run = execution.run;
+    expect(run.status).toBe("ok");
+    expect(result.createdTask).toBeUndefined();
+    expect(result.childPipeline).toBeUndefined();
+    expect(result.decision).toMatchObject({
+      dispatchTask: false,
+      dispatchDiscussion: false,
+      responseDraft: "Yes, I can hear you. What can I help you with?",
+    });
+    expect(result.agentResponse).toMatchObject({
+      shouldRespond: true,
+      responseDraft: "Yes, I can hear you. What can I help you with?",
+    });
+  });
+
   test("shared chat dispatch execution keeps task-backed handoff on task path", async () => {
     const execution = await runChatDispatchSpec({
       latestMessage: "Please research this and produce the answer.",
