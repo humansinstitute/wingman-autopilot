@@ -2,47 +2,181 @@
  * Floating "scroll to bottom" pill indicator.
  *
  * Shows a small pill above the composer when new content arrives and the user
- * is scrolled up. Clicking it smooth-scrolls to the bottom. The pill hides
- * automatically when the user scrolls to within 50px of the bottom.
+ * is scrolled up. Clicking it smooth-scrolls to the bottom.
+ *
+ * Also includes a second pill ("last prompt") that appears near the top of the
+ * chat window and jumps to the latest user message.
  */
 
 const THRESHOLD = 50;
+const USER_MESSAGE_SELECTOR = '.wm-message[data-role="user"]';
+const HEADER_OFFSET_FALLBACK = 12;
 
-let pillEl = null;
-let scrollTarget = null;
-let scrollListener = null;
-let scrollListenerTarget = null; // the actual element we bind "scroll" on
-
-/**
- * Resolve which element to listen for scroll events on.
- * For document-level scroll targets the event fires on the window, not on
- * the scrollingElement itself.
- */
-function resolveListenerTarget(el) {
-  if (
+function isDocumentScrollTarget(el) {
+  return (
     el === document.body ||
     el === document.documentElement ||
     el === document.scrollingElement
-  ) {
+  );
+}
+
+function getHeaderInset(scrollTarget) {
+  const header = document.querySelector(".wm-header");
+  if (!header) {
+    return HEADER_OFFSET_FALLBACK;
+  }
+  if (isDocumentScrollTarget(scrollTarget)) {
+    return Math.max(HEADER_OFFSET_FALLBACK, header.getBoundingClientRect().height);
+  }
+  const containerRect = getScrollContainerRect(scrollTarget);
+  const headerRect = header.getBoundingClientRect();
+  if (headerRect.height <= 0) {
+    return HEADER_OFFSET_FALLBACK;
+  }
+  const overlap = headerRect.bottom - containerRect.top;
+  return Math.max(HEADER_OFFSET_FALLBACK, overlap);
+}
+
+function clampScrollTop(scrollTop, scrollElement) {
+  const maxTop = Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight);
+  return Math.max(0, Math.min(maxTop, scrollTop));
+}
+
+function scrollToElementAtTop(scrollElement, element) {
+  if (!scrollElement || !(scrollElement instanceof HTMLElement) || !element || !(element instanceof HTMLElement)) {
+    return;
+  }
+  const targetRect = element.getBoundingClientRect();
+  const containerRect = getScrollContainerRect(scrollElement);
+  const headerInset = getHeaderInset(scrollElement);
+
+  if (isDocumentScrollTarget(scrollElement)) {
+    const currentTop = window.scrollY || (document.scrollingElement?.scrollTop ?? 0);
+    const targetTop = currentTop + (targetRect.top - containerRect.top) - headerInset;
+    window.scrollTo({ top: targetTop, behavior: "smooth" });
+    return;
+  }
+
+  const targetOffset = scrollElement.scrollTop + (targetRect.top - containerRect.top) - headerInset;
+  const finalTop = clampScrollTop(targetOffset, scrollElement);
+  scrollElement.scrollTo({ top: finalTop, behavior: "smooth" });
+}
+
+function createPillState() {
+  return {
+    pillEl: null,
+    scrollTarget: null,
+    conversationElement: null,
+    scrollListener: null,
+    scrollListenerTarget: null,
+    mutationObserver: null,
+    lastMessageElement: null,
+  };
+}
+
+const bottomPillState = createPillState();
+const lastPromptPillState = createPillState();
+
+function resolveListenerTarget(el) {
+  if (el === document.body || el === document.documentElement || el === document.scrollingElement) {
     return window;
   }
   return el;
 }
 
-/**
- * Check whether a scroll target is near its bottom edge.
- */
+function getScrollContainerRect(el) {
+  if (el === document.body || el === document.documentElement || el === document.scrollingElement) {
+    return {
+      top: 0,
+      bottom: window.innerHeight,
+    };
+  }
+  return el.getBoundingClientRect();
+}
+
 function checkNearBottom(el) {
   if (!el) return true;
-  if (
-    el === document.body ||
-    el === document.documentElement ||
-    el === document.scrollingElement
-  ) {
+  if (el === document.body || el === document.documentElement || el === document.scrollingElement) {
     const doc = document.scrollingElement || document.documentElement || document.body;
     return doc.scrollHeight - doc.scrollTop - doc.clientHeight < THRESHOLD;
   }
   return el.scrollHeight - el.scrollTop - el.clientHeight < THRESHOLD;
+}
+
+function cleanupPillState(state) {
+  if (state.scrollListenerTarget && state.scrollListener) {
+    state.scrollListenerTarget.removeEventListener("scroll", state.scrollListener);
+  }
+  if (state.mutationObserver) {
+    state.mutationObserver.disconnect();
+  }
+  if (state.pillEl && state.pillEl.parentNode) {
+    state.pillEl.parentNode.removeChild(state.pillEl);
+  }
+  state.pillEl = null;
+  state.scrollTarget = null;
+  state.conversationElement = null;
+  state.scrollListener = null;
+  state.scrollListenerTarget = null;
+  state.lastMessageElement = null;
+}
+
+function resolveConversationElement(scrollElement, conversationElement) {
+  if (conversationElement instanceof Element) {
+    if (conversationElement.isConnected) {
+      return conversationElement;
+    }
+  }
+  if (scrollElement?.querySelector instanceof Function) {
+    const fromScroll = scrollElement.querySelector(".wm-live-conversation");
+    if (fromScroll) {
+      return fromScroll;
+    }
+  }
+  const fallback = document.querySelector(".wm-live-conversation");
+  if (fallback) {
+    return fallback;
+  }
+  if (conversationElement instanceof Element) {
+    return conversationElement;
+  }
+  return null;
+}
+
+function getLatestUserMessage(conversationElement) {
+  if (!(conversationElement instanceof Element)) {
+    return null;
+  }
+  const messages = conversationElement.querySelectorAll(USER_MESSAGE_SELECTOR);
+  if (!messages.length) {
+    return null;
+  }
+  return messages[messages.length - 1] || null;
+}
+
+function isMessageInView(messageElement, scrollElement) {
+  if (!(messageElement instanceof Element) || !scrollElement) {
+    return true;
+  }
+  const headerInset = getHeaderInset(scrollElement);
+  const scrollRect = getScrollContainerRect(scrollElement);
+  const messageRect = messageElement.getBoundingClientRect();
+  return (
+    messageRect.top >= scrollRect.top + headerInset &&
+    messageRect.bottom <= scrollRect.bottom
+  );
+}
+
+function updateLastPromptPillVisibility(state) {
+  if (!state || !state.pillEl) return;
+  state.conversationElement = resolveConversationElement(state.scrollTarget, state.conversationElement);
+  const latestMessage = getLatestUserMessage(state.conversationElement);
+  state.lastMessageElement = latestMessage;
+  if (!latestMessage) {
+    state.pillEl.style.display = "none";
+    return;
+  }
+  state.pillEl.style.display = isMessageInView(latestMessage, state.scrollTarget) ? "none" : "";
 }
 
 /**
@@ -54,65 +188,131 @@ function checkNearBottom(el) {
  * @param {HTMLElement} scrollElement - the scrollable element to watch & scroll
  */
 export function attachScrollPill(parent, scrollElement) {
-  cleanup();
+  cleanupPillState(bottomPillState);
 
   if (!parent || !scrollElement) return;
 
-  scrollTarget = scrollElement;
+  bottomPillState.scrollTarget = scrollElement;
 
-  pillEl = document.createElement("button");
-  pillEl.className = "wm-scroll-pill";
-  pillEl.textContent = "scroll to bottom";
-  pillEl.setAttribute("aria-label", "Scroll to bottom");
-  pillEl.style.display = "none";
+  const button = document.createElement("button");
+  button.className = "wm-scroll-pill";
+  button.textContent = "scroll to bottom";
+  button.setAttribute("aria-label", "Scroll to bottom");
+  button.style.display = "none";
 
-  pillEl.addEventListener("click", () => {
-    if (!scrollTarget) return;
-    scrollTarget.scrollTo({ top: scrollTarget.scrollHeight, behavior: "smooth" });
-    // For non-split layouts also scroll the window if it's a different target
+  button.addEventListener("click", () => {
+    if (!bottomPillState.scrollTarget) return;
+    bottomPillState.scrollTarget.scrollTo({ top: bottomPillState.scrollTarget.scrollHeight, behavior: "smooth" });
     const docTarget = document.scrollingElement || document.documentElement || document.body;
-    if (docTarget !== scrollTarget) {
+    if (docTarget !== bottomPillState.scrollTarget) {
       docTarget.scrollTo({ top: docTarget.scrollHeight, behavior: "smooth" });
     }
     hide();
   });
 
-  parent.appendChild(pillEl);
+  parent.appendChild(button);
+  bottomPillState.pillEl = button;
 
-  // Listen for scroll to auto-hide when user reaches bottom
-  scrollListener = () => {
-    if (!scrollTarget || !pillEl) return;
-    if (checkNearBottom(scrollTarget)) hide();
+  bottomPillState.scrollListener = () => {
+    if (!bottomPillState.scrollTarget || !bottomPillState.pillEl) return;
+    if (checkNearBottom(bottomPillState.scrollTarget)) hide();
   };
-  scrollListenerTarget = resolveListenerTarget(scrollElement);
-  scrollListenerTarget.addEventListener("scroll", scrollListener, { passive: true });
+  bottomPillState.scrollListenerTarget = resolveListenerTarget(scrollElement);
+  bottomPillState.scrollListenerTarget.addEventListener("scroll", bottomPillState.scrollListener, { passive: true });
+
+  bottomPillState.pillEl = button;
 }
 
-/** Show the pill (call when new content arrives and user is scrolled up). */
+/**
+ * Create and attach a "last prompt" pill near the top of the chat window.
+ *
+ * @param {HTMLElement} parent  - element to append the pill into (e.g. live conversation)
+ * @param {HTMLElement} scrollElement - the scrollable element to watch
+ * @param {HTMLElement} conversationElement - optional conversation wrapper
+ */
+export function attachLastPromptPill(parent, scrollElement, conversationElement = null) {
+  cleanupPillState(lastPromptPillState);
+
+  if (!parent || !scrollElement) return;
+
+  lastPromptPillState.scrollTarget = scrollElement;
+  lastPromptPillState.conversationElement = resolveConversationElement(scrollElement, conversationElement);
+
+  const button = document.createElement("button");
+  button.className = "wm-scroll-pill wm-scroll-pill--top";
+  button.textContent = "last prompt";
+  button.setAttribute("aria-label", "Scroll to last prompt");
+  button.style.display = "none";
+
+  button.addEventListener("click", () => {
+    lastPromptPillState.conversationElement = resolveConversationElement(
+      lastPromptPillState.scrollTarget,
+      lastPromptPillState.conversationElement,
+    );
+    const latestMessage = getLatestUserMessage(lastPromptPillState.conversationElement);
+    if (!latestMessage) {
+      hideLastPromptPill();
+      return;
+    }
+    scrollToElementAtTop(lastPromptPillState.scrollTarget, latestMessage);
+    hideLastPromptPill();
+  });
+
+  parent.appendChild(button);
+  lastPromptPillState.pillEl = button;
+
+  lastPromptPillState.scrollListener = () => {
+    if (!lastPromptPillState.scrollTarget || !lastPromptPillState.pillEl) return;
+    updateLastPromptPillVisibility(lastPromptPillState);
+  };
+  lastPromptPillState.scrollListenerTarget = resolveListenerTarget(scrollElement);
+  lastPromptPillState.scrollListenerTarget.addEventListener("scroll", lastPromptPillState.scrollListener, { passive: true });
+
+  if (typeof MutationObserver === "function" && lastPromptPillState.conversationElement) {
+    lastPromptPillState.mutationObserver = new MutationObserver(() => {
+      if (!lastPromptPillState.pillEl) return;
+      updateLastPromptPillVisibility(lastPromptPillState);
+    });
+    lastPromptPillState.mutationObserver.observe(lastPromptPillState.conversationElement, {
+      childList: true,
+      subtree: true,
+    });
+  }
+
+  updateLastPromptPillVisibility(lastPromptPillState);
+  lastPromptPillState.pillEl = button;
+}
+
+/** Show the bottom pill (call when new content arrives and user is scrolled up). */
 export function show() {
-  if (pillEl) pillEl.style.display = "";
+  if (bottomPillState.pillEl) bottomPillState.pillEl.style.display = "";
 }
 
-/** Hide the pill. */
+/** Hide the bottom pill. */
 export function hide() {
-  if (pillEl) pillEl.style.display = "none";
+  if (bottomPillState.pillEl) bottomPillState.pillEl.style.display = "none";
+}
+
+export function hideLastPromptPill() {
+  if (lastPromptPillState.pillEl) lastPromptPillState.pillEl.style.display = "none";
 }
 
 /** Returns true if the scroll target is near the bottom. */
 export function isNearBottom() {
-  return checkNearBottom(scrollTarget);
+  return checkNearBottom(bottomPillState.scrollTarget);
 }
 
-/** Remove listeners and element. Call on view teardown. */
+export function scrollLastMessageToTop(scrollElement, conversationElement) {
+  const activeConversation = resolveConversationElement(scrollElement, conversationElement);
+  const latestMessage = getLatestUserMessage(activeConversation);
+  if (!latestMessage || !scrollElement) {
+    return;
+  }
+  scrollToElementAtTop(scrollElement, latestMessage);
+}
+
+/** Remove listeners and elements. Call on view teardown. */
 export function cleanup() {
-  if (scrollListenerTarget && scrollListener) {
-    scrollListenerTarget.removeEventListener("scroll", scrollListener);
-  }
-  if (pillEl && pillEl.parentNode) {
-    pillEl.parentNode.removeChild(pillEl);
-  }
-  pillEl = null;
-  scrollTarget = null;
-  scrollListener = null;
-  scrollListenerTarget = null;
+  cleanupPillState(bottomPillState);
+  cleanupPillState(lastPromptPillState);
 }

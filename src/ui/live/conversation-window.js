@@ -121,8 +121,10 @@ function shouldFormatAgentMessage(message) {
 }
 
 function createMessageBubble(message, options = {}) {
+  const role = String(message?.role ?? message?.type ?? "assistant").toLowerCase();
   const bubble = document.createElement("article");
-  bubble.className = `wm-message ${message.type ?? message.role ?? "assistant"}`;
+  bubble.className = `wm-message ${role}`;
+  bubble.dataset.role = role;
   const body = document.createElement("div");
   body.className = "wm-message-body";
   body.innerHTML = renderChatMessageHtml(message.content ?? message.message ?? "", {

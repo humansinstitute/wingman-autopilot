@@ -3148,6 +3148,7 @@ body[data-live-header-collapsed="true"]:has(#app[data-route="live"]) .wm-live-dr
 }
 
 .wm-live-conversation {
+  position: relative;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -4811,6 +4812,11 @@ body[data-keyboard-open="true"] .wm-composer-shell {
 .wm-scroll-pill:hover {
   color: var(--text-primary);
   background: var(--bg-tertiary, rgba(80, 80, 80, 0.9));
+}
+
+.wm-scroll-pill.wm-scroll-pill--top {
+  top: 0.35rem;
+  bottom: auto;
 }
 
 /* Archived session view styles */

@@ -748,6 +748,11 @@ export function initLiveView(deps) {
       schedulePrependedScrollRestore(prependedScrollState);
     }
 
+    const composerEl = document.querySelector(".wm-composer-shell");
+    if (composerEl) {
+      attachComposerScrollControls(composerEl);
+    }
+
     return next;
   };
 
@@ -763,6 +768,18 @@ export function initLiveView(deps) {
       void rerenderConversation(sessionId);
     });
     return placeholder;
+  };
+
+  const attachComposerScrollControls = (composerEl) => {
+    requestAnimationFrame(() => {
+      if (!composerEl) return;
+      const splitScroll = composerEl.closest(".wm-live-chat-col")?.querySelector(".wm-live-scroll") || null;
+      const docScroll = document.scrollingElement || document.documentElement || document.body;
+      const scrollTarget = splitScroll || docScroll;
+      const conversationEl = scrollTarget?.querySelector?.(".wm-live-conversation") || document.querySelector(".wm-live-conversation");
+      scrollPill.attachScrollPill(composerEl, scrollTarget);
+      scrollPill.attachLastPromptPill(conversationEl || composerEl, scrollTarget, conversationEl);
+    });
   };
 
   // ── Composer ────────────────────────────────────────────────────
@@ -1173,22 +1190,26 @@ export function initLiveView(deps) {
 
     addCommandDivider();
 
+    const jumpToLatestUserMessage = () => {
+      const conversationContainer = document.querySelector(".wm-live-conversation");
+      const userMessages = conversationContainer
+        ? conversationContainer.querySelectorAll('.wm-message[data-role="user"]')
+        : null;
+      if (!userMessages || userMessages.length === 0) {
+        showToast("No user messages found", { type: "info" });
+        return;
+      }
+      const scrollTarget = document.querySelector(".wm-live-chat-col .wm-live-scroll")
+        || (document.scrollingElement || document.documentElement || document.body);
+      scrollPill.scrollLastMessageToTop(scrollTarget, conversationContainer);
+    };
+
     addCommand("Scroll to end", () => {
       scrollConversationAreaToBottom(sessionId, { includeWindow: true });
       scrollPill.hide();
     });
 
-    addCommand("Last question", () => {
-      const container = document.querySelector(`.wm-live-conversation[data-session-id="${sessionId}"]`);
-      if (!container) return;
-      const userMessages = container.querySelectorAll('.wm-message[data-role="user"]');
-      if (userMessages.length === 0) {
-        showToast("No user messages found", { type: "info" });
-        return;
-      }
-      const lastUserMessage = userMessages[userMessages.length - 1];
-      lastUserMessage.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
+    addCommand("Last prompt", jumpToLatestUserMessage);
 
     addCommand("Copy chat", () => {
       copyConversationToClipboard(sessionId);
@@ -1326,12 +1347,8 @@ export function initLiveView(deps) {
         liveWrapper.append(newComposer);
       }
     }
-    // Re-attach scroll pill to new composer
-    requestAnimationFrame(() => {
-      const splitScroll = newComposer.closest('.wm-live-chat-col')?.querySelector('.wm-live-scroll');
-      const docScroll = document.scrollingElement || document.documentElement || document.body;
-      scrollPill.attachScrollPill(newComposer, splitScroll || docScroll);
-    });
+    // Re-attach scroll pills to composer and conversation
+    attachComposerScrollControls(newComposer);
 
     requestAnimationFrame(() => {
       const textarea = document.querySelector('.wm-composer textarea');
@@ -1650,10 +1667,7 @@ export function initLiveView(deps) {
 
       const writerComposerEl = renderComposer(sessionId);
       chatCol.append(writerComposerEl);
-      requestAnimationFrame(() => {
-        const splitScroll = chatCol.querySelector('.wm-live-scroll');
-        scrollPill.attachScrollPill(writerComposerEl, splitScroll || scrollRegion);
-      });
+      attachComposerScrollControls(writerComposerEl);
 
       // Swipe gestures for mobile
       attachSwipeGesture(split, {
@@ -1721,10 +1735,7 @@ export function initLiveView(deps) {
       const artComposerEl = renderComposer(sessionId);
       chatCol.append(artComposerEl);
       // In split mode, the scroll target is .wm-live-scroll inside chatCol
-      requestAnimationFrame(() => {
-        const splitScroll = chatCol.querySelector('.wm-live-scroll');
-        scrollPill.attachScrollPill(artComposerEl, splitScroll || scrollRegion);
-      });
+      attachComposerScrollControls(artComposerEl);
 
       // Swipe gestures for mobile
       attachSwipeGesture(split, {
@@ -1792,10 +1803,7 @@ export function initLiveView(deps) {
 
       const appComposerEl = renderComposer(sessionId);
       chatCol.append(appComposerEl);
-      requestAnimationFrame(() => {
-        const splitScroll = chatCol.querySelector(".wm-live-scroll");
-        scrollPill.attachScrollPill(appComposerEl, splitScroll || scrollRegion);
-      });
+      attachComposerScrollControls(appComposerEl);
 
       attachSwipeGesture(split, {
         onSwipeLeft: () => {
@@ -1860,10 +1868,7 @@ export function initLiveView(deps) {
 
       const webComposerEl = renderComposer(sessionId);
       chatCol.append(webComposerEl);
-      requestAnimationFrame(() => {
-        const splitScroll = chatCol.querySelector('.wm-live-scroll');
-        scrollPill.attachScrollPill(webComposerEl, splitScroll || scrollRegion);
-      });
+      attachComposerScrollControls(webComposerEl);
 
       // Swipe gestures for mobile
       attachSwipeGesture(split, {
@@ -1903,8 +1908,7 @@ export function initLiveView(deps) {
       }
       // Attach scroll pill to the composer — scrollTarget is the document for non-split
       requestAnimationFrame(() => {
-        const docScroll = document.scrollingElement || document.documentElement || document.body;
-        scrollPill.attachScrollPill(composerEl, docScroll);
+        attachComposerScrollControls(composerEl);
       });
     }
 

@@ -410,6 +410,7 @@ export function getChatTemplate(sessionId) {
 
     <template x-for="message in $store.chat.visibleMessages" :key="message.id">
       <article class="wm-message"
+               :data-role="(message.role || message.type || 'assistant').toLowerCase()"
                :class="message.role === 'user' ? 'user' : (message.role === 'assistant' || message.role === 'agent' ? 'assistant' : 'system')">
         <div class="wm-message-body" x-html="$store.chat.renderMessageContent(message)"></div>
         <button type="button" class="wm-message-copy" aria-label="Copy message"
