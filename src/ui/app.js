@@ -669,6 +669,7 @@ const sessionNextActionTemplateInput = document.getElementById("session-next-act
 const sessionWriterModeCheckbox = document.getElementById("session-writer-mode");
 const sessionTargetFileInput = document.getElementById("session-target-file");
 const sessionTargetFileField = document.getElementById("session-target-file-field");
+const sessionModelSelect = document.getElementById("session-model");
 const directoryInput = document.getElementById("working-directory");
 const directorySuggestions = document.getElementById("directory-suggestions");
 const browseDirectoryButton = document.getElementById("browse-directory");
@@ -1573,15 +1574,19 @@ sessionDialogController = createSessionDialogController({
   writerModeCheckbox: sessionWriterModeCheckbox,
   targetFileInput: sessionTargetFileInput,
   targetFileField: sessionTargetFileField,
+  modelSelect: sessionModelSelect,
   isAuthenticated: () => Boolean(state.identity.authenticated),
   getConfig: () => state.config,
   getFallbackDirectory: getSessionFallbackDirectory,
   onRequireAuth: openIdentityLoginDialog,
   onDirectoryPrefill: (...args) => scheduleDirectorySuggestions(...args),
-  onSubmit: ({ agentId, workingDirectory, sessionName, workspace, targetFile, metadata }) => {
+  onSubmit: ({ agentId, workingDirectory, sessionName, workspace, targetFile, metadata, model }) => {
     const options = {};
     if (targetFile) {
       options.targetFile = targetFile;
+    }
+    if (model) {
+      options.model = model;
     }
     if (metadata && typeof metadata === "object") {
       options.metadata = metadata;
@@ -2659,8 +2664,11 @@ const handleSessionLaunchRequest = () => {
   const agentId = agentSelect?.value ?? "";
   const workingDirectory = directoryInput?.value ?? "";
   const sessionName = sessionNameInput?.value ?? "";
+  const model = sessionModelSelect?.value ?? "";
   closeDialog();
-  launchSession(agentId, workingDirectory, sessionName);
+  launchSession(agentId, workingDirectory, sessionName, null, {
+    model: model.trim() || null,
+  });
 };
 
 sessionForm?.addEventListener("submit", (event) => {

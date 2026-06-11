@@ -296,7 +296,7 @@ function resolveCodexExtraArgs(glovesValue: string | undefined): string[] {
 
 function resolveOpenCodeExtraArgs(modelValue: string | undefined): string[] {
   const model = modelValue?.trim();
-  const effectiveModel = model && model.length > 0 ? model : "opencode/gpt-5-nano";
+  const effectiveModel = model && model.length > 0 ? model : "big pickle";
   return ["--model", effectiveModel];
 }
 

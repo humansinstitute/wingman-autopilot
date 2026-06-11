@@ -97,6 +97,8 @@ export interface SessionSnapshot {
   /** File pinned as artifact in the UI right-hand panel */
   pinnedFile?: string;
   metadata?: SessionMetadata;
+  /** Selected model for the session */
+  model?: string;
 }
 
 type SessionEvent =
@@ -137,6 +139,8 @@ export interface RehydrateSessionInput {
   /** File pinned as artifact in the UI right-hand panel */
   pinnedFile?: string;
   metadata?: SessionMetadataInput;
+  /** Selected model for the session */
+  model?: string;
 }
 
 export interface BillingLaunchInput {
@@ -204,6 +208,8 @@ interface AgentSession {
   metadata: SessionMetadata;
   /** Files created by MCP config injection to clean up on session stop. */
   mcpCleanupFiles?: string[];
+  /** Model selection for this session */
+  model?: string;
   /**
    * Structured Codex `--config` overrides (MCP, billing) merged at launch and
    * handed to the native Codex SDK adapter, which spawns no CLI to receive
@@ -282,6 +288,34 @@ function resolveNativeOpenCodeCommand(agentapiCommand: string[], port: number): 
   return [binary ?? "opencode", "--port", String(port), ...rest];
 }
 
+function withModelOverride(command: string[], modelValue: string): string[] {
+  const normalizedModel = modelValue.trim();
+  if (!normalizedModel.length) {
+    return command;
+  }
+
+  const nextCommand = [...command];
+  const explicitArgIndex = nextCommand.findIndex((arg) => arg === "--model");
+  if (explicitArgIndex >= 0) {
+    const valueIndex = explicitArgIndex + 1;
+    if (valueIndex < nextCommand.length) {
+      nextCommand[valueIndex] = normalizedModel;
+      return nextCommand;
+    }
+    nextCommand.push(normalizedModel);
+    return nextCommand;
+  }
+
+  const inlineIndex = nextCommand.findIndex((arg) => arg.startsWith("--model="));
+  if (inlineIndex >= 0) {
+    nextCommand[inlineIndex] = `--model=${normalizedModel}`;
+    return nextCommand;
+  }
+
+  nextCommand.push("--model", normalizedModel);
+  return nextCommand;
+}
+
 export class ProcessManager {
   private readonly config: WingmanConfig;
   private readonly resolveBillingLaunchConfig?: (input: BillingLaunchInput) => Promise<BillingLaunchResult>;
@@ -355,6 +389,7 @@ export class ProcessManager {
     targetFile?: string,
     explicitNpub?: string,
     metadata?: SessionMetadataInput,
+    model?: string,
   ): Promise<SessionSnapshot> {
     const launchStartedAt = Date.now();
     const requestNpub = explicitNpub ?? getAuthenticatedNpub() ?? undefined;
@@ -368,10 +403,15 @@ export class ProcessManager {
     const sessionName = this.normaliseSessionName(name, agent, port);
     let command = definition.command({ port, agent, config: this.config });
 
+    const resolvedModel = typeof model === "string" ? model.trim() : "";
+
     // When the OpenCode native SDK flag is on, spawn opencode directly
     // instead of wrapping it with agentapi.  The OpenCodeAdapter SDK client
     // connects to OpenCode's own HTTP server on the allocated port.
     if (agent === "opencode") {
+      if (resolvedModel.length > 0) {
+        command = withModelOverride(command, resolvedModel);
+      }
       const ocFlag = featureFlagStore.getFlag(OPENCODE_NATIVE_SDK_FLAG);
       if (ocFlag && resolveFeatureFlagEffectiveState(ocFlag.state, true) === "on") {
         command = resolveNativeOpenCodeCommand(command, port);
@@ -416,6 +456,7 @@ export class ProcessManager {
       isAdmin,
       targetFile: targetFile ?? undefined,
       metadata: sessionMetadata,
+      model: resolvedModel || undefined,
     };
 
     this.sessions.set(id, session);
@@ -705,6 +746,7 @@ export class ProcessManager {
       targetFile: input.targetFile,
       pinnedFile: input.pinnedFile,
       metadata: normaliseSessionMetadata(input.metadata),
+      model: input.model,
     };
 
     // Create protocol adapter for rehydrated session
@@ -1378,6 +1420,7 @@ export class ProcessManager {
       tmuxSession: session.tmuxSession,
       tmuxWindow: session.tmuxWindow,
       targetFile: session.targetFile,
+      model: session.model,
       pinnedFile: session.pinnedFile,
       metadata: session.metadata,
     };

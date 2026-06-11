@@ -14,6 +14,37 @@ const buildWorktreePathPreview = (root, name) => {
 };
 
 const FILES_FAVORITES_STORAGE_KEY = "wingman-files-favorites";
+const MAPLE_MODELS = [
+  "llama-3.3-70b",
+  "gpt-oss-120b",
+  "deepseek-r1-0528",
+  "kimi-k2-thinking",
+  "qwen3-vl-30b",
+  "qwen3-coder-480b",
+];
+const OPENCODE_ZEN_MODELS = [
+  "big pickle",
+];
+const OPENCODE_DEFAULT_MODEL = "big pickle";
+const DEFAULT_NON_OPENCODE_MODELS = [...MAPLE_MODELS, ...OPENCODE_ZEN_MODELS];
+
+const dedupeValues = (values) => {
+  const unique = new Set();
+  values.forEach((value) => {
+    const normalized = value.trim();
+    if (normalized.length > 0) {
+      unique.add(normalized);
+    }
+  });
+  return Array.from(unique);
+};
+
+const getModelOptionsForAgent = (agentId) => {
+  if (agentId === "opencode") {
+    return dedupeValues([OPENCODE_DEFAULT_MODEL, ...OPENCODE_ZEN_MODELS]);
+  }
+  return dedupeValues(DEFAULT_NON_OPENCODE_MODELS);
+};
 
 export const createSessionDialogController = (options) => {
   const {
@@ -34,6 +65,7 @@ export const createSessionDialogController = (options) => {
     writerModeCheckbox,
     targetFileInput,
     targetFileField,
+    modelSelect: providedModelSelect,
     isAuthenticated,
     getConfig,
     getFavouriteDirectories,
@@ -43,6 +75,7 @@ export const createSessionDialogController = (options) => {
     onSubmit,
   } = options;
   const directoryInput = providedDirectoryInput ?? document.getElementById("working-directory");
+  const modelSelect = providedModelSelect ?? document.getElementById("session-model");
   const directoryFavoritesSelect =
     providedDirectoryFavoritesSelect ?? document.getElementById("working-directory-favourites");
 
@@ -187,6 +220,7 @@ export const createSessionDialogController = (options) => {
       directoryFavoritesSelect.value = "";
     }
     syncWorkspaceFields();
+    updateModelOptions();
   };
 
   const close = () => {
@@ -202,6 +236,7 @@ export const createSessionDialogController = (options) => {
     const agentId = agentSelect?.value ?? "";
     const workingDirectory = directoryInput?.value ?? "";
     const sessionName = sessionNameInput?.value ?? "";
+    const model = typeof modelSelect?.value === "string" ? modelSelect.value.trim() : "";
     const workspace =
       workspaceSelect?.value === "worktree"
         ? { mode: "worktree", name: (worktreeNameInput?.value ?? "").trim() }
@@ -226,9 +261,33 @@ export const createSessionDialogController = (options) => {
       workingDirectory,
       sessionName,
       workspace,
+      model: model.length > 0 ? model : null,
       targetFile,
       metadata: Object.keys(metadata).length > 0 ? metadata : null,
     };
+  };
+
+  const updateModelOptions = () => {
+    if (!modelSelect) return;
+    const agentId = (agentSelect?.value ?? "").trim().toLowerCase();
+    const availableModels = getModelOptionsForAgent(agentId);
+    const current = (modelSelect.value ?? "").trim();
+    const nextValue = availableModels.includes(current) ? current : (availableModels[0] ?? "");
+
+    modelSelect.innerHTML = "";
+    availableModels.forEach((model) => {
+      const option = document.createElement("option");
+      option.value = model;
+      option.textContent = model;
+      if (model === nextValue) {
+        option.selected = true;
+      }
+      modelSelect.append(option);
+    });
+
+    if (nextValue.length > 0) {
+      modelSelect.value = nextValue;
+    }
   };
 
   const handleSubmit = () => {
@@ -277,6 +336,7 @@ export const createSessionDialogController = (options) => {
       }
       syncWorktreeHint();
     }
+    updateModelOptions();
   };
 
   writerModeCheckbox?.addEventListener("change", () => {
@@ -295,6 +355,10 @@ export const createSessionDialogController = (options) => {
 
   workspaceSelect?.addEventListener("change", () => {
     syncWorkspaceFields();
+  });
+
+  agentSelect?.addEventListener("change", () => {
+    updateModelOptions();
   });
 
   worktreeNameInput?.addEventListener("input", () => {
@@ -327,6 +391,7 @@ export const createSessionDialogController = (options) => {
     close,
     handleSubmit,
     syncWorktreeHint,
+    syncModelOptions: updateModelOptions,
     collectValues,
     resetFormState,
   };

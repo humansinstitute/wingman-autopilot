@@ -520,6 +520,7 @@ const serializeStoredSession = (
     command: parseStoredCommand(storedSession.command) ?? [],
     workingDirectory: storedSession.workingDirectory,
     origin: storedSession.origin,
+    model: storedSession.model,
     targetFile: storedSession.targetFile,
     metadata: storedSession.metadata,
   };
@@ -565,6 +566,7 @@ const rehydrateStoredSession = (
     tmuxSession: storedSession.tmuxSession ?? undefined,
     tmuxWindow: storedSession.tmuxWindow ?? undefined,
     targetFile: storedSession.targetFile ?? undefined,
+    model: storedSession.model ?? undefined,
     metadata: storedSession.metadata,
   });
 };
@@ -1487,6 +1489,7 @@ export async function handleSessionApi(
           ? payload.metadata as Record<string, unknown>
           : null;
       const callerRequestedAgent = rawMetadata?.AGENT === true;
+      const rawModel = typeof payload?.model === "string" ? payload.model.trim() : "";
       const session = await ctx.manager.createSession(
         agent,
         workingDirectory,
@@ -1502,6 +1505,7 @@ export async function handleSessionApi(
           lastManagedByNpub: authContext.subjectNpub ?? authContext.npub ?? undefined,
           chargeToNpub: sessionOwnerNpub ?? undefined,
         },
+        rawModel.length > 0 ? rawModel : undefined,
       );
       if (nightWatch?.enabled) {
         ctx.enableNightWatch(session.id, {

@@ -50,6 +50,7 @@ export const createSessionLauncher = ({ handleSessionStart, notify } = {}) => {
       origin = null,
       initialPrompt = null,
       targetFile = null,
+      model = null,
       nightwatch = null,
       metadata = null,
     } = options ?? {};
@@ -72,6 +73,9 @@ export const createSessionLauncher = ({ handleSessionStart, notify } = {}) => {
     }
     if (typeof targetFile === "string" && targetFile.trim().length > 0) {
       payload.targetFile = targetFile.trim();
+    }
+    if (typeof model === "string" && model.trim().length > 0) {
+      payload.model = model.trim();
     }
     if (nightwatch && typeof nightwatch === "object") {
       payload.nightwatch = nightwatch;
