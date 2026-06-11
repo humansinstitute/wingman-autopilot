@@ -107,6 +107,7 @@ export interface DeclarativePipeline {
   description?: string;
   version?: string | number;
   supersedes?: string;
+  defaultAgent?: string;
   default?: boolean;
   tags?: string[];
   input?: JsonObject;

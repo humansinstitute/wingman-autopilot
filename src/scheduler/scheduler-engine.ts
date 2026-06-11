@@ -41,7 +41,7 @@ export interface SchedulerEngineDeps {
   addPrompt: (sessionId: string, content: string) => void;
   dispatchPrompt: (session: SessionSnapshot) => void;
   awaitSessionReadyForPrompt?: (session: SessionSnapshot, agent: AgentType) => Promise<void>;
-  runPipeline?: (job: ScheduledJob, input: JsonObject, onRunCreated?: (pipelineRunId: string) => void) => Promise<string>;
+  runPipeline?: (job: ScheduledJob, input: JsonObject, onRunCreated?: (pipelineRunId: string) => void, pipelineAgent?: string) => Promise<string>;
   onBotKeyUnlocked?: (npub: string, secretKey: Uint8Array, botPubkeyHex: string) => void;
   getInstanceIdentity?: () => WingmanInstanceIdentity | null;
 }
@@ -409,7 +409,8 @@ class SchedulerEngine {
     if (triggerMessage) {
       input.triggerMessage = triggerMessage;
     }
-    return this.deps.runPipeline(job, input, onRunCreated);
+    const pipelineAgent = job.pipelineAgent?.trim() || undefined;
+    return this.deps.runPipeline(job, input, onRunCreated, pipelineAgent);
   }
 
   private updateJobAfterSuccess(jobId: string): void {

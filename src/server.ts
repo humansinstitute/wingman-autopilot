@@ -236,6 +236,23 @@ import {
 
 const config = loadConfig();
 const wingmanInstanceIdentity = loadWingmanInstanceIdentity();
+
+function resolveScheduledPipelineAgent(
+  requestedAgent: string | null | undefined,
+  definitionDefaultAgent: string | null | undefined,
+): AgentType {
+  const fromTrigger = typeof requestedAgent === "string" ? requestedAgent.trim().toLowerCase() : "";
+  if (fromTrigger && isAgentType(fromTrigger)) {
+    return fromTrigger;
+  }
+
+  const fromDefinition = typeof definitionDefaultAgent === "string" ? definitionDefaultAgent.trim().toLowerCase() : "";
+  if (fromDefinition && isAgentType(fromDefinition)) {
+    return fromDefinition;
+  }
+
+  return config.defaultAgent;
+}
 const wappPublisher = new SuperbasedWappPublisher({ defaultBaseUrl: config.superbasedUrl });
 const wappScopeAccessResolver = new FlightDeckScopeAccessResolver(async (input) => {
   const board = createBoardClient(input.appRoot ?? config.defaultWorkingDirectory);
@@ -466,7 +483,7 @@ const schedulerEngine = new SchedulerEngine({
     });
     markPromptStartupReady(session.id);
   },
-  runPipeline: async (job, input: JsonObject, onRunCreated) => {
+  runPipeline: async (job, input: JsonObject, onRunCreated, triggerAgent) => {
     if (!job.pipelineDefinitionId) {
       throw new Error("Pipeline trigger has no pipeline definition selected");
     }
@@ -475,6 +492,7 @@ const schedulerEngine = new SchedulerEngine({
     if (!definition) {
       throw new Error(`Pipeline definition not found: ${job.pipelineDefinitionId}`);
     }
+    const defaultAgent = resolveScheduledPipelineAgent(triggerAgent, definition.spec.defaultAgent);
     const functions = await loadPipelineFunctionRegistry(ownerAlias, builtinPipelineFunctions);
     const run = await runDeclarativePipeline({
       store: pipelineStore,
@@ -482,6 +500,7 @@ const schedulerEngine = new SchedulerEngine({
       definition,
       registry: functions.registry,
       input,
+      defaultAgent,
       ownerNpub: job.userNpub,
       ownerAlias,
       callbackOrigin: `http://127.0.0.1:${config.port}`,

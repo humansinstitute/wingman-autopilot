@@ -139,6 +139,7 @@ export function initSchedulerPage({ showToast }) {
       workingDirectory: "",
       initialPrompt: "",
       pipelineDefinitionId: "",
+      pipelineAgent: "",
       pipelineInput: "{}",
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
       nightwatchmanEnabled: true,
@@ -329,6 +330,7 @@ export function initSchedulerPage({ showToast }) {
         workingDirectory: job.workingDirectory,
         initialPrompt: job.initialPrompt,
         pipelineDefinitionId: resolvedPipelineDefinitionId || job.pipelineDefinitionId || "",
+        pipelineAgent: job.pipelineAgent || "",
         pipelineInput: this.formatPipelineInput(job.pipelineInputJson),
         timezone: job.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
         nightwatchmanEnabled: !!job.nightwatchmanEnabled,
@@ -359,7 +361,7 @@ export function initSchedulerPage({ showToast }) {
         if (this.editActionType === "pipeline") {
           payload.pipelineDefinitionId = this.editForm.pipelineDefinitionId;
           payload.pipelineInput = this.parsePipelineInput(this.editForm.pipelineInput);
-          payload.agent = "codex";
+          payload.pipelineAgent = this.editForm.pipelineAgent || null;
           payload.workingDirectory = "";
           payload.initialPrompt = "";
           payload.nightwatchmanEnabled = false;
@@ -369,6 +371,7 @@ export function initSchedulerPage({ showToast }) {
           payload.initialPrompt = this.editForm.initialPrompt;
           payload.nightwatchmanEnabled = this.editForm.nightwatchmanEnabled;
           payload.pipelineDefinitionId = null;
+          payload.pipelineAgent = null;
           payload.pipelineInput = {};
         }
         if (this.editTriggerType === "cron") {
@@ -409,6 +412,7 @@ export function initSchedulerPage({ showToast }) {
         workingDirectory: "",
         initialPrompt: "",
         pipelineDefinitionId: "",
+        pipelineAgent: "",
         pipelineInput: "{}",
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
         nightwatchmanEnabled: true,
@@ -433,7 +437,7 @@ export function initSchedulerPage({ showToast }) {
         if (this.actionType === "pipeline") {
           payload.pipelineDefinitionId = this.form.pipelineDefinitionId;
           payload.pipelineInput = this.parsePipelineInput(this.form.pipelineInput);
-          payload.agent = "codex";
+          payload.pipelineAgent = this.form.pipelineAgent || null;
           payload.workingDirectory = "";
           payload.initialPrompt = "";
           payload.nightwatchmanEnabled = false;
@@ -442,6 +446,7 @@ export function initSchedulerPage({ showToast }) {
           payload.workingDirectory = this.form.workingDirectory;
           payload.initialPrompt = this.form.initialPrompt;
           payload.nightwatchmanEnabled = this.form.nightwatchmanEnabled;
+          payload.pipelineAgent = null;
         }
         if (this.triggerType === "cron") {
           payload.cronExpression = this.computedCron;
@@ -674,6 +679,13 @@ function getPageTemplate() {
             <template x-for="definition in pipelineDefinitions" :key="definition.id">
               <option :value="definition.id" x-text="definition.name"></option>
             </template>
+          </select>
+        </div>
+        <div class="wm-form-group" x-show="isPipelineAction">
+          <label>Pipeline Agent (optional)</label>
+          <select class="wm-select" x-model="form.pipelineAgent">
+            <option value="">Use pipeline default</option>
+            ${renderAgentOptions()}
           </select>
         </div>
       </div>
@@ -969,6 +981,13 @@ function getPageTemplate() {
                   <template x-for="definition in pipelineDefinitions" :key="definition.id">
                     <option :value="definition.id" x-text="definition.name"></option>
                   </template>
+                </select>
+              </div>
+              <div class="wm-form-group" x-show="editIsPipelineAction">
+                <label>Pipeline Agent (optional)</label>
+                <select class="wm-select" x-model="editForm.pipelineAgent">
+                  <option value="">Use pipeline default</option>
+                  ${renderAgentOptions()}
                 </select>
               </div>
             </div>

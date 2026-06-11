@@ -109,11 +109,15 @@ async function handleCreateJob(
   const nightwatchmanEnabled = body.nightwatchmanEnabled !== false;
   const activeStartTime = typeof body.activeStartTime === "string" ? body.activeStartTime.trim() : null;
   const activeEndTime = typeof body.activeEndTime === "string" ? body.activeEndTime.trim() : null;
+  const pipelineAgent = typeof body.pipelineAgent === "string" ? body.pipelineAgent.trim() : "";
 
   if (!name) return Response.json({ error: "name is required" }, { status: 400 });
   if (actionType === "pipeline") {
     if (!pipelineDefinitionId) return Response.json({ error: "pipelineDefinitionId is required" }, { status: 400 });
     if (!pipelineInput.ok) return Response.json({ error: pipelineInput.error }, { status: 400 });
+    if (pipelineAgent && !VALID_AGENTS.includes(pipelineAgent as typeof VALID_AGENTS[number])) {
+      return Response.json({ error: `pipelineAgent must be one of: ${AGENT_TYPE_LIST}` }, { status: 400 });
+    }
   } else {
     if (!VALID_AGENTS.includes(agent as typeof VALID_AGENTS[number])) {
       return Response.json({ error: `agent must be one of: ${AGENT_TYPE_LIST}` }, { status: 400 });
@@ -183,6 +187,7 @@ async function handleCreateJob(
     actionType,
     pipelineDefinitionId: actionType === "pipeline" ? pipelineDefinitionId : null,
     pipelineInputJson: actionType === "pipeline" && pipelineInput.ok ? pipelineInput.json : null,
+    pipelineAgent: actionType === "pipeline" ? (pipelineAgent || null) : null,
   });
 
   // Schedule it
@@ -219,6 +224,17 @@ async function handleUpdateJob(
     const pipelineInput = parsePipelineInput(body.pipelineInput ?? body.pipelineInputJson);
     if (!pipelineInput.ok) return Response.json({ error: pipelineInput.error }, { status: 400 });
     update.pipelineInputJson = pipelineInput.json;
+  }
+  if (typeof body.pipelineAgent === "string") {
+    const pipelineAgent = body.pipelineAgent.trim();
+    if (pipelineAgent) {
+      if (!VALID_AGENTS.includes(pipelineAgent as typeof VALID_AGENTS[number])) {
+        return Response.json({ error: `pipelineAgent must be one of: ${AGENT_TYPE_LIST}` }, { status: 400 });
+      }
+      update.pipelineAgent = pipelineAgent;
+    } else {
+      update.pipelineAgent = null;
+    }
   }
   if (typeof body.agent === "string") {
     if (!VALID_AGENTS.includes(body.agent as typeof VALID_AGENTS[number])) {

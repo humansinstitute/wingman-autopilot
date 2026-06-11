@@ -34,6 +34,7 @@ interface PipelineRunnerInput {
   ownerNpub: string | null;
   ownerAlias: string | null;
   callbackOrigin: string;
+  defaultAgent?: string;
   onRunCreated?: (run: ReturnType<PipelineStore["createRun"]>) => void;
 }
 
@@ -606,7 +607,7 @@ async function runAgentStep(input: PipelineRunnerInput & {
 }): Promise<JsonObject> {
   assertAgentInputWithinLimit(input.selectedInput, input.definition.spec.name, input.stepName);
   const sessionCtx = input.sessionApiContext;
-  const agent = resolveAgent(sessionCtx, input.agent);
+  const agent = resolveAgent(sessionCtx, input.agent, input.defaultAgent);
   const callbackUrl = buildCallbackUrl(input.callbackOrigin, input.runId, input.stepId, input.callbackToken);
   const prompt = buildAgentPrompt({
     prompt: input.prompt,
@@ -768,9 +769,14 @@ async function stopPipelineSession(ctx: SessionApiContext, sessionId: string): P
   }
 }
 
-function resolveAgent(ctx: SessionApiContext, value: string | undefined): AgentType {
+function resolveAgent(ctx: SessionApiContext, value: string | undefined, defaultAgent?: string): AgentType {
   const normalized = typeof value === "string" ? value.trim().toLowerCase() : "codex";
-  return ctx.isAgentType(normalized) ? normalized : "codex";
+  if (ctx.isAgentType(normalized)) return normalized;
+  if (typeof defaultAgent === "string") {
+    const fallback = defaultAgent.trim().toLowerCase();
+    if (ctx.isAgentType(fallback)) return fallback;
+  }
+  return "codex";
 }
 
 function buildCallbackUrl(origin: string, runId: string, stepId: string, token: string): string {

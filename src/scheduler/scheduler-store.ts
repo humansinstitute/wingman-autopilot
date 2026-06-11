@@ -41,6 +41,7 @@ export interface ScheduledJob {
   actionType: SchedulerActionType;
   pipelineDefinitionId: string | null;
   pipelineInputJson: string | null;
+  pipelineAgent: string | null;
   enabled: boolean;
   lastRunAt: string | null;
   nextRunAt: string | null;
@@ -78,6 +79,7 @@ export interface CreateJobInput {
   actionType?: SchedulerActionType;
   pipelineDefinitionId?: string | null;
   pipelineInputJson?: string | null;
+  pipelineAgent?: string | null;
 }
 
 export interface UpdateJobInput {
@@ -96,6 +98,7 @@ export interface UpdateJobInput {
   actionType?: SchedulerActionType;
   pipelineDefinitionId?: string | null;
   pipelineInputJson?: string | null;
+  pipelineAgent?: string | null;
   enabled?: boolean;
   lastRunAt?: string;
   nextRunAt?: string;
@@ -126,6 +129,7 @@ interface RawJobRow {
   actionType: string;
   pipelineDefinitionId: string | null;
   pipelineInputJson: string | null;
+  pipelineAgent: string | null;
   enabled: number;
   lastRunAt: string | null;
   nextRunAt: string | null;
@@ -169,6 +173,7 @@ const JOB_SELECT_COLS = `
   action_type AS actionType,
   pipeline_definition_id AS pipelineDefinitionId,
   pipeline_input_json AS pipelineInputJson,
+  pipeline_agent AS pipelineAgent,
   enabled,
   last_run_at AS lastRunAt,
   next_run_at AS nextRunAt,
@@ -204,9 +209,9 @@ class SchedulerStore {
            watch_directory, file_pattern,
            active_start_time, active_end_time,
            action_type, pipeline_definition_id, pipeline_input_json,
-           enabled, last_run_at, next_run_at,
+           pipeline_agent, enabled, last_run_at, next_run_at,
            created_at, updated_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, 1, NULL, NULL, ?21, ?22)`,
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, 1, NULL, NULL, ?22, ?23)`,
       )
       .run(
         id,
@@ -229,6 +234,7 @@ class SchedulerStore {
         input.actionType ?? "session",
         input.pipelineDefinitionId ?? null,
         input.pipelineInputJson ?? null,
+        input.pipelineAgent ?? null,
         now,
         now,
       );
@@ -336,6 +342,10 @@ class SchedulerStore {
     if (input.pipelineInputJson !== undefined) {
       sets.push(`pipeline_input_json = ?${paramIndex++}`);
       values.push(input.pipelineInputJson);
+    }
+    if (input.pipelineAgent !== undefined) {
+      sets.push(`pipeline_agent = ?${paramIndex++}`);
+      values.push(input.pipelineAgent);
     }
     if (input.enabled !== undefined) {
       sets.push(`enabled = ?${paramIndex++}`);
@@ -453,6 +463,7 @@ class SchedulerStore {
         action_type TEXT NOT NULL DEFAULT 'session',
         pipeline_definition_id TEXT,
         pipeline_input_json TEXT,
+        pipeline_agent TEXT,
         cron_expression TEXT NOT NULL,
         timezone TEXT NOT NULL DEFAULT 'UTC',
         enabled INTEGER NOT NULL DEFAULT 1,
@@ -494,6 +505,7 @@ class SchedulerStore {
       "ALTER TABLE scheduled_jobs ADD COLUMN action_type TEXT NOT NULL DEFAULT 'session'",
       "ALTER TABLE scheduled_jobs ADD COLUMN pipeline_definition_id TEXT",
       "ALTER TABLE scheduled_jobs ADD COLUMN pipeline_input_json TEXT",
+      "ALTER TABLE scheduled_jobs ADD COLUMN pipeline_agent TEXT",
       "ALTER TABLE scheduled_job_runs ADD COLUMN pipeline_run_id TEXT",
     ];
     for (const sql of migrations) {
