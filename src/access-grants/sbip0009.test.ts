@@ -35,8 +35,8 @@ function makeGrantEvent(overrides: {
   app?: ReturnType<typeof makeIdentity>;
 } = {}) {
   const recipient = overrides.recipient ?? makeIdentity();
-  const publisher = overrides.publisher ?? makeIdentity();
   const issuer = overrides.issuer ?? makeIdentity();
+  const publisher = overrides.publisher ?? issuer;
   const service = overrides.service ?? makeIdentity();
   const workspaceService = overrides.workspaceService ?? makeIdentity();
   const workspaceOwner = overrides.workspaceOwner ?? makeIdentity();
@@ -121,7 +121,7 @@ function makeGrantEvent(overrides: {
     tags,
     content,
   }, publisher.secret);
-  return { event, recipient, publisher, payload, service, workspaceService, workspaceOwner, app, grantId };
+  return { event, recipient, publisher, issuer, payload, service, workspaceService, workspaceOwner, app, grantId };
 }
 
 function makeCurrentFlightDeckGrantEvent(overrides: Parameters<typeof makeGrantEvent>[0] = {}) {
@@ -224,7 +224,7 @@ describe('Flight Deck 33357 onboarding validation', () => {
       event: fixture.event,
       recipientSecretKey: fixture.recipient.secret,
       recipientNpub: fixture.recipient.npub,
-      managedByNpub: fixture.recipient.npub,
+      managedByNpub: fixture.issuer.npub,
       subscriptionManager: {
         importAgentConnectPackage: async (input) => {
           importedPackage = input.packageJson;
@@ -268,7 +268,7 @@ describe('Flight Deck 33357 onboarding validation', () => {
       event: fixture.event,
       recipientSecretKey: fixture.recipient.secret,
       recipientNpub: fixture.recipient.npub,
-      managedByNpub: fixture.recipient.npub,
+      managedByNpub: fixture.issuer.npub,
       subscriptionManager: {
         importAgentConnectPackage: async () => {
           imports += 1;
@@ -317,6 +317,7 @@ describe('Flight Deck 33357 onboarding validation', () => {
     const secondFixture = makeCurrentFlightDeckGrantEvent({
       recipient: firstFixture.recipient,
       publisher: firstFixture.publisher,
+      issuer: firstFixture.issuer,
       service: firstFixture.service,
       workspaceService: firstFixture.workspaceService,
       workspaceOwner: firstFixture.workspaceOwner,
@@ -332,7 +333,7 @@ describe('Flight Deck 33357 onboarding validation', () => {
     const baseInput = {
       recipientSecretKey: firstFixture.recipient.secret,
       recipientNpub: firstFixture.recipient.npub,
-      managedByNpub: firstFixture.recipient.npub,
+      managedByNpub: firstFixture.issuer.npub,
       processedKeys,
       subscriptionManager: {
         importAgentConnectPackage: async () => {
@@ -402,7 +403,7 @@ describe('Flight Deck 33357 onboarding validation', () => {
       event: towerMismatch.event,
       recipientSecretKey: towerMismatch.recipient.secret,
       recipientNpub: towerMismatch.recipient.npub,
-      managedByNpub: towerMismatch.recipient.npub,
+      managedByNpub: towerMismatch.issuer.npub,
       subscriptionManager: {
         importAgentConnectPackage: async () => {
           imports += 1;
@@ -426,6 +427,47 @@ describe('Flight Deck 33357 onboarding validation', () => {
     expect(imports).toBe(0);
   });
 
+  test('rejects onboarding signed by someone other than the payload issuer', () => {
+    const fixture = makeCurrentFlightDeckGrantEvent({
+      publisher: makeIdentity(),
+    });
+
+    expect(() => decodeAccessGrantEvent({
+      event: fixture.event,
+      recipientSecretKey: fixture.recipient.secret,
+      recipientNpub: fixture.recipient.npub,
+    })).toThrow(/event signer issuer mismatch/);
+  });
+
+  test('rejects onboarding from an issuer other than the bot manager before Tower verification', async () => {
+    const fixture = makeCurrentFlightDeckGrantEvent();
+    const otherManager = makeIdentity();
+    let verifies = 0;
+    let imports = 0;
+
+    const result = await processAccessGrantEvent({
+      event: fixture.event,
+      recipientSecretKey: fixture.recipient.secret,
+      recipientNpub: fixture.recipient.npub,
+      managedByNpub: otherManager.npub,
+      subscriptionManager: {
+        importAgentConnectPackage: async () => {
+          imports += 1;
+          return {};
+        },
+      },
+      fetchImpl: async () => {
+        verifies += 1;
+        return new Response(JSON.stringify({ allowed: true }), { status: 200 });
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe('unauthorized_issuer');
+    expect(verifies).toBe(0);
+    expect(imports).toBe(0);
+  });
+
   test('reports decrypt failure before import', async () => {
     const fixture = makeGrantEvent();
     const wrongRecipient = makeIdentity();
@@ -433,7 +475,7 @@ describe('Flight Deck 33357 onboarding validation', () => {
       event: fixture.event,
       recipientSecretKey: wrongRecipient.secret,
       recipientNpub: fixture.recipient.npub,
-      managedByNpub: fixture.recipient.npub,
+      managedByNpub: fixture.issuer.npub,
       subscriptionManager: { importAgentConnectPackage: async () => ({}) },
       fetchImpl: async () => new Response(JSON.stringify({ allowed: true }), { status: 200 }),
     });
@@ -448,7 +490,7 @@ describe('Flight Deck 33357 onboarding validation', () => {
       event: fixture.event,
       recipientSecretKey: fixture.recipient.secret,
       recipientNpub: fixture.recipient.npub,
-      managedByNpub: fixture.recipient.npub,
+      managedByNpub: fixture.issuer.npub,
       subscriptionManager: {
         importAgentConnectPackage: async () => {
           imports += 1;
@@ -472,7 +514,7 @@ describe('Flight Deck 33357 onboarding validation', () => {
       event: fixture.event,
       recipientSecretKey: fixture.recipient.secret,
       recipientNpub: fixture.recipient.npub,
-      managedByNpub: fixture.recipient.npub,
+      managedByNpub: fixture.issuer.npub,
       processedKeys,
       subscriptionManager: {
         importAgentConnectPackage: async (input) => {
@@ -522,7 +564,7 @@ describe('Flight Deck 33357 onboarding validation', () => {
       event: fixture.event,
       recipientSecretKey: fixture.recipient.secret,
       recipientNpub: fixture.recipient.npub,
-      managedByNpub: fixture.recipient.npub,
+      managedByNpub: fixture.issuer.npub,
       subscriptionManager: {
         importAgentConnectPackage: async () => {
           imports += 1;
@@ -562,7 +604,7 @@ describe('Flight Deck 33357 onboarding validation', () => {
       event: fixture.event,
       recipientSecretKey: fixture.recipient.secret,
       recipientNpub: fixture.recipient.npub,
-      managedByNpub: fixture.recipient.npub,
+      managedByNpub: fixture.issuer.npub,
       subscriptionManager: {
         importAgentConnectPackage: async () => {
           imports += 1;
@@ -604,7 +646,7 @@ describe('Flight Deck 33357 onboarding validation', () => {
       event: fixture.event,
       recipientSecretKey: fixture.recipient.secret,
       recipientNpub: fixture.recipient.npub,
-      managedByNpub: fixture.recipient.npub,
+      managedByNpub: fixture.issuer.npub,
       subscriptionManager: {
         importAgentConnectPackage: async () => ({}),
         handleAccessGrantRevocation: async (input) => {
@@ -670,7 +712,7 @@ describe('Flight Deck 33357 onboarding validation', () => {
       event: fixture.event,
       recipientSecretKey: fixture.recipient.secret,
       recipientNpub: fixture.recipient.npub,
-      managedByNpub: fixture.recipient.npub,
+      managedByNpub: fixture.issuer.npub,
       subscriptionManager: {
         importAgentConnectPackage: async () => {
           imports += 1;
@@ -707,7 +749,7 @@ describe('Flight Deck 33357 onboarding validation', () => {
         event: fixture.event,
         recipientSecretKey: fixture.recipient.secret,
         recipientNpub: fixture.recipient.npub,
-        managedByNpub: fixture.recipient.npub,
+        managedByNpub: fixture.issuer.npub,
         subscriptionManager: {
           importAgentConnectPackage: async () => {
             imports += 1;

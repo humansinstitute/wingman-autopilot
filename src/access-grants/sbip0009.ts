@@ -84,6 +84,7 @@ export interface DecodedAccessGrant {
   payload: AccessGrantPayload;
   recipientNpub: string;
   recipientPubkeyHex: string;
+  eventSignerNpub: string;
   issuerNpub: string | null;
   serviceNpub: string | null;
   workspaceServiceNpub: string;
@@ -335,6 +336,10 @@ export function decodeAccessGrantEvent(input: {
   }
 
   const recipientPubkeyHex = decodeNpubToHex(recipientNpub);
+  const eventSignerNpub = encodeHexToNpub(event.pubkey);
+  if (!eventSignerNpub) {
+    throw Object.assign(new Error('invalid event signer pubkey'), { code: 'signature_invalid' });
+  }
   const taggedRecipientHex = getMarkedPTag(event.tags, 'recipient') ?? getRequiredTag(event.tags, 'p');
   if (taggedRecipientHex.toLowerCase() !== recipientPubkeyHex) {
     throw Object.assign(new Error('recipient p tag mismatch'), { code: 'wrong_recipient' });
@@ -368,6 +373,7 @@ export function decodeAccessGrantEvent(input: {
   assertEqualWhenPresent('grant id', grantTag, payload.grant_id ?? payload.grant?.grant_id ?? null);
   assertEqualWhenPresent('recipient npub', recipientTag, payload.recipient?.npub ?? payload.recipient_npub);
   assertEqualWhenPresent('issuer npub', issuerTag, payload.issuer?.npub ?? payload.issued_by_npub);
+  assertEqual('event signer issuer', eventSignerNpub, issuerTag);
   assertEqualWhenPresent('service npub', taggedServiceNpub, payload.service.service_npub);
   assertEqualWhenPresent('workspace service npub', workspaceServiceNpub, payload.workspace.workspace_service_npub);
   assertEqualWhenPresent('workspace owner npub', workspaceOwnerNpub, payload.workspace.owner_npub);
@@ -398,6 +404,7 @@ export function decodeAccessGrantEvent(input: {
     payload,
     recipientNpub,
     recipientPubkeyHex,
+    eventSignerNpub,
     issuerNpub: issuerTag,
     serviceNpub,
     workspaceServiceNpub,
@@ -407,6 +414,10 @@ export function decodeAccessGrantEvent(input: {
     dedupeKey,
     canonicalConnectionKey: `${serviceNpub}:${workspaceServiceNpub}:${appNpub}:${recipientNpub}`,
   };
+}
+
+function grantIssuerIsManagedBy(grant: DecodedAccessGrant, managedByNpub: string): boolean {
+  return Boolean(grant.issuerNpub && managedByNpub && grant.issuerNpub === managedByNpub);
 }
 
 function decodeConnectionToken(token: string): Record<string, unknown> {
@@ -994,6 +1005,15 @@ export async function processAccessGrantEvent(input: ProcessAccessGrantInput): P
   } catch (error) {
     const code = typeof (error as { code?: unknown })?.code === 'string' ? (error as { code: string }).code : 'grant_invalid';
     return { ok: false, code, message: (error as Error).message };
+  }
+
+  if (!grantIssuerIsManagedBy(grant, input.managedByNpub)) {
+    return {
+      ok: false,
+      code: 'unauthorized_issuer',
+      message: 'Onboarding event issuer is not authorized for this managed bot identity.',
+      grant,
+    };
   }
 
   if (grant.payload.action !== 'grant') {

@@ -66,6 +66,11 @@ tags consistently. If `app_pub` or `protocol` is present, Autopilot validates it
 after decrypting the payload. It does not require cleartext `d`, `grant`,
 service, workspace, or owner tags.
 
+Autopilot verifies the Nostr event signature before decrypting. The event
+signer must match the encrypted payload's `issued_by_npub`, and that issuer must
+match the local user npub that manages the receiving agent identity. This keeps
+third parties from onboarding a known bot npub into arbitrary workspaces.
+
 Events that fail tag validation, decrypt, JSON parse, payload validation, or
 Tower verification should be recorded as diagnostics and ignored for import or
 revocation.
