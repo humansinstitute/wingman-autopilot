@@ -25,9 +25,16 @@ Commands:
 
 Required create options:
   --name <name>              Trigger name
-  --agent <agent>            Agent: codex|claude|goose|opencode|gemini
-  --working-directory <path> Working directory
-  --prompt <text>            Initial prompt
+  --agent <agent>            Agent for session jobs: codex|claude|goose|opencode|gemini
+  --working-directory <path> Working directory for session jobs
+  --prompt <text>            Initial prompt for session jobs
+
+Action options:
+  --action-type <type>       session|pipeline (default: session)
+  --pipeline-definition-id <id> Pipeline definition id/slug/name for pipeline jobs
+  --pipeline-input <json>    Pipeline input JSON object
+  --pipeline-input-json <json> Alias for --pipeline-input
+  --pipeline-agent <agent>   Default agent override for pipeline agent steps
 
 Trigger options:
   --trigger-type <type>      cron|file_watcher|nostr (default: cron)
@@ -87,6 +94,10 @@ interface ParsedOptions {
   agent?: string;
   workingDirectory?: string;
   prompt?: string;
+  actionType?: 'session' | 'pipeline';
+  pipelineDefinitionId?: string | null;
+  pipelineInput?: Record<string, unknown>;
+  pipelineAgent?: string | null;
   triggerType?: TriggerType;
   cronExpression?: string;
   timezone?: string;
@@ -107,6 +118,19 @@ function parseBooleanFlag(value: string | undefined, flagName: string): boolean 
   if (normalized === 'true') return true;
   if (normalized === 'false') return false;
   throw new Error(`${flagName} must be true or false`);
+}
+
+function parseJsonObjectFlag(value: string, flagName: string): Record<string, unknown> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error(`${flagName} must be valid JSON`);
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`${flagName} must be a JSON object`);
+  }
+  return parsed as Record<string, unknown>;
 }
 
 function parseSchedulerOptions(args: string[]): ParsedOptions {
@@ -139,6 +163,37 @@ function parseSchedulerOptions(args: string[]): ParsedOptions {
         const value = args[++i];
         if (!value) throw new Error(`${token} requires a value`);
         parsed.prompt = value;
+        break;
+      }
+      case '--action-type': {
+        const value = args[++i];
+        if (!value) throw new Error('--action-type requires a value');
+        if (value === 'session' || value === 'pipeline') {
+          parsed.actionType = value;
+        } else {
+          throw new Error('--action-type must be session or pipeline');
+        }
+        break;
+      }
+      case '--pipeline-definition-id':
+      case '--pipeline':
+      case '--pipeline-id': {
+        const value = args[++i];
+        if (!value) throw new Error(`${token} requires a value`);
+        parsed.pipelineDefinitionId = value;
+        break;
+      }
+      case '--pipeline-input':
+      case '--pipeline-input-json': {
+        const value = args[++i];
+        if (!value) throw new Error(`${token} requires a JSON object value`);
+        parsed.pipelineInput = parseJsonObjectFlag(value, token);
+        break;
+      }
+      case '--pipeline-agent': {
+        const value = args[++i];
+        if (!value) throw new Error('--pipeline-agent requires a value');
+        parsed.pipelineAgent = value;
         break;
       }
       case '--trigger-type': {
@@ -211,10 +266,11 @@ function printJobList(jobs: SchedulerJob[]): void {
     return;
   }
 
-  console.log('ID\tNAME\tAGENT\tTYPE\tENABLED\tSCHEDULE');
+  console.log('ID\tNAME\tACTION\tAGENT\tTYPE\tENABLED\tSCHEDULE');
   for (const job of jobs) {
     const id = String(job.id ?? '').slice(0, 8);
     const name = String(job.name ?? '-');
+    const action = String(job.actionType ?? 'session');
     const agent = String(job.agent ?? '-');
     const type = String(job.triggerType ?? 'cron');
     const enabled = job.enabled === false ? 'no' : 'yes';
@@ -227,7 +283,7 @@ function printJobList(jobs: SchedulerJob[]): void {
       schedule = `${watchDir} (${pattern})`;
     }
 
-    console.log(`${id}\t${name}\t${agent}\t${type}\t${enabled}\t${schedule}`);
+    console.log(`${id}\t${name}\t${action}\t${agent}\t${type}\t${enabled}\t${schedule}`);
   }
 }
 
@@ -254,11 +310,16 @@ function buildCreatePayload(options: ParsedOptions): Record<string, unknown> {
   const agent = options.agent?.trim();
   const workingDirectory = options.workingDirectory?.trim();
   const initialPrompt = options.prompt?.trim();
+  const actionType = options.actionType ?? 'session';
 
   if (!name) throw new Error('create requires --name <name>');
-  if (!agent) throw new Error('create requires --agent <agent>');
-  if (!workingDirectory) throw new Error('create requires --working-directory <path>');
-  if (!initialPrompt) throw new Error('create requires --prompt <text>');
+  if (actionType === 'pipeline') {
+    if (!options.pipelineDefinitionId) throw new Error('create requires --pipeline-definition-id <id> for pipeline jobs');
+  } else {
+    if (!agent) throw new Error('create requires --agent <agent>');
+    if (!workingDirectory) throw new Error('create requires --working-directory <path>');
+    if (!initialPrompt) throw new Error('create requires --prompt <text>');
+  }
 
   const triggerType = options.triggerType ?? 'cron';
   if (triggerType === 'cron' && !options.cronExpression) {
@@ -270,11 +331,19 @@ function buildCreatePayload(options: ParsedOptions): Record<string, unknown> {
 
   const payload: Record<string, unknown> = {
     name,
-    agent,
-    workingDirectory,
-    initialPrompt,
+    actionType,
     triggerType,
   };
+
+  if (actionType === 'pipeline') {
+    payload.pipelineDefinitionId = options.pipelineDefinitionId;
+    payload.pipelineInput = options.pipelineInput ?? {};
+    if (options.pipelineAgent !== undefined) payload.pipelineAgent = options.pipelineAgent;
+  } else {
+    payload.agent = agent;
+    payload.workingDirectory = workingDirectory;
+    payload.initialPrompt = initialPrompt;
+  }
 
   if (options.cronExpression) payload.cronExpression = options.cronExpression;
   if (options.timezone) payload.timezone = options.timezone;
@@ -294,9 +363,13 @@ function buildUpdatePayload(options: ParsedOptions): Record<string, unknown> {
   const payload: Record<string, unknown> = {};
 
   if (options.name !== undefined) payload.name = options.name;
+  if (options.actionType !== undefined) payload.actionType = options.actionType;
   if (options.agent !== undefined) payload.agent = options.agent;
   if (options.workingDirectory !== undefined) payload.workingDirectory = options.workingDirectory;
   if (options.prompt !== undefined) payload.initialPrompt = options.prompt;
+  if (options.pipelineDefinitionId !== undefined) payload.pipelineDefinitionId = options.pipelineDefinitionId;
+  if (options.pipelineInput !== undefined) payload.pipelineInput = options.pipelineInput;
+  if (options.pipelineAgent !== undefined) payload.pipelineAgent = options.pipelineAgent;
   if (options.triggerType !== undefined) payload.triggerType = options.triggerType;
   if (options.cronExpression !== undefined) payload.cronExpression = options.cronExpression;
   if (options.timezone !== undefined) payload.timezone = options.timezone;

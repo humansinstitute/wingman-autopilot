@@ -722,6 +722,17 @@ function mapFailureState(detailCode: string | null): RuntimeFailureState {
   }
 }
 
+function isRetryableTowerAccessError(error: unknown): boolean {
+  const status = typeof (error as { status?: unknown })?.status === 'number'
+    ? (error as { status: number }).status
+    : null;
+  if (status && status >= 500) {
+    return true;
+  }
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  return /"retryable"\s*:\s*true/.test(message) || /bad gateway|gateway timeout|service unavailable/i.test(message);
+}
+
 function canUseBackendConnection(
   record: BackendConnectionRecord,
   managedByNpub: string,
@@ -2339,9 +2350,10 @@ export class WorkspaceSubscriptionManager {
       this.clearRuntimeFailure(saved.subscriptionId, 'flightdeck_pg_access_verified');
       return saved;
     } catch (error) {
-      record.wsKeyStatus = 'failed';
-      record.healthStatus = 'unhealthy';
-      record.sseStatus = 'disconnected';
+      const retryable = isRetryableTowerAccessError(error);
+      record.wsKeyStatus = retryable && record.wsKeyStatus === 'active' ? 'active' : retryable ? 'pending' : 'failed';
+      record.healthStatus = retryable ? 'degraded' : 'unhealthy';
+      record.sseStatus = retryable ? 'backoff' : 'disconnected';
       record.lastErrorCode = 'flightdeck_pg_access_failed';
       record.lastErrorAt = new Date().toISOString();
       record.lastAuthResult = buildFailureDiagnostic(
@@ -2352,9 +2364,10 @@ export class WorkspaceSubscriptionManager {
           workspace_id: record.workspaceId,
           workspace_service_npub: record.workspaceServiceNpub,
           bot_npub: botIdentity.botNpub,
+          retryable,
         },
       );
-      const saved = this.saveRecord(record);
+      const saved = this.saveRecord(this.recomputeHealth(record));
       this.markRuntimeFailure(saved.subscriptionId, getErrorDetailCode(error) ?? 'flightdeck_pg_access_failed', 'flightdeck_pg_access_failed');
       return saved;
     }

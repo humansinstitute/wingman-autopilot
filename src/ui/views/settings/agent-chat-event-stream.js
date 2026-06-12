@@ -117,9 +117,18 @@ function createDisclosure(label, value) {
 }
 
 export function resolveWorkspaceName(subscription) {
-  const name = typeof subscription.workspaceName === 'string' ? subscription.workspaceName.trim() : '';
-  if (name) {
-    return name;
+  const candidates = [
+    subscription?.profileWorkspace?.workspace?.workspaceTitle,
+    subscription?.workspaceName,
+    subscription?.backend?.workspaceName,
+    subscription?.profileWorkspace?.workspace?.workspaceId,
+    subscription?.workspaceId,
+  ];
+  for (const candidate of candidates) {
+    const name = typeof candidate === 'string' ? candidate.trim() : '';
+    if (name) {
+      return name;
+    }
   }
   return shortenIdentifier(subscription.workspaceOwnerNpub, { head: 18, tail: 10 });
 }

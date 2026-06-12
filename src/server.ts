@@ -517,6 +517,9 @@ const schedulerApiHandler = createSchedulerApiHandler({
   getInstanceIdentity: () => wingmanInstanceIdentity,
   getNpub: (request: Request) => {
     const ctx = getRequestContext();
+    if (ctx?.delegatedByBot && ctx.delegatedOwnerNpub) {
+      return ctx.delegatedOwnerNpub;
+    }
     return ctx?.npub ?? null;
   },
 });

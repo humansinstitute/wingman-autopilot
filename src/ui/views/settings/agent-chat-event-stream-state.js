@@ -1,10 +1,22 @@
 export function resolveEventFamily(event) {
   const familyHash = typeof event?.payload?.family_hash === 'string' ? event.payload.family_hash : '';
-  if (!familyHash) {
-    return 'unknown-family';
+  if (familyHash) {
+    const parts = familyHash.split(':').filter(Boolean);
+    return parts[parts.length - 1] || familyHash;
   }
-  const parts = familyHash.split(':').filter(Boolean);
-  return parts[parts.length - 1] || familyHash;
+  const entityType = typeof event?.payload?.entity_type === 'string' ? event.payload.entity_type : '';
+  if (entityType) {
+    if (entityType === 'message' || entityType === 'thread') {
+      return 'chat';
+    }
+    if (entityType === 'task_comment' || entityType === 'document_comment') {
+      return 'comment';
+    }
+    return entityType;
+  }
+  const eventType = typeof event?.eventType === 'string' ? event.eventType : '';
+  const match = eventType.match(/^flightdeck_pg\.([a-z_]+)\./);
+  return match?.[1] || 'unknown-family';
 }
 
 function buildEventFingerprint(event) {
@@ -37,7 +49,19 @@ function dedupeEvents(events) {
 }
 
 export function getEventRecordId(event) {
-  return typeof event?.payload?.record_id === 'string' ? event.payload.record_id : null;
+  if (typeof event?.payload?.record_id === 'string') {
+    return event.payload.record_id;
+  }
+  if (typeof event?.payload?.entity_id === 'string') {
+    return event.payload.entity_id;
+  }
+  if (typeof event?.payload?.payload?.message_id === 'string') {
+    return event.payload.payload.message_id;
+  }
+  if (typeof event?.payload?.payload?.task_id === 'string') {
+    return event.payload.payload.task_id;
+  }
+  return null;
 }
 
 function getEventSortTime(event) {
@@ -63,7 +87,14 @@ function findDispatchForEvent(subscription, event) {
   }
   return [...subscription.recentDispatches]
     .reverse()
-    .find((entry) => entry.recordId === recordId || entry.bindingId === recordId) ?? null;
+    .find((entry) => (
+      entry.recordId === recordId
+      || entry.bindingId === recordId
+      || entry.details?.message_id === recordId
+      || entry.details?.entity_id === recordId
+      || entry.details?.targetMessageId === recordId
+      || entry.details?.chat_acknowledgement?.targetMessageId === recordId
+    )) ?? null;
 }
 
 function diagnosticMatchesEvent(diagnostic, recordId) {

@@ -118,6 +118,7 @@ export class DispatchPipelineRuntime {
   private readonly acknowledgeChatMessage: (input: DispatchChatAcknowledgementInput) => Promise<JsonObject>;
   private readonly requirePipelineRoutes: boolean;
   private readonly defaultAgent: string;
+  private readonly pendingDispatchDedupeKeys = new Set<string>();
 
   constructor(deps: DispatchPipelineRuntimeDependencies) {
     this.routeStore = deps.routeStore ?? dispatchRouteStore;
@@ -226,6 +227,25 @@ export class DispatchPipelineRuntime {
       record: input,
       routing: input,
     }) || dedupeKey;
+    const pendingDedupeKey = `${route.routeId}:${dedupeKey}`;
+    if (this.pendingDispatchDedupeKeys.has(pendingDedupeKey)) {
+      return {
+        handled: true,
+        historyEntries: [
+          this.buildHistoryEntry(input, route, {
+            action: `${input.triggerKind}_pipeline_suppressed`,
+            status: 'suppressed',
+            pipelineRunId: null,
+            concurrencyKey,
+            dedupeKey,
+            dedupeReason: 'in_flight_duplicate',
+            suppressionReason: 'dedupe_in_flight',
+            diagnosticSummary: 'Dispatch route is already starting a pipeline for this advisory.',
+          }),
+        ],
+        lastPipelineRunId: null,
+      };
+    }
     const suppressedRun = this.findSuppressedDispatchRun(route, dedupeKey, concurrencyKey);
     if (suppressedRun) {
       return {
@@ -246,128 +266,133 @@ export class DispatchPipelineRuntime {
       };
     }
 
+    this.pendingDispatchDedupeKeys.add(pendingDedupeKey);
     try {
-      await ensureAgentWorkingDirectory(agent);
-    } catch (error) {
-      return {
-        handled: true,
-        historyEntries: [
-          this.buildHistoryEntry(input, route, {
-            action: `${input.triggerKind}_pipeline_failed`,
-            status: 'failed',
-            pipelineRunId: null,
-            diagnosticSummary: `Agent working directory is not usable: ${error instanceof Error ? error.message : String(error)}`,
-          }),
-        ],
-        lastPipelineRunId: null,
-      };
-    }
-
-    let flightDeckRuntime = emptyFlightDeckRuntime();
-    let chatAcknowledgement: JsonObject | null = null;
-    if (input.triggerKind === 'chat') {
-      flightDeckRuntime = await prepareDispatchPipelineFlightDeckRuntime({ eventInput: input, agent });
       try {
-        chatAcknowledgement = await this.acknowledgeChatMessage({
-          eventInput: input,
-          agent,
-          flightDeckRuntime,
-        });
+        await ensureAgentWorkingDirectory(agent);
       } catch (error) {
-        chatAcknowledgement = buildFailedChatAcknowledgement(input, error);
+        return {
+          handled: true,
+          historyEntries: [
+            this.buildHistoryEntry(input, route, {
+              action: `${input.triggerKind}_pipeline_failed`,
+              status: 'failed',
+              pipelineRunId: null,
+              diagnosticSummary: `Agent working directory is not usable: ${error instanceof Error ? error.message : String(error)}`,
+            }),
+          ],
+          lastPipelineRunId: null,
+        };
       }
-    }
 
-    const ownerNpub = input.subscription.managedByNpub ?? route.managedByNpub;
-    const ownerAlias = generateIdentityAlias(ownerNpub);
-    const definition = await this.loadDefinition(route.pipelineDefinitionId, ownerAlias)
-      ?? await this.loadFallbackDefinitionForRoute(route, ownerAlias);
-    const sessionApiContext = this.getSessionApiContext();
-    if (!definition || !sessionApiContext) {
+      let flightDeckRuntime = emptyFlightDeckRuntime();
+      let chatAcknowledgement: JsonObject | null = null;
+      if (input.triggerKind === 'chat') {
+        flightDeckRuntime = await prepareDispatchPipelineFlightDeckRuntime({ eventInput: input, agent });
+        try {
+          chatAcknowledgement = await this.acknowledgeChatMessage({
+            eventInput: input,
+            agent,
+            flightDeckRuntime,
+          });
+        } catch (error) {
+          chatAcknowledgement = buildFailedChatAcknowledgement(input, error);
+        }
+      }
+
+      const ownerNpub = input.subscription.managedByNpub ?? route.managedByNpub;
+      const ownerAlias = generateIdentityAlias(ownerNpub);
+      const definition = await this.loadDefinition(route.pipelineDefinitionId, ownerAlias)
+        ?? await this.loadFallbackDefinitionForRoute(route, ownerAlias);
+      const sessionApiContext = this.getSessionApiContext();
+      if (!definition || !sessionApiContext) {
+        return {
+          handled: true,
+          historyEntries: [
+            this.buildHistoryEntry(input, route, {
+              action: `${input.triggerKind}_pipeline_failed`,
+              status: 'failed',
+              pipelineRunId: null,
+              acknowledgement: chatAcknowledgement,
+              diagnosticSummary: !definition
+                ? `Pipeline definition not found: ${route.pipelineDefinitionId}`
+                : 'Pipeline session API context is not ready.',
+            }),
+          ],
+          lastPipelineRunId: null,
+        };
+      }
+
+      if (pipelineNeedsFlightDeckPublisher(definition.spec) && !flightDeckRuntime.yokeStateDir && input.triggerKind !== 'chat') {
+        flightDeckRuntime = await prepareDispatchPipelineFlightDeckRuntime({ eventInput: input, agent });
+      }
+      const availablePipelines = await this.listDefinitions(ownerAlias).catch(() => []);
+      const envelope = buildDispatchEnvelope({
+        route,
+        input,
+        agent,
+        dedupeKey,
+        concurrencyKey,
+        flightDeckRuntime,
+        acknowledgement: chatAcknowledgement,
+        defaultAgent: this.defaultAgent,
+        availablePipelines,
+      });
+      const functions = await this.loadRuntimeFunctions({
+        ownerAlias,
+        ownerNpub,
+        sessionApiContext,
+        eventInput: input,
+        agent,
+        flightDeckRuntime,
+        definitionNeedsPublisher: pipelineNeedsFlightDeckPublisher(definition.spec),
+      });
+      const runnerInput = {
+        store: this.pipelineStore,
+        sessionApiContext,
+        definition,
+        registry: functions,
+        input: envelope,
+        ownerNpub,
+        ownerAlias,
+        callbackOrigin: this.callbackOrigin,
+      };
+      const run = this.runPipeline
+        ? await this.runPipeline(runnerInput)
+        : this.startPipeline(runnerInput);
+      const needsInputUpdate = run.status === 'needs_input'
+        ? await publishNeedsInputForRun(functions, {
+            ...envelope,
+            workerResult: objectValue(run.result),
+            agentResponse: objectValue(run.result),
+            pipelineRun: {
+              id: run.id,
+              definitionId: run.definitionId,
+              status: run.status,
+            },
+          })
+        : null;
+
       return {
         handled: true,
         historyEntries: [
           this.buildHistoryEntry(input, route, {
-            action: `${input.triggerKind}_pipeline_failed`,
-            status: 'failed',
-            pipelineRunId: null,
+            action: `${input.triggerKind}_pipeline_dispatch`,
+            status: run.status,
+            pipelineRunId: run.id,
+            concurrencyKey,
+            dedupeKey,
             acknowledgement: chatAcknowledgement,
-            diagnosticSummary: !definition
-              ? `Pipeline definition not found: ${route.pipelineDefinitionId}`
-              : 'Pipeline session API context is not ready.',
+            diagnosticSummary: needsInputUpdate
+              ? `Started dispatch pipeline ${route.pipelineDefinitionId}; needs-input question published.`
+              : `Started dispatch pipeline ${route.pipelineDefinitionId}.`,
           }),
         ],
-        lastPipelineRunId: null,
+        lastPipelineRunId: run.id,
       };
+    } finally {
+      this.pendingDispatchDedupeKeys.delete(pendingDedupeKey);
     }
-
-    if (pipelineNeedsFlightDeckPublisher(definition.spec) && !flightDeckRuntime.yokeStateDir && input.triggerKind !== 'chat') {
-      flightDeckRuntime = await prepareDispatchPipelineFlightDeckRuntime({ eventInput: input, agent });
-    }
-    const availablePipelines = await this.listDefinitions(ownerAlias).catch(() => []);
-    const envelope = buildDispatchEnvelope({
-      route,
-      input,
-      agent,
-      dedupeKey,
-      concurrencyKey,
-      flightDeckRuntime,
-      acknowledgement: chatAcknowledgement,
-      defaultAgent: this.defaultAgent,
-      availablePipelines,
-    });
-    const functions = await this.loadRuntimeFunctions({
-      ownerAlias,
-      ownerNpub,
-      sessionApiContext,
-      eventInput: input,
-      agent,
-      flightDeckRuntime,
-      definitionNeedsPublisher: pipelineNeedsFlightDeckPublisher(definition.spec),
-    });
-    const runnerInput = {
-      store: this.pipelineStore,
-      sessionApiContext,
-      definition,
-      registry: functions,
-      input: envelope,
-      ownerNpub,
-      ownerAlias,
-      callbackOrigin: this.callbackOrigin,
-    };
-    const run = this.runPipeline
-      ? await this.runPipeline(runnerInput)
-      : this.startPipeline(runnerInput);
-    const needsInputUpdate = run.status === 'needs_input'
-      ? await publishNeedsInputForRun(functions, {
-          ...envelope,
-          workerResult: objectValue(run.result),
-          agentResponse: objectValue(run.result),
-          pipelineRun: {
-            id: run.id,
-            definitionId: run.definitionId,
-            status: run.status,
-          },
-        })
-      : null;
-
-    return {
-      handled: true,
-      historyEntries: [
-        this.buildHistoryEntry(input, route, {
-          action: `${input.triggerKind}_pipeline_dispatch`,
-          status: run.status,
-          pipelineRunId: run.id,
-          concurrencyKey,
-          dedupeKey,
-          acknowledgement: chatAcknowledgement,
-          diagnosticSummary: needsInputUpdate
-            ? `Started dispatch pipeline ${route.pipelineDefinitionId}; needs-input question published.`
-            : `Started dispatch pipeline ${route.pipelineDefinitionId}.`,
-        }),
-      ],
-      lastPipelineRunId: run.id,
-    };
   }
 
   async loadRegistryForStoredRun(input: {

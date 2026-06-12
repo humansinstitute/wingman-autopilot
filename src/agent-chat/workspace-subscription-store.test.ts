@@ -68,6 +68,29 @@ describe('WorkspaceSubscriptionStore', () => {
     expect(store.getBySubscriptionId(record.subscriptionId)?.onboardingSource).toBe('nostr_33357');
   });
 
+  test('retries failed Flight Deck PG access checks on startup reload', () => {
+    const store = new WorkspaceSubscriptionStore(makeTempDb());
+    const record = store.save({
+      ...store.createDefault({
+        managedByNpub: 'npub1manager',
+        backendConnectionId: 'backend-1',
+        workspaceOwnerNpub: 'npub1workspace',
+        backendBaseUrl: 'https://tower.example.com',
+        workspaceId: 'workspace-pg-1',
+        workspaceServiceNpub: 'npub1workspaceservice',
+        botNpub: 'npub1bot',
+        sourceAppNpub: 'npub1app',
+        onboardingSource: 'nostr_33357',
+      }),
+      wsKeyStatus: 'failed',
+      sseStatus: 'disconnected',
+      healthStatus: 'unhealthy',
+      lastErrorCode: 'flightdeck_pg_access_failed',
+    });
+
+    expect(store.listStartupCandidates().map((candidate) => candidate.subscriptionId)).toContain(record.subscriptionId);
+  });
+
   test('scopes same owner and app by explicit workspace identity', () => {
     const store = new WorkspaceSubscriptionStore(makeTempDb());
     const first = store.save(store.createDefault({

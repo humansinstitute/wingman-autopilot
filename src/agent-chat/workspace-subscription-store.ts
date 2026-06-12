@@ -61,7 +61,15 @@ class WorkspaceSubscriptionStore {
 
   listStartupCandidates(): WorkspaceSubscriptionRecord[] {
     return this.listWhere(
-      "sse_status != 'disabled' AND health_status IN ('healthy', 'degraded')",
+      `sse_status != 'disabled'
+        AND (
+          health_status IN ('healthy', 'degraded')
+          OR (
+            onboarding_source = 'nostr_33357'
+            AND workspace_id IS NOT NULL
+            AND last_error_code = 'flightdeck_pg_access_failed'
+          )
+        )`,
       [],
     );
   }

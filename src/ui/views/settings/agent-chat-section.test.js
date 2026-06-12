@@ -88,6 +88,16 @@ function queryByTestId(node, testId) {
   return null;
 }
 
+function collectText(node) {
+  if (!node || !(node instanceof FakeElement)) {
+    return "";
+  }
+  return [
+    node.textContent,
+    ...node.children.map((child) => collectText(child)),
+  ].filter(Boolean).join(" ");
+}
+
 describe("agent chat settings subscription selection", () => {
   const subscriptions = [
     {
@@ -231,11 +241,18 @@ describe("agent chat settings subscription selection", () => {
       const card = createSubscriptionCard({
         subscriptionId: "sub-flight-deck",
         workspaceOwnerNpub: "npub1workspace",
+        workspaceServiceNpub: "npub1workspaceservice",
+        workspaceId: "workspace-pg-1",
         botNpub: "npub1bot",
         sourceAppNpub: "npub1source",
         onboardingSource: "nostr_33357",
         sseStatus: "connected",
         healthStatus: "healthy",
+        profileWorkspace: {
+          workspace: {
+            workspaceTitle: "Pete Postgres Workspace",
+          },
+        },
         operator: {
           canManage: true,
           enabled: true,
@@ -251,6 +268,10 @@ describe("agent chat settings subscription selection", () => {
         selectedSubscriptionId: "sub-flight-deck",
       });
 
+      const text = collectText(card);
+      expect(text).toContain("Pete Postgres Workspace");
+      expect(text).toContain("workspace npub1workspaceservice");
+      expect(text).toContain("owner npub1workspace");
       expect(queryByTestId(card, "agent-chat-edit-sub-flight-deck")).toBeNull();
       expect(queryByTestId(card, "agent-chat-remove-sub-flight-deck")).toBeNull();
       expect(queryByTestId(card, "agent-chat-reconnect-sub-flight-deck")).not.toBeNull();

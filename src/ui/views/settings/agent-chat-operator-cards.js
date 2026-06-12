@@ -156,11 +156,23 @@ function formatDisplayValue(value) {
 
 function resolveEventFamily(event) {
   const familyHash = typeof event?.payload?.family_hash === 'string' ? event.payload.family_hash : '';
-  if (!familyHash) {
-    return 'unknown-family';
+  if (familyHash) {
+    const parts = familyHash.split(':').filter(Boolean);
+    return parts[parts.length - 1] || familyHash;
   }
-  const parts = familyHash.split(':').filter(Boolean);
-  return parts[parts.length - 1] || familyHash;
+  const entityType = typeof event?.payload?.entity_type === 'string' ? event.payload.entity_type : '';
+  if (entityType) {
+    if (entityType === 'message' || entityType === 'thread') {
+      return 'chat';
+    }
+    if (entityType === 'task_comment' || entityType === 'document_comment') {
+      return 'comment';
+    }
+    return entityType;
+  }
+  const eventType = typeof event?.eventType === 'string' ? event.eventType : '';
+  const match = eventType.match(/^flightdeck_pg\.([a-z_]+)\./);
+  return match?.[1] || 'unknown-family';
 }
 
 function isTransportEvent(event) {
@@ -177,10 +189,15 @@ function countWhere(items, predicate) {
 }
 
 function buildEventFingerprint(event) {
+  const recordId = typeof event?.payload?.record_id === 'string'
+    ? event.payload.record_id
+    : typeof event?.payload?.entity_id === 'string'
+      ? event.payload.entity_id
+      : null;
   return JSON.stringify({
     eventType: event?.eventType || 'unknown',
     family: resolveEventFamily(event),
-    recordId: typeof event?.payload?.record_id === 'string' ? event.payload.record_id : null,
+    recordId,
     version: typeof event?.payload?.version === 'number' ? event.payload.version : null,
     eventId: event?.eventId || null,
   });
@@ -908,8 +925,14 @@ export function createSubscriptionCard(subscription, chatSessions, handlers) {
 
   const identity = document.createElement('p');
   identity.className = 'wm-settings__port-note';
-  identity.textContent = `tower ${subscription.backendBaseUrl || 'unknown'} · bot ${shortenIdentifier(subscription.botNpub, { head: 18, tail: 10 })} · source ${shortenIdentifier(subscription.sourceAppNpub, { head: 18, tail: 10 })}`;
-  identity.title = `${subscription.backendBaseUrl}\n${subscription.workspaceOwnerNpub}\n${subscription.botNpub}\n${subscription.sourceAppNpub}`;
+  identity.textContent = `workspace ${shortenIdentifier(subscription.workspaceServiceNpub || subscription.workspaceOwnerNpub, { head: 18, tail: 10 })} · owner ${shortenIdentifier(subscription.workspaceOwnerNpub, { head: 18, tail: 10 })} · tower ${subscription.backendBaseUrl || 'unknown'} · bot ${shortenIdentifier(subscription.botNpub, { head: 18, tail: 10 })} · source ${shortenIdentifier(subscription.sourceAppNpub, { head: 18, tail: 10 })}`;
+  identity.title = [
+    `workspace: ${subscription.workspaceServiceNpub || subscription.workspaceOwnerNpub || ''}`,
+    `owner: ${subscription.workspaceOwnerNpub || ''}`,
+    `tower: ${subscription.backendBaseUrl || ''}`,
+    `bot: ${subscription.botNpub || ''}`,
+    `source: ${subscription.sourceAppNpub || ''}`,
+  ].join('\n');
   card.append(identity);
   card.append(createPillRow([
     createTonePill(subscription.sseStatus === 'connected' ? 'SSE Connected' : `SSE ${subscription.sseStatus || 'unknown'}`, subscription.sseStatus === 'connected' ? 'success' : 'warning'),
