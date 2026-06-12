@@ -22,7 +22,7 @@ const CALLBACK_POLL_MS = 1000;
 const CALLBACK_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_PIPELINE_EXECUTED_STEPS = 2000;
 const DEFAULT_AGENT_INPUT_MAX_BYTES = 250_000;
-const DEFAULT_AGENT_CALLBACK_TIMEOUT_RETRIES = 1;
+const DEFAULT_AGENT_STEP_MAX_ATTEMPTS = 3;
 const activeRunExecutions = new Set<string>();
 
 interface PipelineRunnerInput {
@@ -619,7 +619,7 @@ async function runAgentStep(input: PipelineRunnerInput & {
   });
   let result: { status: PipelineStatus; result: JsonObject | null; error: string | null } | null = null;
   let lastError: unknown = null;
-  const maxAttempts = resolveAgentCallbackTimeoutRetries() + 1;
+  const maxAttempts = resolveAgentStepMaxAttempts();
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const latest = input.store.getStep(input.stepId);
     if (latest?.status === "ok") {
@@ -634,28 +634,29 @@ async function runAgentStep(input: PipelineRunnerInput & {
       throw new Error(latest.error ?? "Agent step failed");
     }
 
-    const session = await sessionCtx.manager.createSession(
-      agent,
-      input.directory,
-      `Pipeline ${input.stepName}${attempt > 1 ? ` retry ${attempt}` : ""}`,
-      null,
-      undefined,
-      input.ownerNpub ?? undefined,
-      {
-        AGENT: true,
-        role: "pipeline-step",
-        goal: `Pipeline ${input.definition.spec.name}: ${input.stepName}`,
-        nextAction: "stop",
-        bindingType: "flow_run",
-        bindingId: input.runId,
-        flowRunId: input.runId,
-        retryAttempt: attempt,
-      },
-    );
-    input.store.setStepSession(input.stepId, session.id);
-    await recordLiveSession(sessionCtx, session);
-
+    let session: SessionSnapshot | null = null;
     try {
+      session = await sessionCtx.manager.createSession(
+        agent,
+        input.directory,
+        `Pipeline ${input.stepName}${attempt > 1 ? ` retry ${attempt}` : ""}`,
+        null,
+        undefined,
+        input.ownerNpub ?? undefined,
+        {
+          AGENT: true,
+          role: "pipeline-step",
+          goal: `Pipeline ${input.definition.spec.name}: ${input.stepName}`,
+          nextAction: "stop",
+          bindingType: "flow_run",
+          bindingId: input.runId,
+          flowRunId: input.runId,
+          retryAttempt: attempt,
+        },
+      );
+      input.store.setStepSession(input.stepId, session.id);
+      await recordLiveSession(sessionCtx, session);
+
       await waitForSessionPromptReadiness({
         getSession: (sessionId) => sessionCtx.manager.getSession(sessionId) ?? null,
         getAdapter: (sessionId) => sessionCtx.manager.getAdapter(sessionId),
@@ -685,7 +686,7 @@ async function runAgentStep(input: PipelineRunnerInput & {
       break;
     } catch (error) {
       lastError = error;
-      const canRetry = error instanceof PipelineCallbackTimeout && attempt < maxAttempts;
+      const canRetry = shouldRetryAgentStepError(error) && attempt < maxAttempts;
       if (!canRetry) {
         const latest = input.store.getStep(input.stepId);
         if (latest?.status === "running") {
@@ -699,7 +700,9 @@ async function runAgentStep(input: PipelineRunnerInput & {
         throw error;
       }
     } finally {
-      await stopPipelineSession(sessionCtx, session.id).catch(() => undefined);
+      if (session) {
+        await stopPipelineSession(sessionCtx, session.id).catch(() => undefined);
+      }
     }
   }
   if (!result) {
@@ -732,12 +735,26 @@ function resolveAgentInputMaxBytes(): number {
   return Math.max(0, Math.floor(parsed));
 }
 
-function resolveAgentCallbackTimeoutRetries(): number {
-  const raw = process.env.PIPELINE_AGENT_CALLBACK_TIMEOUT_RETRIES;
-  if (!raw) return DEFAULT_AGENT_CALLBACK_TIMEOUT_RETRIES;
+function resolveAgentStepMaxAttempts(): number {
+  const maxAttempts = parseBoundedPositiveInteger(process.env.PIPELINE_AGENT_STEP_MAX_ATTEMPTS, 1, 6);
+  if (maxAttempts !== null) return maxAttempts;
+
+  const legacyRetries = parseBoundedPositiveInteger(process.env.PIPELINE_AGENT_CALLBACK_TIMEOUT_RETRIES, 0, 5);
+  if (legacyRetries !== null) return legacyRetries + 1;
+
+  return DEFAULT_AGENT_STEP_MAX_ATTEMPTS;
+}
+
+function parseBoundedPositiveInteger(raw: string | undefined, min: number, max: number): number | null {
+  if (!raw) return null;
   const parsed = Number(raw);
-  if (!Number.isFinite(parsed)) return DEFAULT_AGENT_CALLBACK_TIMEOUT_RETRIES;
-  return Math.max(0, Math.min(5, Math.floor(parsed)));
+  if (!Number.isFinite(parsed)) return null;
+  return Math.max(min, Math.min(max, Math.floor(parsed)));
+}
+
+function shouldRetryAgentStepError(error: unknown): boolean {
+  if (error instanceof PipelineHalt) return false;
+  return error instanceof Error || typeof error === "string";
 }
 
 async function recordLiveSession(ctx: SessionApiContext, session: SessionSnapshot): Promise<void> {
