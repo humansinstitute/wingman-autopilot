@@ -258,9 +258,13 @@ Autopilot does with events from that workspace.
 Autopilot only dispatches workspace events when the event actor is an allowed
 Autopilot operator. For Flight Deck PG workspaces this actor comes from Tower's
 NIP-98-authenticated write path and the serialized `sender_npub` /
-`created_by_actor_npub` fields. For legacy encrypted records this actor comes
-from the record envelope's `signature_npub`, falling back to `owner_npub` for
-older records. The same `WINGMAN_AGENT_DISPATCH_ADMIN_ONLY=true` option limits
+`created_by_actor_npub` fields. Before any Flight Deck PG chat message can
+start an agent pipeline, Autopilot also verifies
+`metadata.agent_instruction_signature`: a Nostr kind `33358` event whose content
+is the exact message body and whose signer npub matches the Tower actor. Missing,
+invalid, or body-mismatched signatures are hard dispatch suppressions. Legacy
+encrypted record signatures are not a substitute for this PG instruction
+signature. The same `WINGMAN_AGENT_DISPATCH_ADMIN_ONLY=true` option limits
 dispatch-triggering actors to configured admins only.
 
 ## Pipeline Overrides

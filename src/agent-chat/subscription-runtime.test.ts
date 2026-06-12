@@ -1,9 +1,10 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { Buffer } from 'node:buffer';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import { describe, expect, test } from 'bun:test';
+import { finalizeEvent, generateSecretKey, getPublicKey, nip19 } from 'nostr-tools';
 
 import { AgentDefinitionStore } from './agent-definition-store';
 import { AgentProfilePolicyStore } from './agent-profile-policy-store';
@@ -29,6 +30,47 @@ function makeTempDb(): string {
 
 function encodeToken(payload: Record<string, unknown>): string {
   return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+}
+
+function makeSignedInstructionIdentity() {
+  const secretKey = generateSecretKey();
+  const pubkey = getPublicKey(secretKey);
+  return {
+    secretKey,
+    pubkey,
+    npub: nip19.npubEncode(pubkey),
+  };
+}
+
+function makeInstructionSignature(input: {
+  body: string;
+  signer: ReturnType<typeof makeSignedInstructionIdentity>;
+  workspaceId?: string;
+  channelId?: string;
+  threadId?: string;
+}) {
+  const bodySha256 = createHash('sha256').update(input.body, 'utf8').digest('hex');
+  const tags = [
+    ['protocol', 'flightdeck_pg_message_instruction'],
+    ['body_sha256', bodySha256],
+  ];
+  if (input.workspaceId) tags.push(['workspace_id', input.workspaceId]);
+  if (input.channelId) tags.push(['channel_id', input.channelId]);
+  if (input.threadId) tags.push(['thread_id', input.threadId]);
+  const event = finalizeEvent({
+    kind: 33358,
+    created_at: 1_781_000_000,
+    tags,
+    content: input.body,
+  }, input.signer.secretKey);
+  return {
+    version: 1,
+    protocol: 'flightdeck_pg_message_instruction',
+    kind: 33358,
+    signer_npub: input.signer.npub,
+    body_sha256: bodySha256,
+    nostr_event: event,
+  };
 }
 
 function makeConnectPackage(overrides: Record<string, unknown> = {}) {
@@ -739,6 +781,8 @@ describe('WorkspaceSubscriptionManager', () => {
       },
     } as unknown as DispatchPipelineRuntime;
     const instanceIdentity = makeInstanceIdentity();
+    const signer = makeSignedInstructionIdentity();
+    const body = 'Hello autopilot';
     const { manager, store } = createTestManager(
       dbPath,
       new Map(),
@@ -753,9 +797,18 @@ describe('WorkspaceSubscriptionManager', () => {
             scope_id: 'scope-1',
             channel_id: 'channel-1',
             thread_id: 'thread-1',
-            body: 'Hello autopilot',
-            sender_npub: 'npub1requester',
-            created_by_actor_npub: 'npub1requester',
+            body,
+            metadata: {
+              agent_instruction_signature: makeInstructionSignature({
+                body,
+                signer,
+                workspaceId: 'workspace-1',
+                channelId: 'channel-1',
+                threadId: 'thread-1',
+              }),
+            },
+            sender_npub: signer.npub,
+            created_by_actor_npub: signer.npub,
             row_version: 42,
             created_by_actor_id: 'actor-user',
             updated_by_actor_id: 'actor-user',
@@ -808,7 +861,7 @@ describe('WorkspaceSubscriptionManager', () => {
       },
     });
     expect(next.lastPipelineRunId).toBe('run-pg-chat-1');
-    expect(dispatches[0]).toMatchObject({ updaterNpub: 'npub1requester' });
+    expect(dispatches[0]).toMatchObject({ updaterNpub: signer.npub });
     expect(store.getBySubscriptionId(imported.subscription.subscriptionId)?.recentDispatches.at(-1)?.pipelineRunId).toBe('run-pg-chat-1');
   });
 
@@ -825,6 +878,8 @@ describe('WorkspaceSubscriptionManager', () => {
       },
     } as unknown as DispatchPipelineRuntime;
     const instanceIdentity = makeInstanceIdentity();
+    const outsideSigner = makeSignedInstructionIdentity();
+    const body = 'Hello from outside';
     const { manager, store } = createTestManager(
       dbPath,
       new Map(),
@@ -832,7 +887,7 @@ describe('WorkspaceSubscriptionManager', () => {
       instanceIdentity,
       dispatchPipelineRuntime,
       {
-        isAuthorizedDispatchActorNpub: (npub) => npub === 'npub1allowed',
+        isAuthorizedDispatchActorNpub: () => false,
         fetchFlightDeckPgChannelMessages: async () => ({
           messages: [{
             id: 'message-unauthorized-1',
@@ -840,9 +895,18 @@ describe('WorkspaceSubscriptionManager', () => {
             scope_id: 'scope-1',
             channel_id: 'channel-1',
             thread_id: 'thread-unauthorized-1',
-            body: 'Hello from outside',
-            sender_npub: 'npub1outside',
-            created_by_actor_npub: 'npub1outside',
+            body,
+            metadata: {
+              agent_instruction_signature: makeInstructionSignature({
+                body,
+                signer: outsideSigner,
+                workspaceId: 'workspace-1',
+                channelId: 'channel-1',
+                threadId: 'thread-unauthorized-1',
+              }),
+            },
+            sender_npub: outsideSigner.npub,
+            created_by_actor_npub: outsideSigner.npub,
             row_version: 42,
             created_by_actor_id: 'actor-outside',
             updated_by_actor_id: 'actor-outside',
@@ -884,10 +948,94 @@ describe('WorkspaceSubscriptionManager', () => {
     expect(saved?.lastRoutingResult?.code).toBe('chat_skip_unauthorized_actor');
     expect(saved?.recentDispatches.at(-1)?.action).toBe('chat_skip_unauthorized_actor');
     expect(saved?.recentDispatches.at(-1)?.details).toMatchObject({
-      actor_npub: 'npub1outside',
+      actor_npub: outsideSigner.npub,
       suppression_reason: 'unauthorized_dispatch_actor',
       source: 'flightdeck_pg',
     });
+  });
+
+  test('suppresses Flight Deck PG chat dispatch when the signed body was tampered', async () => {
+    const dbPath = makeTempDb();
+    const routeStore = new DispatchRouteStore(dbPath);
+    let dispatchCount = 0;
+    const dispatchPipelineRuntime = {
+      listRoutesForSubscription: (subscriptionId: string) => routeStore.listForSubscription(subscriptionId),
+      saveRoute: (input: Parameters<DispatchRouteStore['save']>[0]) => routeStore.save(input),
+      dispatch: async () => {
+        dispatchCount += 1;
+        return { handled: true, lastPipelineRunId: 'run-tampered', historyEntries: [] };
+      },
+    } as unknown as DispatchPipelineRuntime;
+    const instanceIdentity = makeInstanceIdentity();
+    const signer = makeSignedInstructionIdentity();
+    const { manager, store } = createTestManager(
+      dbPath,
+      new Map(),
+      undefined,
+      instanceIdentity,
+      dispatchPipelineRuntime,
+      {
+        isAuthorizedDispatchActorNpub: (npub) => npub === signer.npub,
+        fetchFlightDeckPgChannelMessages: async () => ({
+          messages: [{
+            id: 'message-tampered-1',
+            workspace_id: 'workspace-1',
+            scope_id: 'scope-1',
+            channel_id: 'channel-1',
+            thread_id: 'thread-tampered-1',
+            body: 'Tampered body',
+            metadata: {
+              agent_instruction_signature: makeInstructionSignature({
+                body: 'Original signed body',
+                signer,
+                workspaceId: 'workspace-1',
+                channelId: 'channel-1',
+                threadId: 'thread-tampered-1',
+              }),
+            },
+            sender_npub: signer.npub,
+            created_by_actor_npub: signer.npub,
+            row_version: 42,
+            created_by_actor_id: 'actor-user',
+            updated_by_actor_id: 'actor-user',
+            created_at: '2026-06-10T00:00:00.000Z',
+            updated_at: '2026-06-10T00:00:00.000Z',
+          }],
+          next_cursor: null,
+        }),
+      },
+    );
+    const imported = await manager.importAgentConnectPackage({
+      managedByNpub: 'npub1manager',
+      packageJson: makeConnectPackageForWorkspace('workspace-1', 'npub1workspaceservice'),
+      onboardingSource: 'nostr_33357',
+    });
+
+    await (manager as unknown as {
+      handleFlightDeckPgEvent: (record: WorkspaceSubscriptionRecord, event: Record<string, unknown>) => Promise<WorkspaceSubscriptionRecord>;
+    }).handleFlightDeckPgEvent(imported.subscription, {
+      id: 'event-tampered-1',
+      event_id: 'event-tampered-1',
+      cursor: 'cursor-tampered-1',
+      workspace_id: 'workspace-1',
+      scope_id: 'scope-1',
+      channel_id: 'channel-1',
+      actor_id: 'actor-user',
+      event_type: 'message.created',
+      entity_type: 'message',
+      entity_id: 'message-tampered-1',
+      operation: 'created',
+      entity_row_version: 42,
+      row_version: 100,
+      created_at: '2026-06-10T00:00:00.000Z',
+      payload: {},
+    });
+
+    const saved = store.getBySubscriptionId(imported.subscription.subscriptionId);
+    expect(dispatchCount).toBe(0);
+    expect(saved?.lastRoutingResult?.code).toBe('chat_skip_invalid_instruction_signature');
+    expect(saved?.recentDispatches.at(-1)?.action).toBe('chat_skip_invalid_instruction_signature');
+    expect(saved?.recentDispatches.at(-1)?.details?.suppression_reason).toBe('instruction_body_mismatch');
   });
 
   test('suppresses legacy task dispatch from unauthorized record signers', async () => {
@@ -1084,6 +1232,8 @@ describe('WorkspaceSubscriptionManager', () => {
       },
     } as unknown as DispatchPipelineRuntime;
     const instanceIdentity = makeInstanceIdentity();
+    const signer = makeSignedInstructionIdentity();
+    const body = 'Live hello';
     const liveCursor = encodeFlightDeckPgEventCursor(101);
     const event = {
       id: 'event-live-1',
@@ -1123,9 +1273,18 @@ describe('WorkspaceSubscriptionManager', () => {
             scope_id: 'scope-1',
             channel_id: 'channel-1',
             thread_id: 'thread-live-1',
-            body: 'Live hello',
-            sender_npub: 'npub1requester',
-            created_by_actor_npub: 'npub1requester',
+            body,
+            metadata: {
+              agent_instruction_signature: makeInstructionSignature({
+                body,
+                signer,
+                workspaceId: 'workspace-1',
+                channelId: 'channel-1',
+                threadId: 'thread-live-1',
+              }),
+            },
+            sender_npub: signer.npub,
+            created_by_actor_npub: signer.npub,
             row_version: 42,
             created_by_actor_id: 'actor-user',
             updated_by_actor_id: 'actor-user',
@@ -1187,6 +1346,8 @@ describe('WorkspaceSubscriptionManager', () => {
       },
     } as unknown as DispatchPipelineRuntime;
     const instanceIdentity = makeInstanceIdentity();
+    const signer = makeSignedInstructionIdentity();
+    const body = 'Duplicate hello';
     const cursor = encodeFlightDeckPgEventCursor(150);
     const { manager } = createTestManager(
       dbPath,
@@ -1202,9 +1363,18 @@ describe('WorkspaceSubscriptionManager', () => {
             scope_id: 'scope-1',
             channel_id: 'channel-1',
             thread_id: 'thread-dupe-1',
-            body: 'Duplicate hello',
-            sender_npub: 'npub1requester',
-            created_by_actor_npub: 'npub1requester',
+            body,
+            metadata: {
+              agent_instruction_signature: makeInstructionSignature({
+                body,
+                signer,
+                workspaceId: 'workspace-1',
+                channelId: 'channel-1',
+                threadId: 'thread-dupe-1',
+              }),
+            },
+            sender_npub: signer.npub,
+            created_by_actor_npub: signer.npub,
             row_version: 42,
             created_by_actor_id: 'actor-user',
             updated_by_actor_id: 'actor-user',

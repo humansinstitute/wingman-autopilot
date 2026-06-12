@@ -1,6 +1,7 @@
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 
-import { nip19 } from 'nostr-tools';
+import { nip19, verifyEvent, type Event as NostrEvent } from 'nostr-tools';
 import { normaliseNpub } from '../identity/npub-utils';
 import { generateBotKey, unlockViaEscrow } from '../identity/bot-key-manager';
 import {
@@ -126,6 +127,9 @@ const WORKSPACE_KEY_MAPPING_CACHE_MS = 30_000;
 const FLIGHT_DECK_PG_EVENT_POLL_INTERVAL_MS = 2_100;
 const FLIGHT_DECK_PG_EVENT_POLL_TIMEOUT_MS = 10_000;
 const DEFAULT_AUTO_AGENT_WORKSPACE_ROOT = new URL('../../data/agent-chat-workspaces', import.meta.url).pathname;
+const AGENT_INSTRUCTION_SIGNATURE_METADATA_KEY = 'agent_instruction_signature';
+const AGENT_INSTRUCTION_SIGNATURE_PROTOCOL = 'flightdeck_pg_message_instruction';
+const AGENT_INSTRUCTION_SIGNATURE_KIND = 33358;
 const DEFAULT_33357_AGENT_CAPABILITIES: AgentCapability[] = [
   'chat_intercept',
   'task_dispatch',
@@ -192,6 +196,83 @@ function getOptionalTextArray(value: unknown): string[] {
   return value
     .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
     .filter((entry) => entry.length > 0);
+}
+
+function sha256Hex(value: string): string {
+  return createHash('sha256').update(value, 'utf8').digest('hex');
+}
+
+function getNostrTagValue(event: NostrEvent, tagName: string): string | null {
+  const tag = event.tags.find((entry) => entry[0] === tagName);
+  return getOptionalText(tag?.[1]);
+}
+
+function isNostrEventLike(value: unknown): value is NostrEvent {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const candidate = value as Partial<NostrEvent>;
+  return typeof candidate.id === 'string'
+    && typeof candidate.pubkey === 'string'
+    && typeof candidate.created_at === 'number'
+    && typeof candidate.kind === 'number'
+    && Array.isArray(candidate.tags)
+    && typeof candidate.content === 'string'
+    && typeof candidate.sig === 'string';
+}
+
+function verifyFlightDeckPgInstructionSignature(input: {
+  signature: unknown;
+  body: string;
+  actorNpub: string | null;
+  workspaceId: string | null;
+  channelId: string | null;
+  threadId: string | null;
+}): { ok: boolean; reason: string; signerNpub: string | null } {
+  const wrapper = input.signature && typeof input.signature === 'object' && !Array.isArray(input.signature)
+    ? input.signature as Record<string, unknown>
+    : null;
+  if (!wrapper) {
+    return { ok: false, reason: 'missing_instruction_signature', signerNpub: null };
+  }
+  const event = isNostrEventLike(wrapper.nostr_event) ? wrapper.nostr_event : null;
+  if (!event) {
+    return { ok: false, reason: 'invalid_instruction_signature_event', signerNpub: null };
+  }
+  const signerNpub = nip19.npubEncode(event.pubkey);
+  const bodySha256 = sha256Hex(input.body);
+  if (wrapper.version !== 1) {
+    return { ok: false, reason: 'unsupported_instruction_signature_version', signerNpub };
+  }
+  if (event.kind !== AGENT_INSTRUCTION_SIGNATURE_KIND) {
+    return { ok: false, reason: 'invalid_instruction_signature_kind', signerNpub };
+  }
+  if (getNostrTagValue(event, 'protocol') !== AGENT_INSTRUCTION_SIGNATURE_PROTOCOL) {
+    return { ok: false, reason: 'invalid_instruction_signature_protocol', signerNpub };
+  }
+  if (!verifyEvent(event)) {
+    return { ok: false, reason: 'invalid_instruction_signature', signerNpub };
+  }
+  if (event.content !== input.body) {
+    return { ok: false, reason: 'instruction_body_mismatch', signerNpub };
+  }
+  if (wrapper.body_sha256 !== bodySha256 || getNostrTagValue(event, 'body_sha256') !== bodySha256) {
+    return { ok: false, reason: 'instruction_body_hash_mismatch', signerNpub };
+  }
+  if (!input.actorNpub || signerNpub !== input.actorNpub || wrapper.signer_npub !== input.actorNpub) {
+    return { ok: false, reason: 'instruction_signer_mismatch', signerNpub };
+  }
+  if (input.workspaceId && getNostrTagValue(event, 'workspace_id') !== input.workspaceId) {
+    return { ok: false, reason: 'instruction_workspace_mismatch', signerNpub };
+  }
+  if (input.channelId && getNostrTagValue(event, 'channel_id') !== input.channelId) {
+    return { ok: false, reason: 'instruction_channel_mismatch', signerNpub };
+  }
+  const signatureThreadId = getNostrTagValue(event, 'thread_id');
+  if (signatureThreadId && input.threadId && signatureThreadId !== input.threadId) {
+    return { ok: false, reason: 'instruction_thread_mismatch', signerNpub };
+  }
+  return { ok: true, reason: 'verified', signerNpub };
 }
 
 function safeJsonParse(value: string): unknown | null {
@@ -271,6 +352,7 @@ function normaliseFlightDeckPgChatPayload(
     id: message.id,
     record_id: message.id,
     body: message.body ?? '',
+    message_signature: metadata[AGENT_INSTRUCTION_SIGNATURE_METADATA_KEY] ?? null,
     sender_npub: senderNpub,
     sender_actor_id: message.created_by_actor_id ?? event.actor_id ?? null,
     actor_id: event.actor_id ?? message.created_by_actor_id ?? null,
@@ -890,6 +972,47 @@ export class WorkspaceSubscriptionManager {
         actor_npub: input.actorNpub,
         source: input.source,
         suppression_reason: 'unauthorized_dispatch_actor',
+      },
+    });
+  }
+
+  private appendInvalidInstructionSignatureSuppression(input: {
+    record: WorkspaceSubscriptionRecord;
+    recordId: string;
+    bindingId: string;
+    actorNpub: string | null;
+    signerNpub: string | null;
+    reason: string;
+    details?: Record<string, unknown>;
+  }): WorkspaceSubscriptionRecord {
+    const record = input.record;
+    record.lastRoutingResult = buildFailureDiagnostic(
+      'chat_skip_invalid_instruction_signature',
+      'Dispatch suppressed because the Flight Deck PG message instruction signature is missing or invalid.',
+      input.reason,
+      {
+        subscription_id: record.subscriptionId,
+        record_id: input.recordId,
+        actor_npub: input.actorNpub,
+        signer_npub: input.signerNpub,
+        source: 'flightdeck_pg',
+      },
+    );
+    return this.appendDispatchHistory(record, {
+      at: new Date().toISOString(),
+      kind: 'chat',
+      action: 'chat_skip_invalid_instruction_signature',
+      agentId: 'security',
+      sessionId: null,
+      recordId: input.recordId,
+      bindingId: input.bindingId,
+      bindingType: 'thread',
+      details: {
+        ...(input.details ?? {}),
+        actor_npub: input.actorNpub,
+        signer_npub: input.signerNpub,
+        source: 'flightdeck_pg',
+        suppression_reason: input.reason,
       },
     });
   }
@@ -2988,6 +3111,31 @@ export class WorkspaceSubscriptionManager {
       const scopeId = message.scope_id ?? event.scope_id ?? null;
       const payload = normaliseFlightDeckPgChatPayload(message, event);
       const actorNpub = firstNpub(getOptionalText(payload.sender_npub));
+      const signatureCheck = verifyFlightDeckPgInstructionSignature({
+        signature: payload.message_signature,
+        body: String(payload.body ?? ''),
+        actorNpub,
+        workspaceId,
+        channelId,
+        threadId,
+      });
+      if (!signatureCheck.ok) {
+        return this.appendInvalidInstructionSignatureSuppression({
+          record,
+          recordId,
+          bindingId: threadId,
+          actorNpub,
+          signerNpub: signatureCheck.signerNpub,
+          reason: signatureCheck.reason,
+          details: {
+            event_id: event.event_id ?? event.id ?? null,
+            channel_id: channelId,
+            scope_id: scopeId,
+            thread_id: threadId,
+            event_actor_id: event.actor_id ?? null,
+          },
+        });
+      }
       if (!this.isAuthorizedDispatchActor(actorNpub)) {
         return this.appendUnauthorizedDispatchSuppression({
           record,
