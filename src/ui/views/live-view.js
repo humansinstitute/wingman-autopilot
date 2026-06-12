@@ -17,8 +17,6 @@ import {
   removePinnedArtifactApi,
   setPinnedArtifactApi,
 } from "../services/sessions.js";
-import { showRunningAppsModal } from "../apps/running-apps-modal.js";
-import { showRunningPipelinesModal } from "../pipelines/running-pipelines-modal.js";
 import {
   isAlpineChatEnabled,
   getChatTemplate,
@@ -66,17 +64,9 @@ import {
 } from "../live/conversation-window.js";
 import { focusComposerTextarea } from "../live/mobile-runtime.js";
 import {
-  createLiveSessionDrawer,
-  isLiveDrawerVisible,
-} from "../live/session-drawer.js";
-import {
   closeArtifactPaneForSession,
   openArtifactPaneForSession,
 } from "../live/artifact-pane-state.js";
-import {
-  getLiveDrawerLayoutState,
-  getRenderedLiveDrawerVisible,
-} from "../live/drawer-visibility.js";
 import { createLiveHeaderFullscreenToggle } from "../live/header-fullscreen-toggle.js";
 import { canResumeNativeAgentSession } from "../home/native-session-resume.js";
 import { filterTaskDispatchSessionsForTabs } from "../sessions/session-classification.js";
@@ -120,11 +110,9 @@ export function initLiveView(deps) {
     openVoiceNoteRecorder,
     openDialog,
     openSessionLaunchPalette,
-    navigateToApps,
     isFeatureEnabledForViewer,
     showToast,
     renderAppCard,
-    refreshApps,
     triggerAppAction,
   } = deps;
 
@@ -319,11 +307,6 @@ export function initLiveView(deps) {
     return null;
   }
 
-  function closeLiveDrawerModal() {
-    state.liveDrawer.reportModalOpen = false;
-    state.liveDrawer.selectedReportId = "";
-  }
-
   function openArtifactPane(sessionId, options = {}) {
     const session = sessionsStore().items.find((item) => item.id === sessionId) ?? null;
     if (!session) return false;
@@ -335,69 +318,6 @@ export function initLiveView(deps) {
     openArtifactPaneForSession(state, sessionId);
     render();
     return true;
-  }
-
-  function setLiveDrawerOpen(nextOpen) {
-    state.liveDrawer.userToggled = true;
-    state.liveDrawer.open = Boolean(nextOpen);
-    if (!nextOpen) {
-      closeLiveDrawerModal();
-    }
-  }
-
-  function closeSecondaryPanels() {
-    state.writerOpenSessions?.clear();
-    state.artifactsOpenSessions?.clear();
-    state.writerLayout.open = false;
-    state.artifactsLayout.open = false;
-    state.appCardLayout.open = false;
-    state.webviewLayout.open = false;
-  }
-
-  function getLiveDrawerRenderState(sessionId) {
-    const session = sessionsStore().items.find((item) => item.id === sessionId) ?? null;
-    const sessionPinnedFiles = Array.isArray(session?.metadata?.pinnedFiles) && session.metadata.pinnedFiles.length > 0
-      ? session.metadata.pinnedFiles
-      : session?.pinnedFile ?? null;
-    const effectiveFile =
-      getPinnedFileForSession(state, sessionId, sessionPinnedFiles) || session?.targetFile || null;
-    const matchingApp = findAppForSession(sessionId, sessionsStore().items, appsStore().items, npubProjectsState);
-    const webApp = findWebAppForSession(sessionId, sessionsStore().items, appsStore().items, npubProjectsState);
-    const layoutState = getLiveDrawerLayoutState({
-      effectiveFile,
-      matchingApp,
-      webApp,
-      writerLayout: { ...state.writerLayout, open: isWriterPanelOpenForSession(state, sessionId) },
-      artifactsLayout: { ...state.artifactsLayout, open: isArtifactsPanelOpenForSession(state, sessionId) },
-      appCardLayout: state.appCardLayout,
-      webviewLayout: state.webviewLayout,
-    });
-
-    return {
-      session,
-      effectiveFile,
-      matchingApp,
-      webApp,
-      layoutState,
-      visible: getRenderedLiveDrawerVisible({
-        drawerState: state.liveDrawer,
-        viewportWidth: window.innerWidth,
-        layoutState,
-      }),
-    };
-  }
-
-  function toggleLiveDrawer() {
-    const sessionId = resolveCurrentLiveSessionId();
-    const visible = sessionId
-      ? getLiveDrawerRenderState(sessionId).visible
-      : isLiveDrawerVisible(state.liveDrawer, window.innerWidth);
-    const nextOpen = !visible;
-    if (nextOpen) {
-      closeSecondaryPanels();
-    }
-    setLiveDrawerOpen(nextOpen);
-    render();
   }
 
   // ── Session tabs ────────────────────────────────────────────────
@@ -1054,24 +974,6 @@ export function initLiveView(deps) {
       commandMenu.append(submenu);
     };
 
-    const drawerVisible = getLiveDrawerRenderState(sessionId).visible;
-    addCommand(drawerVisible ? "Hide Session Drawer" : "Show Session Drawer", () => {
-      toggleLiveDrawer();
-    });
-    addCommand("Running Apps", () => {
-      showRunningAppsModal({
-        appsStore,
-        renderAppCard,
-        refreshApps,
-        triggerAppAction,
-        openNewApp: () => navigateToApps?.({ openNewAppDialog: true }),
-        showToast,
-      });
-    });
-    addCommand("Running Pipelines", () => {
-      showRunningPipelinesModal({ showToast });
-    });
-    addCommandDivider();
     addGitCommandSubmenus({
       addSubmenu,
       sessionId,
@@ -1568,8 +1470,7 @@ export function initLiveView(deps) {
     }
 
     // Determine if this session has a target file for writer mode
-    const drawerRenderState = getLiveDrawerRenderState(sessionId);
-    const activeSession = drawerRenderState.session;
+    const activeSession = sessionsStore().items.find((item) => item.id === sessionId) ?? null;
     const targetFile = activeSession?.targetFile ?? null;
 
     const sessionPinnedFiles = Array.isArray(activeSession?.metadata?.pinnedFiles) && activeSession.metadata.pinnedFiles.length > 0
@@ -1580,7 +1481,7 @@ export function initLiveView(deps) {
 
     const activePinnedFile = pinnedFilePage.activeFile ?? null;
     // Pinned file takes priority over session targetFile
-    const effectiveFile = activePinnedFile ?? drawerRenderState.effectiveFile ?? targetFile;
+    const effectiveFile = activePinnedFile ?? getPinnedFileForSession(state, sessionId, sessionPinnedFiles) ?? targetFile;
     let writerPanelOpen = syncWriterLayoutOpenForSession(state, sessionId);
     let artifactsPanelOpen = syncArtifactsLayoutOpenForSession(state, sessionId);
 
@@ -1596,11 +1497,11 @@ export function initLiveView(deps) {
       artifactsPanelOpen = setArtifactsPanelOpenForSession(state, sessionId, false);
     }
 
-    const matchingApp = drawerRenderState.matchingApp;
+    const matchingApp = findAppForSession(sessionId, sessionsStore().items, appsStore().items, npubProjectsState);
     if (!matchingApp && state.appCardLayout.open) {
       state.appCardLayout.open = false;
     }
-    const webApp = drawerRenderState.webApp;
+    const webApp = findWebAppForSession(sessionId, sessionsStore().items, appsStore().items, npubProjectsState);
     // Fetch artifact metadata for the split panel and command surfaces (non-blocking)
     fetchSessionArtifacts(sessionId).then((items) => {
       state.artifactCounts.set(sessionId, items.length);
@@ -1888,25 +1789,9 @@ export function initLiveView(deps) {
       });
     } else {
       delete appRoot.dataset.webviewOpen;
-      const drawer = createLiveSessionDrawer({
-        session: activeSession,
-        state,
-        showToast,
-        render,
-        viewportWidth: window.innerWidth,
-      });
       main.append(scrollRegion);
       const composerEl = renderComposer(sessionId);
       wrapper.append(main, composerEl);
-      if (drawer.visible && drawer.backdrop) {
-        wrapper.append(drawer.backdrop);
-      }
-      if (drawer.visible) {
-        wrapper.append(drawer.aside);
-      }
-      if (drawer.modal) {
-        wrapper.append(drawer.modal);
-      }
       // Attach scroll pill to the composer — scrollTarget is the document for non-split
       requestAnimationFrame(() => {
         attachComposerScrollControls(composerEl);

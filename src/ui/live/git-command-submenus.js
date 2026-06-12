@@ -1,4 +1,3 @@
-import { createGiteaMenuItems } from './git-gitea-menu.js';
 import { createGitHubMenuItems } from './git-github-menu.js';
 import { createGitMenuItems } from './git-local-menu.js';
 
@@ -25,10 +24,4 @@ export function addGitCommandSubmenus({
     forkSessionToWorktreeApi,
   }));
 
-  addSubmenu('Gitea', createGiteaMenuItems({
-    sessionId,
-    sessionsStore,
-    openTextPromptDialog,
-    showToast,
-  }));
 }

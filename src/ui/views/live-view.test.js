@@ -4,26 +4,17 @@ import { describe, expect, test } from "bun:test";
 
 const source = readFileSync(new URL("./live-view.js", import.meta.url), "utf8");
 
-describe("live-view drawer integration", () => {
-  test("relies on the drawer overlay and composer command menu instead of a dedicated header bar", () => {
-    expect(source).toContain("createLiveSessionDrawer");
+describe("live-view composition", () => {
+  test("renders the transcript and composer without the retired session drawer", () => {
+    expect(source).not.toContain("createLiveSessionDrawer");
+    expect(source).not.toContain("Show Session Drawer");
+    expect(source).not.toContain("Hide Session Drawer");
     expect(source).not.toContain("createLiveSessionToolbar");
     expect(source).toContain("main.append(scrollRegion);");
-  });
-
-  test("keeps the transcript stack intact while the drawer overlays from the left", () => {
     expect(source).toContain("wrapper.append(main, composerEl);");
-    expect(source).toContain("if (drawer.visible) {");
-    expect(source).toContain("wrapper.append(drawer.aside);");
-  });
-
-  test("uses overlay composition on mobile so the drawer can be dismissed without replacing the transcript", () => {
-    expect(source).toContain("wrapper.append(main, composerEl);");
-    expect(source).toContain("if (drawer.visible && drawer.backdrop) {");
-    expect(source).toContain("wrapper.append(drawer.backdrop);");
-    expect(source).toContain("wrapper.append(drawer.aside);");
-    expect(source).toContain("if (drawer.modal) {");
-    expect(source).toContain("wrapper.append(drawer.modal);");
+    expect(source).not.toContain("wrapper.append(drawer.aside)");
+    expect(source).not.toContain("wrapper.append(drawer.backdrop)");
+    expect(source).not.toContain("wrapper.append(drawer.modal)");
   });
 
   test("offers native resume from archived transcripts", () => {
@@ -85,7 +76,7 @@ describe("live-view drawer integration", () => {
   });
 
   test("keeps web app split state local after removing header toggles", () => {
-    expect(source).toContain("const webApp = drawerRenderState.webApp");
+    expect(source).toContain("const webApp = findWebAppForSession");
     expect(source).toContain("} else if (webApp && state.webviewLayout.open) {");
     expect(source).not.toContain("syncHeaderWebviewToggle");
   });
