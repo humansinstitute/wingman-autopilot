@@ -1,7 +1,7 @@
 /**
- * Night Watch CMD Menu Toggle
+ * Night Watch Menu Toggle
  *
- * Adds a Night Watch on/off toggle to the session command menu.
+ * Adds a Night Watch on/off toggle to the session menu.
  * The button text updates live after toggling and after the initial fetch.
  */
 

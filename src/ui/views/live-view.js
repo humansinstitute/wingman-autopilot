@@ -50,7 +50,7 @@ import {
   syncPinnedFileForSession,
   syncWriterLayoutOpenForSession,
 } from "../live/writer-panel-state.js";
-import { addNightWatchToggle } from "../nightwatch/cmd-toggle.js";
+import { addNightWatchToggle } from "../nightwatch/menu-toggle.js";
 import { buildFilesPreviewRoutePath } from "../files/route-url.js";
 import { npubProjectsState } from "../npub-projects/index.js";
 import { state, TERMINAL_CONTROL_ACTIONS } from "../state/index.js";
@@ -911,7 +911,7 @@ export function initLiveView(deps) {
     commandButton = document.createElement("button");
     commandButton.type = "button";
     commandButton.className = "wm-button secondary wm-command-button";
-    commandButton.innerHTML = '<span class="button-icon" aria-hidden="true">$></span><span class="button-text">Cmd</span>';
+    commandButton.innerHTML = '<span class="button-icon" aria-hidden="true">$></span><span class="button-text">Menu</span>';
     commandButton.setAttribute("aria-haspopup", "true");
     commandButton.setAttribute("aria-expanded", "false");
 
