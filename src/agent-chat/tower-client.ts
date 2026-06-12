@@ -1,3 +1,7 @@
+import { createHash } from 'node:crypto';
+
+import { finalizeEvent, nip19 } from 'nostr-tools';
+
 import type {
   AgentChatDiagnostic,
   BackendConnectionRecord,
@@ -11,9 +15,13 @@ export interface TowerErrorDetails {
   status: number;
   message: string;
   detailCode: string | null;
+  details?: unknown;
 }
 
 export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+
+const AGENT_INSTRUCTION_SIGNATURE_PROTOCOL = 'flightdeck_pg_message_instruction';
+const AGENT_INSTRUCTION_SIGNATURE_KIND = 33358;
 
 export interface FlightDeckPgWorkspaceMeResult {
   identity?: Record<string, unknown>;
@@ -206,14 +214,53 @@ async function signFlightDeckPgBotRequest(params: {
   });
 }
 
+function sha256Hex(value: string): string {
+  return createHash('sha256').update(value, 'utf8').digest('hex');
+}
+
+export function buildFlightDeckPgMessageInstructionSignature(params: {
+  botIdentity: RuntimeBotIdentity;
+  body: string;
+  workspaceId: string;
+  channelId: string;
+  threadId?: string | null;
+}): Record<string, unknown> {
+  const bodySha256 = sha256Hex(params.body);
+  const tags = [
+    ['protocol', AGENT_INSTRUCTION_SIGNATURE_PROTOCOL],
+    ['body_sha256', bodySha256],
+    ['workspace_id', params.workspaceId],
+    ['channel_id', params.channelId],
+  ];
+  if (params.threadId) {
+    tags.push(['thread_id', params.threadId]);
+  }
+  const event = finalizeEvent({
+    kind: AGENT_INSTRUCTION_SIGNATURE_KIND,
+    created_at: Math.floor(Date.now() / 1000),
+    tags,
+    content: params.body,
+  }, params.botIdentity.botSecret);
+  return {
+    version: 1,
+    protocol: AGENT_INSTRUCTION_SIGNATURE_PROTOCOL,
+    kind: AGENT_INSTRUCTION_SIGNATURE_KIND,
+    signer_npub: nip19.npubEncode(event.pubkey),
+    body_sha256: bodySha256,
+    nostr_event: event,
+  };
+}
+
 export async function parseTowerError(response: Response, stage: string): Promise<TowerErrorDetails> {
   const bodyText = await response.text().catch(() => '');
   let message = bodyText || response.statusText || stage;
+  let details: unknown;
   try {
-    const parsed = JSON.parse(bodyText) as { error?: string };
+    const parsed = JSON.parse(bodyText) as { error?: string; details?: unknown };
     if (typeof parsed?.error === 'string' && parsed.error.trim().length > 0) {
       message = parsed.error.trim();
     }
+    details = parsed?.details;
   } catch {
     // Non-JSON response.
   }
@@ -221,6 +268,7 @@ export async function parseTowerError(response: Response, stage: string): Promis
     status: response.status,
     message,
     detailCode: inferDetailCode(stage, response.status, message),
+    ...(details !== undefined ? { details } : {}),
   };
 }
 
@@ -428,6 +476,13 @@ export async function createFlightDeckPgChannelMessage(params: {
   const url = buildFlightDeckPgUrl(params.backendBaseUrl, path);
   const body = {
     body: params.body,
+    message_signature: buildFlightDeckPgMessageInstructionSignature({
+      botIdentity: params.botIdentity,
+      body: params.body,
+      workspaceId: params.workspaceId,
+      channelId: params.channelId,
+      threadId: params.threadId,
+    }),
     ...(params.threadId ? { thread_id: params.threadId } : {}),
     ...(params.createThread !== undefined ? { create_thread: params.createThread } : {}),
     ...(params.metadata ? { metadata: params.metadata } : {}),

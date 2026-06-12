@@ -273,11 +273,19 @@ export function createDispatchFlightDeckPublisher(
         reason: `Unsupported dispatch trigger kind: ${triggerKind}`,
       };
     } catch (error) {
+      const enriched = error as Error & {
+        status?: number;
+        detailCode?: string | null;
+        details?: unknown;
+      };
       return {
         published: false,
         status: 'failed',
         operation: 'flightdeck_publish',
         reason: error instanceof Error ? error.message : String(error),
+        ...(typeof enriched.status === 'number' ? { httpStatus: enriched.status } : {}),
+        ...(enriched.detailCode ? { detailCode: enriched.detailCode } : {}),
+        ...(enriched.details !== undefined ? { details: enriched.details } : {}),
       };
     }
   };
