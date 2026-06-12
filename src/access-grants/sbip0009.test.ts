@@ -468,6 +468,36 @@ describe('Flight Deck 33357 onboarding validation', () => {
     expect(imports).toBe(0);
   });
 
+  test('allows onboarding from an authorized Autopilot user when the shared manager is different', async () => {
+    const fixture = makeCurrentFlightDeckGrantEvent();
+    const sharedManager = makeIdentity();
+    let imports = 0;
+
+    const result = await processAccessGrantEvent({
+      event: fixture.event,
+      recipientSecretKey: fixture.recipient.secret,
+      recipientNpub: fixture.recipient.npub,
+      managedByNpub: sharedManager.npub,
+      isAuthorizedIssuerNpub: (npub) => npub === fixture.issuer.npub,
+      subscriptionManager: {
+        importAgentConnectPackage: async () => {
+          imports += 1;
+          return { subscription: { subscriptionId: 'sub-shared' } };
+        },
+      },
+      fetchImpl: async () => new Response(JSON.stringify({
+        allowed: true,
+        service_npub: fixture.service.npub,
+        workspace_service_npub: fixture.workspaceService.npub,
+        workspace_owner_npub: fixture.workspaceOwner.npub,
+      }), { status: 200 }),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.code).toBe('imported');
+    expect(imports).toBe(1);
+  });
+
   test('reports decrypt failure before import', async () => {
     const fixture = makeGrantEvent();
     const wrongRecipient = makeIdentity();

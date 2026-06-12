@@ -266,6 +266,7 @@ Options:
 | `AGENT_SPAWN_MODE` | Primary spawn-mode setting: `bun`, `pm2`, or `tmux` | `bun` |
 | `AGENT_TMUX_SESSION` | Tmux session used for tmux-spawned agent windows | `wm-ap-agents` |
 | `AGENT_MODE` | Deprecated compatibility input only | unset |
+| `WINGMAN_AGENT_DISPATCH_ADMIN_ONLY` | Restrict 33357 auto-join and workspace event dispatch to configured admin npubs | `false` |
 | `AGENTAPI_BIN` | Primary binary path for the AgentAPI executable | `./out/agentapi` |
 | `AGENT_CLI_AUTOUPDATE` | Set to `true` to allow Codex/Claude CLI background update checks in new sessions | `false` |
 | `KEYTELEPORT_PRIVKEY` | App private key used to decrypt Key Teleport blobs | unset |

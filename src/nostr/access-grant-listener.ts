@@ -18,6 +18,7 @@ export interface AccessGrantListenerDeps {
   subscriptionManager: AccessGrantSubscriptionManager;
   pool?: AccessGrantRelayPool;
   replayTimeoutMs?: number;
+  isAuthorizedIssuerNpub?: (npub: string) => boolean;
 }
 
 interface AccessGrantRelayPool {
@@ -77,6 +78,7 @@ export function createAccessGrantListener(deps: AccessGrantListenerDeps): Access
           managedByNpub,
           subscriptionManager: deps.subscriptionManager,
           processedKeys,
+          isAuthorizedIssuerNpub: deps.isAuthorizedIssuerNpub,
         }).then((result) => {
           const id = event.id?.slice(0, 12) ?? 'unknown';
           if (result.ok) {

@@ -68,8 +68,11 @@ service, workspace, or owner tags.
 
 Autopilot verifies the Nostr event signature before decrypting. The event
 signer must match the encrypted payload's `issued_by_npub`, and that issuer must
-match the local user npub that manages the receiving agent identity. This keeps
-third parties from onboarding a known bot npub into arbitrary workspaces.
+be an allowed Autopilot operator. By default allowed operators are configured
+admins plus users with the local `approved` or `onboard` role. Setting
+`WINGMAN_AGENT_DISPATCH_ADMIN_ONLY=true` restricts this to configured admins
+only. This keeps third parties from onboarding a known bot npub into arbitrary
+workspaces.
 
 Events that fail tag validation, decrypt, JSON parse, payload validation, or
 Tower verification should be recorded as diagnostics and ignored for import or
@@ -251,6 +254,14 @@ Each row should support:
 This keeps onboarding separate from behaviour. The `33357` event tells Autopilot
 that a workspace is available. The profile workspace settings decide what
 Autopilot does with events from that workspace.
+
+Autopilot only dispatches workspace events when the event actor is an allowed
+Autopilot operator. For Flight Deck PG workspaces this actor comes from Tower's
+NIP-98-authenticated write path and the serialized `sender_npub` /
+`created_by_actor_npub` fields. For legacy encrypted records this actor comes
+from the record envelope's `signature_npub`, falling back to `owner_npub` for
+older records. The same `WINGMAN_AGENT_DISPATCH_ADMIN_ONLY=true` option limits
+dispatch-triggering actors to configured admins only.
 
 ## Pipeline Overrides
 

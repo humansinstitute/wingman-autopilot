@@ -90,7 +90,7 @@ import { BotKeyStore } from "./identity/bot-key-store";
 import { createBotKeyApiHandler } from "./identity/bot-key-api";
 import { createBotCryptoApiHandler } from "./identity/bot-crypto-api";
 import { loadWingmanInstanceIdentity } from "./identity/wingman-instance-identity";
-import { isSharedAgentDispatchEnabled, isSharedInstanceAccessEnabled } from "./shared-instance";
+import { isAgentDispatchAdminOnlyEnabled, isSharedAgentDispatchEnabled, isSharedInstanceAccessEnabled } from "./shared-instance";
 import { WorkspaceSubscriptionManager } from './agent-chat/subscription-runtime';
 import { DispatchPipelineRuntime } from './agent-chat/dispatch-pipelines/runtime';
 import { AgentCommentSessionRuntime } from './agent-chat/comment-session-runtime';
@@ -272,6 +272,30 @@ const configuredAdminNpubs = normaliseNpubList(
 );
 const adminNpub = configuredAdminNpubs[0] ?? null;
 const isConfiguredAdminNpub = (npub: string | null | undefined): boolean => isNpubInList(npub, configuredAdminNpubs);
+const APPROVED_WORK_ROLES = new Set(["approved", "onboard"]);
+const agentDispatchAdminOnlyEnabled = isAgentDispatchAdminOnlyEnabled();
+
+const isUserApprovedForWork = (npub: string | null | undefined): boolean => {
+  const normalized = normaliseNpub(npub ?? null);
+  if (!normalized) {
+    return false;
+  }
+  if (isConfiguredAdminNpub(normalized)) {
+    return true;
+  }
+  const record = identityUserStore.getByNormalized(normalized);
+  return Boolean(record?.roles.some((role) => APPROVED_WORK_ROLES.has(role)));
+};
+
+const isTrustedAgentDispatchActor = (npub: string | null | undefined): boolean => {
+  const normalized = normaliseNpub(npub ?? null);
+  if (!normalized) {
+    return false;
+  }
+  return agentDispatchAdminOnlyEnabled
+    ? isConfiguredAdminNpub(normalized)
+    : isUserApprovedForWork(normalized);
+};
 const agentHosts = parseAllowedHosts(config.allowedHosts);
 const agentHost = normaliseHostForUrl(pickAgentHost(agentHosts));
 
@@ -572,29 +596,17 @@ const gitWorkflowApiHandler = createGitWorkflowApiHandler({
 const workspaceSubscriptionManager = new WorkspaceSubscriptionManager({
   botKeyStore,
   getInstanceIdentity: () => wingmanInstanceIdentity,
+  isAuthorizedDispatchActorNpub: isTrustedAgentDispatchActor,
 });
 accessGrantListener = createAccessGrantListener({
   relays: config.connectRelays,
   subscriptionManager: workspaceSubscriptionManager,
+  isAuthorizedIssuerNpub: isTrustedAgentDispatchActor,
 });
 if (wingmanInstanceIdentity && adminNpub) {
   accessGrantListener.subscribe(adminNpub, wingmanInstanceIdentity.secretKey, wingmanInstanceIdentity.pubkeyHex);
 }
 let sessionApiContextRef: SessionApiContext | null = null;
-
-const APPROVED_WORK_ROLES = new Set(["approved", "onboard"]);
-
-const isUserApprovedForWork = (npub: string | null | undefined): boolean => {
-  const normalized = normaliseNpub(npub ?? null);
-  if (!normalized) {
-    return false;
-  }
-  if (isConfiguredAdminNpub(normalized)) {
-    return true;
-  }
-  const record = identityUserStore.getByNormalized(normalized);
-  return Boolean(record?.roles.some((role) => APPROVED_WORK_ROLES.has(role)));
-};
 
 const requireApprovedWorkAccess = (): AccessRule => {
   return (context) => {

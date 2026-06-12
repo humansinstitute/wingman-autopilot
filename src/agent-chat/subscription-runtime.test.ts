@@ -754,6 +754,8 @@ describe('WorkspaceSubscriptionManager', () => {
             channel_id: 'channel-1',
             thread_id: 'thread-1',
             body: 'Hello autopilot',
+            sender_npub: 'npub1requester',
+            created_by_actor_npub: 'npub1requester',
             row_version: 42,
             created_by_actor_id: 'actor-user',
             updated_by_actor_id: 'actor-user',
@@ -806,7 +808,155 @@ describe('WorkspaceSubscriptionManager', () => {
       },
     });
     expect(next.lastPipelineRunId).toBe('run-pg-chat-1');
+    expect(dispatches[0]).toMatchObject({ updaterNpub: 'npub1requester' });
     expect(store.getBySubscriptionId(imported.subscription.subscriptionId)?.recentDispatches.at(-1)?.pipelineRunId).toBe('run-pg-chat-1');
+  });
+
+  test('suppresses Flight Deck PG chat dispatch from unauthorized actors', async () => {
+    const dbPath = makeTempDb();
+    const routeStore = new DispatchRouteStore(dbPath);
+    let dispatchCount = 0;
+    const dispatchPipelineRuntime = {
+      listRoutesForSubscription: (subscriptionId: string) => routeStore.listForSubscription(subscriptionId),
+      saveRoute: (input: Parameters<DispatchRouteStore['save']>[0]) => routeStore.save(input),
+      dispatch: async () => {
+        dispatchCount += 1;
+        return { handled: true, lastPipelineRunId: 'run-unauthorized', historyEntries: [] };
+      },
+    } as unknown as DispatchPipelineRuntime;
+    const instanceIdentity = makeInstanceIdentity();
+    const { manager, store } = createTestManager(
+      dbPath,
+      new Map(),
+      undefined,
+      instanceIdentity,
+      dispatchPipelineRuntime,
+      {
+        isAuthorizedDispatchActorNpub: (npub) => npub === 'npub1allowed',
+        fetchFlightDeckPgChannelMessages: async () => ({
+          messages: [{
+            id: 'message-unauthorized-1',
+            workspace_id: 'workspace-1',
+            scope_id: 'scope-1',
+            channel_id: 'channel-1',
+            thread_id: 'thread-unauthorized-1',
+            body: 'Hello from outside',
+            sender_npub: 'npub1outside',
+            created_by_actor_npub: 'npub1outside',
+            row_version: 42,
+            created_by_actor_id: 'actor-outside',
+            updated_by_actor_id: 'actor-outside',
+            created_at: '2026-06-10T00:00:00.000Z',
+            updated_at: '2026-06-10T00:00:00.000Z',
+          }],
+          next_cursor: null,
+        }),
+      },
+    );
+    const imported = await manager.importAgentConnectPackage({
+      managedByNpub: 'npub1manager',
+      packageJson: makeConnectPackageForWorkspace('workspace-1', 'npub1workspaceservice'),
+      onboardingSource: 'nostr_33357',
+    });
+
+    await (manager as unknown as {
+      handleFlightDeckPgEvent: (record: WorkspaceSubscriptionRecord, event: Record<string, unknown>) => Promise<WorkspaceSubscriptionRecord>;
+    }).handleFlightDeckPgEvent(imported.subscription, {
+      id: 'event-unauthorized-1',
+      event_id: 'event-unauthorized-1',
+      cursor: 'cursor-unauthorized-1',
+      workspace_id: 'workspace-1',
+      scope_id: 'scope-1',
+      channel_id: 'channel-1',
+      actor_id: 'actor-outside',
+      event_type: 'message.created',
+      entity_type: 'message',
+      entity_id: 'message-unauthorized-1',
+      operation: 'created',
+      entity_row_version: 42,
+      row_version: 100,
+      created_at: '2026-06-10T00:00:00.000Z',
+      payload: {},
+    });
+
+    const saved = store.getBySubscriptionId(imported.subscription.subscriptionId);
+    expect(dispatchCount).toBe(0);
+    expect(saved?.lastRoutingResult?.code).toBe('chat_skip_unauthorized_actor');
+    expect(saved?.recentDispatches.at(-1)?.action).toBe('chat_skip_unauthorized_actor');
+    expect(saved?.recentDispatches.at(-1)?.details).toMatchObject({
+      actor_npub: 'npub1outside',
+      suppression_reason: 'unauthorized_dispatch_actor',
+      source: 'flightdeck_pg',
+    });
+  });
+
+  test('suppresses legacy task dispatch from unauthorized record signers', async () => {
+    const dbPath = makeTempDb();
+    const instanceIdentity = makeInstanceIdentity();
+    const { manager, store } = createTestManager(
+      dbPath,
+      new Map(),
+      undefined,
+      instanceIdentity,
+      undefined,
+      {
+        isAuthorizedDispatchActorNpub: (npub) => npub === 'npub1allowed',
+        fetchRecordHistory: async () => [{
+          id: 'task-record-unauthorized-1',
+          record_id: 'task-record-unauthorized-1',
+          version: 1,
+          record_state: 'active',
+          signature_npub: 'npub1outside',
+        }],
+        decryptRecordPayload: async () => ({
+          task_id: 'task-record-unauthorized-1',
+          title: 'Outside task',
+          description: 'Should not dispatch',
+          state: 'new',
+          assigned_to_npub: instanceIdentity.npub,
+        }),
+      },
+    );
+    const imported = await manager.importAgentConnectPackage({
+      managedByNpub: 'npub1manager',
+      packageJson: makeConnectPackage({
+        workspace: { owner_npub: 'npub1workspace' },
+        app: { app_npub: 'npub1sourceapp' },
+        capabilities: ['task_dispatch'],
+      }),
+      onboardingSource: 'agent_connect_import',
+    });
+    (manager as unknown as { runtimes: Map<string, unknown> }).runtimes.set(imported.subscription.subscriptionId, {
+      abortController: null,
+      reconnectTimer: null,
+      reconnectAttempts: 0,
+      botIdentity: {
+        botNpub: instanceIdentity.npub,
+        botPubkeyHex: instanceIdentity.pubkeyHex,
+        botSecret: instanceIdentity.secretKey,
+      },
+      wsSession: {},
+      groupKeys: null,
+      wrappedKeyRows: [],
+      flightDeckPgActorId: null,
+      removed: false,
+    });
+
+    await (manager as unknown as {
+      handleTaskRecordChanged: (record: WorkspaceSubscriptionRecord, payload: Record<string, unknown>) => Promise<WorkspaceSubscriptionRecord>;
+    }).handleTaskRecordChanged(imported.subscription, {
+      record_id: 'task-record-unauthorized-1',
+      family_hash: 'npub1sourceapp:task',
+    });
+
+    const saved = store.getBySubscriptionId(imported.subscription.subscriptionId);
+    expect(saved?.lastRoutingResult?.code).toBe('task_skip_unauthorized_actor');
+    expect(saved?.recentDispatches.at(-1)?.action).toBe('task_skip_unauthorized_actor');
+    expect(saved?.recentDispatches.at(-1)?.details).toMatchObject({
+      actor_npub: 'npub1outside',
+      source: 'record',
+      suppression_reason: 'unauthorized_dispatch_actor',
+    });
   });
 
   test('times out a stuck Flight Deck PG event poll and records poll failure health', async () => {
@@ -974,6 +1124,8 @@ describe('WorkspaceSubscriptionManager', () => {
             channel_id: 'channel-1',
             thread_id: 'thread-live-1',
             body: 'Live hello',
+            sender_npub: 'npub1requester',
+            created_by_actor_npub: 'npub1requester',
             row_version: 42,
             created_by_actor_id: 'actor-user',
             updated_by_actor_id: 'actor-user',
@@ -1051,6 +1203,8 @@ describe('WorkspaceSubscriptionManager', () => {
             channel_id: 'channel-1',
             thread_id: 'thread-dupe-1',
             body: 'Duplicate hello',
+            sender_npub: 'npub1requester',
+            created_by_actor_npub: 'npub1requester',
             row_version: 42,
             created_by_actor_id: 'actor-user',
             updated_by_actor_id: 'actor-user',

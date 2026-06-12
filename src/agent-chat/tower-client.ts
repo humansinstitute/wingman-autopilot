@@ -54,6 +54,8 @@ export interface FlightDeckPgMessage {
   metadata?: Record<string, unknown> | null;
   row_version?: number | null;
   created_by_actor_id?: string | null;
+  created_by_actor_npub?: string | null;
+  sender_npub?: string | null;
   updated_by_actor_id?: string | null;
   created_at?: string | null;
   updated_at?: string | null;

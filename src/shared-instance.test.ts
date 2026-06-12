@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 
-import { isSharedAgentDispatchEnabled, isSharedInstanceAccessEnabled } from './shared-instance';
+import {
+  isAgentDispatchAdminOnlyEnabled,
+  isSharedAgentDispatchEnabled,
+  isSharedInstanceAccessEnabled,
+} from './shared-instance';
 
 describe('isSharedInstanceAccessEnabled', () => {
   test('accepts explicit true values only', () => {
@@ -31,5 +35,14 @@ describe('isSharedAgentDispatchEnabled', () => {
   test('accepts seeAgentSubs compatibility flag', () => {
     expect(isSharedAgentDispatchEnabled({ WINGMAN_SEE_AGENT_SUBS: 'true' })).toBe(true);
     expect(isSharedAgentDispatchEnabled({ WINGMAN_SEE_AGENT_SUBS: 'false', WINGMAN_SHARED_INSTANCE: 'true' })).toBe(false);
+  });
+});
+
+describe('isAgentDispatchAdminOnlyEnabled', () => {
+  test('requires an explicit admin-only flag', () => {
+    expect(isAgentDispatchAdminOnlyEnabled({ WINGMAN_AGENT_DISPATCH_ADMIN_ONLY: 'true' })).toBe(true);
+    expect(isAgentDispatchAdminOnlyEnabled({ WINGMAN_AGENT_DISPATCH_ADMIN_ONLY: '1' })).toBe(true);
+    expect(isAgentDispatchAdminOnlyEnabled({ WINGMAN_AGENT_DISPATCH_ADMIN_ONLY: 'false' })).toBe(false);
+    expect(isAgentDispatchAdminOnlyEnabled({ WINGMAN_SHARED_INSTANCE: 'true' })).toBe(false);
   });
 });

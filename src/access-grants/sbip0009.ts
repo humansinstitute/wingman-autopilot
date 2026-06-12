@@ -129,6 +129,7 @@ export interface ProcessAccessGrantInput {
   fetchImpl?: typeof fetch;
   now?: Date;
   processedKeys?: Set<string>;
+  isAuthorizedIssuerNpub?: (npub: string) => boolean;
   onPostConnectSync?: (grant: DecodedAccessGrant, imported: unknown) => Promise<unknown>;
   onPostRevocationSync?: (
     grant: DecodedAccessGrant,
@@ -418,6 +419,16 @@ export function decodeAccessGrantEvent(input: {
 
 function grantIssuerIsManagedBy(grant: DecodedAccessGrant, managedByNpub: string): boolean {
   return Boolean(grant.issuerNpub && managedByNpub && grant.issuerNpub === managedByNpub);
+}
+
+function grantIssuerIsAuthorized(grant: DecodedAccessGrant, input: ProcessAccessGrantInput): boolean {
+  if (!grant.issuerNpub) {
+    return false;
+  }
+  if (input.isAuthorizedIssuerNpub) {
+    return input.isAuthorizedIssuerNpub(grant.issuerNpub);
+  }
+  return grantIssuerIsManagedBy(grant, input.managedByNpub);
 }
 
 function decodeConnectionToken(token: string): Record<string, unknown> {
@@ -1007,11 +1018,11 @@ export async function processAccessGrantEvent(input: ProcessAccessGrantInput): P
     return { ok: false, code, message: (error as Error).message };
   }
 
-  if (!grantIssuerIsManagedBy(grant, input.managedByNpub)) {
+  if (!grantIssuerIsAuthorized(grant, input)) {
     return {
       ok: false,
       code: 'unauthorized_issuer',
-      message: 'Onboarding event issuer is not authorized for this managed bot identity.',
+      message: 'Onboarding event issuer is not authorized for this Autopilot instance.',
       grant,
     };
   }

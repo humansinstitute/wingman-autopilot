@@ -23,3 +23,7 @@ export function isSharedAgentDispatchEnabled(env: EnvLike = Bun.env): boolean {
     ?? readBooleanEnv(env.WINGMAN_SEE_AGENT_SUBS)
     ?? isSharedInstanceAccessEnabled(env);
 }
+
+export function isAgentDispatchAdminOnlyEnabled(env: EnvLike = Bun.env): boolean {
+  return readBooleanEnv(env.WINGMAN_AGENT_DISPATCH_ADMIN_ONLY) === true;
+}

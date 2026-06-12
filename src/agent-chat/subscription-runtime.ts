@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 
 import { nip19 } from 'nostr-tools';
+import { normaliseNpub } from '../identity/npub-utils';
 import { generateBotKey, unlockViaEscrow } from '../identity/bot-key-manager';
 import {
   AgentWorkSessionRuntime,
@@ -262,6 +263,8 @@ function normaliseFlightDeckPgChatPayload(
     ? event.payload
     : {};
   const senderNpub = getOptionalText(metadata.sender_npub)
+    ?? getOptionalText(message.sender_npub)
+    ?? getOptionalText(message.created_by_actor_npub)
     ?? getOptionalText(eventPayload.sender_npub)
     ?? getOptionalText(eventPayload.actor_npub);
   return {
@@ -370,6 +373,16 @@ function isManagerAuthoredComment(
     return false;
   }
   return updaterNpub === managerNpub || comment.senderNpub === managerNpub;
+}
+
+function firstNpub(...values: Array<string | null | undefined>): string | null {
+  for (const value of values) {
+    const normalized = normaliseNpub(value ?? null);
+    if (normalized) {
+      return normalized;
+    }
+  }
+  return null;
 }
 
 function parseTimestampMs(value: unknown): number | null {
@@ -639,6 +652,7 @@ export interface WorkspaceSubscriptionManagerDependencies {
   chatRecordPullMaxAttempts?: number;
   chatRecordPullRetryDelayMs?: number;
   autoAgentWorkspaceRoot?: string;
+  isAuthorizedDispatchActorNpub?: (npub: string) => boolean;
   botKeyStore: {
     getActiveKeyForUser: (npub: string) => BotKeyStoreRecord | null;
     getActiveKeyForBotNpub: (botNpub: string) => BotKeyStoreRecord | null;
@@ -782,6 +796,7 @@ export class WorkspaceSubscriptionManager {
   private readonly chatRecordPullMaxAttempts: number;
   private readonly chatRecordPullRetryDelayMs: number;
   private readonly autoAgentWorkspaceRoot: string;
+  private readonly isAuthorizedDispatchActorNpub: (npub: string) => boolean;
   private readonly runtimes = new Map<string, RuntimeContext>();
   private readonly workspaceKeyOwnerCache = new Map<string, { fetchedAt: number; owners: Map<string, string> }>();
   private readonly flightDeckPgInFlightEventKeys = new Set<string>();
@@ -814,6 +829,7 @@ export class WorkspaceSubscriptionManager {
     this.chatRecordPullRetryDelayMs = Math.max(0, deps.chatRecordPullRetryDelayMs ?? CHAT_ADVISORY_RECORD_PULL_RETRY_DELAY_MS);
     this.autoAgentWorkspaceRoot = (deps.autoAgentWorkspaceRoot ?? Bun.env.AGENT_CHAT_WORKSPACE_ROOT ?? DEFAULT_AUTO_AGENT_WORKSPACE_ROOT).trim()
       || DEFAULT_AUTO_AGENT_WORKSPACE_ROOT;
+    this.isAuthorizedDispatchActorNpub = deps.isAuthorizedDispatchActorNpub ?? (() => true);
   }
 
   setChatRuntime(chatRuntime: AgentChatSessionRuntime | null): void {
@@ -830,6 +846,52 @@ export class WorkspaceSubscriptionManager {
 
   setDispatchPipelineRuntime(dispatchPipelineRuntime: DispatchPipelineRuntime | null): void {
     this.dispatchPipelineRuntime = dispatchPipelineRuntime;
+  }
+
+  private isAuthorizedDispatchActor(npub: string | null | undefined): boolean {
+    const normalized = normaliseNpub(npub ?? null);
+    return Boolean(normalized && this.isAuthorizedDispatchActorNpub(normalized));
+  }
+
+  private appendUnauthorizedDispatchSuppression(input: {
+    record: WorkspaceSubscriptionRecord;
+    kind: AgentChatDispatchHistoryEntry['kind'];
+    action: AgentChatDispatchHistoryEntry['action'];
+    recordId: string;
+    bindingId: string;
+    bindingType: AgentChatDispatchHistoryEntry['bindingType'];
+    actorNpub: string | null;
+    source: string;
+    details?: Record<string, unknown>;
+  }): WorkspaceSubscriptionRecord {
+    const record = input.record;
+    record.lastRoutingResult = buildFailureDiagnostic(
+      input.action,
+      'Dispatch suppressed because the event actor is not an authorized Autopilot user.',
+      'unauthorized_dispatch_actor',
+      {
+        subscription_id: record.subscriptionId,
+        record_id: input.recordId,
+        actor_npub: input.actorNpub,
+        source: input.source,
+      },
+    );
+    return this.appendDispatchHistory(record, {
+      at: new Date().toISOString(),
+      kind: input.kind,
+      action: input.action,
+      agentId: 'security',
+      sessionId: null,
+      recordId: input.recordId,
+      bindingId: input.bindingId,
+      bindingType: input.bindingType,
+      details: {
+        ...(input.details ?? {}),
+        actor_npub: input.actorNpub,
+        source: input.source,
+        suppression_reason: 'unauthorized_dispatch_actor',
+      },
+    });
   }
 
   getRuntimeBotIdentity(subscriptionId: string): RuntimeBotIdentity | null {
@@ -2925,6 +2987,26 @@ export class WorkspaceSubscriptionManager {
       const threadId = message.thread_id ?? message.thread_source_message_id ?? message.id;
       const scopeId = message.scope_id ?? event.scope_id ?? null;
       const payload = normaliseFlightDeckPgChatPayload(message, event);
+      const actorNpub = firstNpub(getOptionalText(payload.sender_npub));
+      if (!this.isAuthorizedDispatchActor(actorNpub)) {
+        return this.appendUnauthorizedDispatchSuppression({
+          record,
+          kind: 'chat',
+          action: 'chat_skip_unauthorized_actor',
+          recordId,
+          bindingId: threadId,
+          bindingType: 'thread',
+          actorNpub,
+          source: 'flightdeck_pg',
+          details: {
+            event_id: event.event_id ?? event.id ?? null,
+            channel_id: channelId,
+            scope_id: scopeId,
+            thread_id: threadId,
+            event_actor_id: event.actor_id ?? null,
+          },
+        });
+      }
       const profileDecision = this.resolveProfileRuntimeDecision({
         subscription: record,
         eventType: 'chat_mention',
@@ -2977,7 +3059,7 @@ export class WorkspaceSubscriptionManager {
           recordFamily: 'chat',
           recordState: event.operation === 'deleted' ? 'deleted' : 'active',
           recordVersion: message.row_version ?? event.entity_row_version ?? event.row_version ?? null,
-          updaterNpub: null,
+          updaterNpub: actorNpub,
           bindingType: 'thread',
           bindingId: threadId,
           scopeId,
@@ -3341,6 +3423,23 @@ export class WorkspaceSubscriptionManager {
           channel_id: chatMessage.channel_id ?? null,
         });
         record = this.saveRecord(record);
+        const chatActorNpub = firstNpub(getRecordUpdaterNpub(latest), getOptionalText(chatMessage.sender_npub));
+        if (!this.isAuthorizedDispatchActor(chatActorNpub)) {
+          return this.appendUnauthorizedDispatchSuppression({
+            record,
+            kind: 'chat',
+            action: 'chat_skip_unauthorized_actor',
+            recordId,
+            bindingId: recordId,
+            bindingType: 'chat',
+            actorNpub: chatActorNpub,
+            source: 'record',
+            details: {
+              sender_npub: getOptionalText(chatMessage.sender_npub),
+              updater_npub: getRecordUpdaterNpub(latest),
+            },
+          });
+        }
         if (this.dispatchPipelineRuntime) {
           try {
             record.lastRoutingResult = buildSuccessDiagnostic('Chat dispatch routing context started.', {
@@ -3720,6 +3819,18 @@ export class WorkspaceSubscriptionManager {
       }
       const decrypted = await this.decryptAdvisoryPayload(record, latest);
       const updaterNpub = getRecordUpdaterNpub(latest);
+      if (!this.isAuthorizedDispatchActor(updaterNpub)) {
+        return this.appendUnauthorizedDispatchSuppression({
+          record,
+          kind: 'task',
+          action: 'task_skip_unauthorized_actor',
+          recordId,
+          bindingId: recordId,
+          bindingType: 'task',
+          actorNpub: updaterNpub,
+          source: 'record',
+        });
+      }
       const task = normaliseInboundTaskRecord(decrypted);
       if (!task) {
         return this.appendDispatchHistory(record, {
@@ -4208,6 +4319,25 @@ export class WorkspaceSubscriptionManager {
         target_record_family_hash: comment.targetRecordFamilyHash,
       });
       const updaterNpub = getRecordUpdaterNpub(latest);
+      const commentActorNpub = firstNpub(updaterNpub, comment.senderNpub);
+      if (!this.isAuthorizedDispatchActor(commentActorNpub)) {
+        return this.appendUnauthorizedDispatchSuppression({
+          record,
+          kind: 'comment',
+          action: 'comment_skip_unauthorized_actor',
+          recordId,
+          bindingId: comment.targetRecordId,
+          bindingType: null,
+          actorNpub: commentActorNpub,
+          source: 'record',
+          details: {
+            comment_id: comment.commentId,
+            updater_npub: updaterNpub,
+            sender_npub: comment.senderNpub,
+            target_record_family_hash: comment.targetRecordFamilyHash,
+          },
+        });
+      }
 
       if (isTaskCommentTarget(comment)) {
         return await this.handleTaskCommentDispatch(record, recordId, latest, comment, updaterNpub);
