@@ -86,6 +86,25 @@ function formatTimestamp(value) {
   return Number.isFinite(timestamp) ? new Date(timestamp).toLocaleString() : value;
 }
 
+function createEventPollPill(subscription) {
+  if (!subscription || subscription.onboardingSource !== 'nostr_33357') {
+    return createTonePill('Poll N/A', 'muted');
+  }
+  const okAt = Date.parse(subscription.lastEventPollOkAt || '');
+  const errorAt = Date.parse(subscription.lastEventPollErrorAt || '');
+  if (Number.isFinite(errorAt) && (!Number.isFinite(okAt) || errorAt > okAt)) {
+    return createTonePill('Poll Error', 'danger');
+  }
+  if (!Number.isFinite(okAt)) {
+    return createTonePill('Poll Pending', 'warning');
+  }
+  const ageSeconds = Math.max(0, Math.round((Date.now() - okAt) / 1000));
+  if (ageSeconds > 45) {
+    return createTonePill(`Poll Stale ${ageSeconds}s`, 'danger');
+  }
+  return createTonePill(`Poll OK ${ageSeconds}s`, 'success');
+}
+
 function shortenIdentifier(value, { head = 10, tail = 6 } = {}) {
   if (typeof value !== 'string' || !value) {
     return 'None';
@@ -894,6 +913,7 @@ export function createSubscriptionCard(subscription, chatSessions, handlers) {
   card.append(identity);
   card.append(createPillRow([
     createTonePill(subscription.sseStatus === 'connected' ? 'SSE Connected' : `SSE ${subscription.sseStatus || 'unknown'}`, subscription.sseStatus === 'connected' ? 'success' : 'warning'),
+    createEventPollPill(subscription),
     createTonePill(subscription.healthStatus === 'healthy' ? 'Healthy' : subscription.healthStatus || 'Unknown', subscription.healthStatus === 'healthy' ? 'success' : 'warning'),
     createTonePill(`${subscription.operator?.candidateAgentCount ?? 0} Agents`, subscription.operator?.candidateAgentCount > 0 ? 'success' : 'warning'),
     createTonePill(`${enabledRouteCount}/${routeCount} Routes`, enabledRouteCount > 0 ? 'success' : 'warning'),

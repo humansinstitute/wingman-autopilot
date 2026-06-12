@@ -154,6 +154,26 @@ export function encodeFlightDeckPgEventCursor(rowVersion: number): string {
   return Buffer.from(JSON.stringify({ version: 1, rowVersion }), 'utf8').toString('base64url');
 }
 
+export function decodeFlightDeckPgEventCursor(cursor: string | null | undefined): { version: number; rowVersion: number } | null {
+  if (!cursor) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as {
+      version?: unknown;
+      rowVersion?: unknown;
+    };
+    const version = Number(parsed.version);
+    const rowVersion = Number(parsed.rowVersion);
+    if (!Number.isInteger(version) || version !== 1 || !Number.isInteger(rowVersion) || rowVersion < 0) {
+      return null;
+    }
+    return { version, rowVersion };
+  } catch {
+    return null;
+  }
+}
+
 function buildFlightDeckPgUrl(
   backendBaseUrl: string,
   path: string,
@@ -314,6 +334,40 @@ export async function fetchFlightDeckPgEvents(params: {
     events: Array.isArray(payload.events) ? payload.events : [],
     next_cursor: typeof payload.next_cursor === 'string' ? payload.next_cursor : null,
   };
+}
+
+export async function connectFlightDeckPgEventStream(params: {
+  backendBaseUrl: string;
+  workspaceId: string;
+  appNpub: string;
+  botIdentity: RuntimeBotIdentity;
+  cursor?: string | null;
+  limit?: number;
+  signal?: AbortSignal;
+}): Promise<Response> {
+  const path = `/api/v4/flightdeck-pg/workspaces/${encodeURIComponent(params.workspaceId)}/events/stream`;
+  const url = buildFlightDeckPgUrl(params.backendBaseUrl, path, {
+    cursor: params.cursor ?? encodeFlightDeckPgEventCursor(0),
+    limit: params.limit ?? 100,
+  });
+  const authorization = await signFlightDeckPgBotRequest({
+    botIdentity: params.botIdentity,
+    url,
+    method: 'GET',
+  });
+  const response = await fetch(url, {
+    headers: {
+      Accept: 'text/event-stream',
+      Authorization: authorization,
+      'x-flightdeck-pg-app-npub': params.appNpub,
+    },
+    signal: params.signal,
+  });
+  if (!response.ok || !response.body) {
+    const error = await parseTowerError(response, 'flightdeck_pg_events_stream');
+    throw Object.assign(new Error(error.message), error);
+  }
+  return response;
 }
 
 export async function fetchFlightDeckPgChannelMessages(params: {

@@ -68,6 +68,25 @@ function toneForStatus(value, successValues = ['healthy', 'connected', 'ready', 
   return 'warning';
 }
 
+function createEventPollPill(subscription) {
+  if (!subscription || subscription.onboardingSource !== 'nostr_33357') {
+    return createTonePill('Poll N/A', 'muted');
+  }
+  const okAt = Date.parse(subscription.lastEventPollOkAt || '');
+  const errorAt = Date.parse(subscription.lastEventPollErrorAt || '');
+  if (Number.isFinite(errorAt) && (!Number.isFinite(okAt) || errorAt > okAt)) {
+    return createTonePill('Poll Error', 'danger');
+  }
+  if (!Number.isFinite(okAt)) {
+    return createTonePill('Poll Pending', 'warning');
+  }
+  const ageSeconds = Math.max(0, Math.round((Date.now() - okAt) / 1000));
+  if (ageSeconds > 45) {
+    return createTonePill(`Poll Stale ${ageSeconds}s`, 'danger');
+  }
+  return createTonePill(`Poll OK ${ageSeconds}s`, 'success');
+}
+
 function createPillRow(pills) {
   const row = document.createElement('div');
   row.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;';
@@ -449,6 +468,7 @@ export function createFlightDeckConnectionsPanel({
     card.append(createPillRow([
       createTonePill(titleCaseStatus(subscription?.healthStatus), toneForStatus(subscription?.healthStatus, ['healthy'])),
       createTonePill(subscription?.sseStatus === 'connected' ? 'Events Connected' : `Events ${titleCaseStatus(subscription?.sseStatus)}`, toneForStatus(subscription?.sseStatus, ['connected'])),
+      createEventPollPill(subscription),
       createTonePill(`Onboarding ${titleCaseStatus(onboardingStatus)}`, toneForStatus(onboardingStatus)),
       createTonePill(`Yoke ${titleCaseStatus(yokeStatus)}`, toneForStatus(yokeStatus)),
       createTonePill(dispatchReady ? 'Default Dispatch Ready' : 'Dispatch Setup Pending', dispatchReady ? 'success' : 'warning'),

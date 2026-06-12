@@ -20,6 +20,138 @@ interface GraphMemoryMatch {
   labels: string[];
 }
 
+interface DailyNoteItemState {
+  title: string;
+  status: "completed" | "in_progress" | "blocked" | "planned";
+}
+
+interface DailyNotePayload {
+  recordId: string | null;
+  title: string;
+  body: string;
+  focus: string;
+  noteDate: string;
+  status: string;
+  recordState: string;
+  items: DailyNoteItemState[];
+}
+
+interface DailyNoteProgress {
+  totalItems: number;
+  completed: number;
+  inProgress: number;
+  blocked: number;
+  notStarted: number;
+  completionRatio: number;
+  hasRecentActivity: boolean;
+  reviewStatus: "on_track" | "partial" | "off_track";
+}
+
+function parseDailyNoteStatus(value: unknown): "completed" | "in_progress" | "blocked" | "planned" {
+  const status = getText(value)?.toLowerCase() ?? "planned";
+  if (["done", "completed", "complete", "finished"].includes(status)) return "completed";
+  if (["in_progress", "inprogress", "working", "started", "active"].includes(status)) return "in_progress";
+  if (["blocked", "stalled", "stuck", "waiting", "paused"].includes(status)) return "blocked";
+  return "planned";
+}
+
+function normaliseDailyNoteItem(item: unknown): DailyNoteItemState | null {
+  if (!item || typeof item !== "object") {
+    if (typeof item === "string") {
+      const title = item.trim();
+      if (!title) return null;
+      return { title, status: "planned" };
+    }
+    return null;
+  }
+  const next = objectValue(item);
+  const title = getText(next.title ?? next.name ?? next.task ?? next.body ?? "");
+  if (!title) return null;
+  return {
+    title,
+    status: parseDailyNoteStatus(next.status ?? next.state ?? next.progress),
+  };
+}
+
+function normaliseDailyNote(value: unknown): DailyNotePayload {
+  const record = objectValue(value);
+  const bodyPayload = objectValue(record.payload ?? record.data ?? {});
+  const data = {
+    ...record,
+    ...objectValue(bodyPayload.data ?? bodyPayload),
+  };
+  const noteDate = getText(data.note_date ?? data.date ?? record.note_date ?? record.date ?? new Date().toISOString().slice(0, 10));
+  const items = Array.isArray(data.items)
+    ? data.items.map(normaliseDailyNoteItem).filter(Boolean) as DailyNoteItemState[]
+    : [];
+  return {
+    recordId: getText(record.record_id ?? record.recordId ?? record.id) || null,
+    title: getText(record.title ?? data.title ?? "Daily note"),
+    body: getText(record.body ?? data.body ?? ""),
+    focus: getText(record.focus ?? data.focus ?? ""),
+    noteDate,
+    status: getText(record.status ?? data.status ?? "active"),
+    recordState: getText(record.record_state ?? data.record_state ?? "active"),
+    items,
+  };
+}
+
+function evaluateDailyNoteProgress(note: DailyNotePayload, recentTaskChanges: unknown[]): DailyNoteProgress {
+  const tasks = Array.isArray(recentTaskChanges) ? recentTaskChanges : [];
+  const totalItems = note.items.length;
+  const completed = note.items.filter((item) => item.status === "completed").length;
+  const inProgress = note.items.filter((item) => item.status === "in_progress").length;
+  const blocked = note.items.filter((item) => item.status === "blocked").length;
+  const notStarted = Math.max(0, totalItems - completed - inProgress - blocked);
+  const completionRatio = totalItems > 0 ? completed / Math.max(1, totalItems) : 0;
+
+  const noteTokens = (note.items.length > 0 ? note.items.map((item) => item.title.toLowerCase()) : [])
+    .concat([note.focus.toLowerCase(), note.title.toLowerCase(), note.body.toLowerCase()])
+    .filter(Boolean);
+
+  const normalizedTaskText = tasks
+    .map((task) => {
+      const row = objectValue(task);
+      return [
+        getText(row.title),
+        getText(row.description),
+        getText(row.body),
+      ].filter(Boolean).join(" ").toLowerCase();
+    })
+    .filter(Boolean);
+
+  const hasRecentActivity = tasks.some((task) => {
+    const row = objectValue(task);
+    const state = getText(row.state ?? row.status ?? "");
+    const updatedAt = getText(row.updated_at ?? row.updatedAt);
+    if (state === "deleted" || row.record_state === "deleted") return false;
+    if (!updatedAt) return false;
+    return true;
+  }) && (noteTokens.length === 0 || normalizedTaskText.some((taskText) => noteTokens.some((noteToken) => taskText.includes(noteToken))));
+
+  let reviewStatus: "on_track" | "partial" | "off_track";
+  if (completionRatio >= 1 || (totalItems === 0 && hasRecentActivity)) {
+    reviewStatus = "on_track";
+  } else if (completionRatio >= 0.6 && hasRecentActivity) {
+    reviewStatus = "partial";
+  } else if (completionRatio >= 0.35 && totalItems > 0 && hasRecentActivity) {
+    reviewStatus = "partial";
+  } else {
+    reviewStatus = "off_track";
+  }
+
+  return {
+    totalItems,
+    completed,
+    inProgress,
+    blocked,
+    notStarted,
+    completionRatio,
+    hasRecentActivity,
+    reviewStatus,
+  };
+}
+
 function clampConfidence(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return 0.5;
   return Math.max(0, Math.min(1, value));
@@ -594,6 +726,137 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     return {
       routedTo: kind === "clarification" ? "ask-user" : "continue",
       priority: kind === "decision" ? "normal" : "low",
+    };
+  },
+
+  async "daily.fetchTowerPgContext"(input) {
+    const towerBaseUrl = getText(input.towerBaseUrl ?? input.baseUrl ?? input.towerUrl);
+    const workspaceId = getText(input.workspaceId ?? input.workspace_id);
+    if (!towerBaseUrl || !workspaceId) {
+      return {
+        fetched: false,
+        reason: "towerBaseUrl and workspaceId are required to fetch Tower PG daily note context.",
+        dailyNotes: Array.isArray(input.dailyNotes) ? input.dailyNotes : [],
+        dailyNote: input.dailyNote ?? null,
+        recentTaskChanges: Array.isArray(input.recentTaskChanges) ? input.recentTaskChanges : [],
+      };
+    }
+
+    const appNpub = getText(input.appNpub ?? input.app_npub);
+    const noteDate = getText(input.noteDate ?? input.note_date) ?? new Date().toISOString().slice(0, 10);
+    const params = new URLSearchParams({ note_date: noteDate, limit: String(positiveInteger(input.dailyNoteLimit, 5, 50)) });
+    const dailyNotesPayload = await fetchTowerPgJson(
+      towerBaseUrl,
+      `/api/v4/flightdeck-pg/workspaces/${encodeURIComponent(workspaceId)}/daily-notes?${params.toString()}`,
+      appNpub,
+    );
+    const dailyNotes = Array.isArray(dailyNotesPayload.daily_notes) ? dailyNotesPayload.daily_notes : [];
+
+    const taskLimit = positiveInteger(input.taskLimit, 50, 200);
+    const taskPayloads: unknown[] = [];
+    const channelIds = getStringArray(input.channelIds ?? input.channel_ids);
+    const scopeIds = getStringArray(input.scopeIds ?? input.scope_ids);
+    for (const channelId of channelIds.slice(0, 8)) {
+      const payload = await fetchTowerPgJson(
+        towerBaseUrl,
+        `/api/v4/flightdeck-pg/workspaces/${encodeURIComponent(workspaceId)}/channels/${encodeURIComponent(channelId)}/tasks?limit=${taskLimit}`,
+        appNpub,
+      );
+      taskPayloads.push(...(Array.isArray(payload.tasks) ? payload.tasks : []));
+    }
+    for (const scopeId of scopeIds.slice(0, 8)) {
+      const payload = await fetchTowerPgJson(
+        towerBaseUrl,
+        `/api/v4/flightdeck-pg/workspaces/${encodeURIComponent(workspaceId)}/scopes/${encodeURIComponent(scopeId)}/tasks?limit=${taskLimit}`,
+        appNpub,
+      );
+      taskPayloads.push(...(Array.isArray(payload.tasks) ? payload.tasks : []));
+    }
+
+    const recentTaskChanges = taskPayloads.length > 0
+      ? Array.from(new Map(taskPayloads.map((task) => {
+        const row = objectValue(task);
+        return [getText(row.id ?? row.record_id) ?? JSON.stringify(row), row];
+      })).values())
+      : (Array.isArray(input.recentTaskChanges) ? input.recentTaskChanges : []);
+
+    return {
+      fetched: true,
+      noteDate,
+      dailyNotes,
+      dailyNote: dailyNotes[0] ?? input.dailyNote ?? null,
+      recentTaskChanges,
+      source: {
+        towerBaseUrl,
+        workspaceId,
+        appNpub,
+        channelIds,
+        scopeIds,
+      },
+    };
+  },
+
+  async "daily.evaluateProgress"(input) {
+    const candidateNotes = Array.isArray(input.dailyNotes) ? input.dailyNotes : [];
+    const noteDate = getText(input.noteDate);
+    const selectedByDate = noteDate && candidateNotes.length > 0
+      ? candidateNotes.find((noteCandidate) => {
+        const candidate = normaliseDailyNote(noteCandidate);
+        return candidate.noteDate === noteDate;
+      })
+      : null;
+    const dailyNoteInput = input.dailyNote
+      ?? input.daily_note
+      ?? input.note
+      ?? input.record
+      ?? selectedByDate
+      ?? candidateNotes[0]
+      ?? null;
+    const note = normaliseDailyNote(dailyNoteInput);
+    const progress = evaluateDailyNoteProgress(note, Array.isArray(input.recentTaskChanges ?? input.taskChanges) ? (input.recentTaskChanges ?? input.taskChanges) : []);
+    const recentTaskChanges = Array.isArray(input.recentTaskChanges ?? input.taskChanges) ? (input.recentTaskChanges ?? input.taskChanges) : [];
+    const recentActivitySummary = recentTaskChanges
+      .slice(0, 8)
+      .map((task) => {
+        const row = objectValue(task);
+        const title = getText(row.title);
+        const state = getText(row.state ?? row.status);
+        return { task: title || getText(row.record_id), state: state || "new" };
+      })
+      .filter((entry) => entry.task);
+
+    const needsReminder = progress.reviewStatus !== "on_track" || (progress.totalItems > 0 && progress.completed < Math.max(1, progress.totalItems));
+    const focus = note.focus || note.title || "Today’s focus";
+    const completedPct = `${Math.round(progress.completionRatio * 100)}%`;
+    const gentleReminder = needsReminder
+      ? `Gentle reminder for ${focus}: progress is at ${completedPct} with ${progress.completed}/${progress.totalItems} items complete.`
+      : "";
+
+    return {
+      assessedAt: new Date().toISOString(),
+      note: {
+        recordId: note.recordId,
+        noteDate: note.noteDate,
+        title: note.title,
+        focus,
+        status: note.status,
+        recordState: note.recordState,
+      },
+      progress,
+      recentActivity: {
+        count: recentTaskChanges.length,
+        updates: recentActivitySummary,
+      },
+      needsReminder,
+      gentleReminder: gentleReminder || null,
+      summary: {
+        status: progress.reviewStatus,
+        completedPct,
+        hasRecentActivity: progress.hasRecentActivity,
+      },
+      confidence: clampConfidence(
+        note.recordState === "deleted" ? 0.95 : 0.8
+      ),
     };
   },
 
@@ -1531,6 +1794,27 @@ function normaliseGraphMemoryMatches(value: unknown): GraphMemoryMatch[] {
       labels: Array.isArray(item.labels) ? item.labels.map(String) : [],
     }))
     .filter((item) => item.excerpt || item.title || item.source);
+}
+
+function joinUrl(baseUrl: string, path: string): string {
+  return `${baseUrl.replace(/\/+$/, "")}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
+async function fetchTowerPgJson(baseUrl: string, path: string, appNpub: string | null = null): Promise<Record<string, unknown>> {
+  const url = joinUrl(baseUrl, path);
+  const { token } = await signWithWingmanKey(url, "GET");
+  const headers: Record<string, string> = {
+    accept: "application/json",
+    authorization: token,
+  };
+  if (appNpub) headers["x-flightdeck-pg-app-npub"] = appNpub;
+  const response = await fetch(url, { method: "GET", headers });
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`Tower PG request failed (${response.status}) ${path}${text ? `: ${truncateText(text, 240)}` : ""}`);
+  }
+  const payload = await response.json();
+  return objectValue(payload);
 }
 
 function dedupeGraphMemoryMatches(matches: GraphMemoryMatch[]): GraphMemoryMatch[] {

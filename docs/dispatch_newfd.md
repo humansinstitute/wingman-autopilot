@@ -9,7 +9,7 @@ A Flight Deck workspace connection gives Autopilot a workspace event stream. The
 There are four layers:
 
 1. Workspace connection: the 33357 / Flight Deck PG subscription.
-2. Agent profile: the bot identity and broad defaults for that agent.
+2. Agent profile: the bot identity and broad defaults for that agent. <comment>I would call this the profile for that "worksapce agent" autopilot is an agent, the workspace agent is the context for the agent in that workspace</comment>
 3. Workspace settings: defaults and context for this agent in this workspace.
 4. Event policies and target overrides: per-event, per-scope, and per-channel routing.
 

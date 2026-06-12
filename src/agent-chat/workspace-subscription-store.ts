@@ -130,6 +130,11 @@ class WorkspaceSubscriptionStore {
       serialiseJsonValue(record.capabilityDefaults ?? []),
       serialiseJsonValue(record.dispatchRouteIds ?? []),
       record.lastSyncCursor ?? null,
+      record.lastEventPollOkAt ?? null,
+      record.lastEventPollErrorAt ?? null,
+      record.lastEventPollErrorCode ?? null,
+      record.lastEventPollEventCount ?? null,
+      record.lastEventPollLagMs ?? null,
       record.lastPipelineRunId ?? null,
       record.wsKeyNpub,
       record.wsKeyStatus,
@@ -163,7 +168,8 @@ class WorkspaceSubscriptionStore {
          subscription_id, backend_connection_id, workspace_owner_npub, backend_base_url,
          tower_service_npub, workspace_id, workspace_service_npub, bot_npub, source_app_npub,
          onboarding_source, connection_token_ref, agent_profile_id, source_app_schema_namespace, capability_defaults_json,
-         dispatch_route_ids_json, last_sync_cursor, last_pipeline_run_id,
+         dispatch_route_ids_json, last_sync_cursor, last_event_poll_ok_at, last_event_poll_error_at,
+         last_event_poll_error_code, last_event_poll_event_count, last_event_poll_lag_ms, last_pipeline_run_id,
          ws_key_npub, ws_key_status, group_key_status, sse_status, health_status,
          trigger_config_record_id, last_sse_event_id, last_auth_ok_at, last_group_refresh_at,
          last_error_code, last_error_at, created_at, updated_at, managed_by_npub,
@@ -174,13 +180,14 @@ class WorkspaceSubscriptionStore {
          ?1, ?2, ?3, ?4, ?5, ?6,
          ?7, ?8, ?9,
          ?10, ?11, ?12, ?13, ?14,
-         ?15, ?16, ?17,
-         ?18, ?19, ?20, ?21, ?22,
-         ?23, ?24, ?25, ?26,
-         ?27, ?28, ?29, ?30, ?31,
-         ?32, ?33, ?34,
-         ?35, ?36, ?37, ?38,
-         ?39, ?40, ?41, ?42
+         ?15, ?16, ?17, ?18,
+         ?19, ?20, ?21, ?22,
+         ?23, ?24, ?25, ?26, ?27,
+         ?28, ?29, ?30, ?31,
+         ?32, ?33, ?34, ?35, ?36,
+         ?37, ?38, ?39,
+         ?40, ?41, ?42, ?43,
+         ?44, ?45, ?46, ?47
        )
        ON CONFLICT(subscription_id) DO UPDATE SET
          backend_connection_id = excluded.backend_connection_id,
@@ -198,6 +205,11 @@ class WorkspaceSubscriptionStore {
          capability_defaults_json = excluded.capability_defaults_json,
          dispatch_route_ids_json = excluded.dispatch_route_ids_json,
          last_sync_cursor = excluded.last_sync_cursor,
+         last_event_poll_ok_at = excluded.last_event_poll_ok_at,
+         last_event_poll_error_at = excluded.last_event_poll_error_at,
+         last_event_poll_error_code = excluded.last_event_poll_error_code,
+         last_event_poll_event_count = excluded.last_event_poll_event_count,
+         last_event_poll_lag_ms = excluded.last_event_poll_lag_ms,
          last_pipeline_run_id = excluded.last_pipeline_run_id,
          ws_key_npub = excluded.ws_key_npub,
          ws_key_status = excluded.ws_key_status,
@@ -264,6 +276,11 @@ class WorkspaceSubscriptionStore {
       capabilityDefaults: input.capabilityDefaults ?? [],
       dispatchRouteIds: input.dispatchRouteIds ?? [],
       lastSyncCursor: null,
+      lastEventPollOkAt: null,
+      lastEventPollErrorAt: null,
+      lastEventPollErrorCode: null,
+      lastEventPollEventCount: null,
+      lastEventPollLagMs: null,
       lastPipelineRunId: null,
       wsKeyNpub: null,
       wsKeyStatus: 'pending',
@@ -320,6 +337,11 @@ class WorkspaceSubscriptionStore {
            capability_defaults_json,
            dispatch_route_ids_json,
            last_sync_cursor,
+           last_event_poll_ok_at,
+           last_event_poll_error_at,
+           last_event_poll_error_code,
+           last_event_poll_event_count,
+           last_event_poll_lag_ms,
            last_pipeline_run_id,
            ws_key_npub,
            ws_key_status,
@@ -374,6 +396,11 @@ class WorkspaceSubscriptionStore {
            capability_defaults_json,
            dispatch_route_ids_json,
            last_sync_cursor,
+           last_event_poll_ok_at,
+           last_event_poll_error_at,
+           last_event_poll_error_code,
+           last_event_poll_event_count,
+           last_event_poll_lag_ms,
            last_pipeline_run_id,
            ws_key_npub,
            ws_key_status,
@@ -426,6 +453,11 @@ class WorkspaceSubscriptionStore {
       capabilityDefaults: parseJsonArray(row.capability_defaults_json ?? null) as WorkspaceSubscriptionRecord['capabilityDefaults'],
       dispatchRouteIds: parseJsonArray(row.dispatch_route_ids_json ?? null),
       lastSyncCursor: row.last_sync_cursor ?? null,
+      lastEventPollOkAt: row.last_event_poll_ok_at ?? null,
+      lastEventPollErrorAt: row.last_event_poll_error_at ?? null,
+      lastEventPollErrorCode: row.last_event_poll_error_code ?? null,
+      lastEventPollEventCount: row.last_event_poll_event_count == null ? null : Number(row.last_event_poll_event_count),
+      lastEventPollLagMs: row.last_event_poll_lag_ms == null ? null : Number(row.last_event_poll_lag_ms),
       lastPipelineRunId: row.last_pipeline_run_id ?? null,
       wsKeyNpub: row.ws_key_npub ?? null,
       wsKeyStatus: row.ws_key_status as WorkspaceSubscriptionRecord['wsKeyStatus'],
@@ -474,6 +506,11 @@ class WorkspaceSubscriptionStore {
         capability_defaults_json TEXT,
         dispatch_route_ids_json TEXT,
         last_sync_cursor TEXT,
+        last_event_poll_ok_at TEXT,
+        last_event_poll_error_at TEXT,
+        last_event_poll_error_code TEXT,
+        last_event_poll_event_count INTEGER,
+        last_event_poll_lag_ms INTEGER,
         last_pipeline_run_id TEXT,
         ws_key_npub TEXT,
         ws_key_status TEXT NOT NULL,
@@ -556,6 +593,21 @@ class WorkspaceSubscriptionStore {
     }
     if (!hasColumn(this.db, 'workspace_subscriptions', 'last_sync_cursor')) {
       this.db.exec('ALTER TABLE workspace_subscriptions ADD COLUMN last_sync_cursor TEXT');
+    }
+    if (!hasColumn(this.db, 'workspace_subscriptions', 'last_event_poll_ok_at')) {
+      this.db.exec('ALTER TABLE workspace_subscriptions ADD COLUMN last_event_poll_ok_at TEXT');
+    }
+    if (!hasColumn(this.db, 'workspace_subscriptions', 'last_event_poll_error_at')) {
+      this.db.exec('ALTER TABLE workspace_subscriptions ADD COLUMN last_event_poll_error_at TEXT');
+    }
+    if (!hasColumn(this.db, 'workspace_subscriptions', 'last_event_poll_error_code')) {
+      this.db.exec('ALTER TABLE workspace_subscriptions ADD COLUMN last_event_poll_error_code TEXT');
+    }
+    if (!hasColumn(this.db, 'workspace_subscriptions', 'last_event_poll_event_count')) {
+      this.db.exec('ALTER TABLE workspace_subscriptions ADD COLUMN last_event_poll_event_count INTEGER');
+    }
+    if (!hasColumn(this.db, 'workspace_subscriptions', 'last_event_poll_lag_ms')) {
+      this.db.exec('ALTER TABLE workspace_subscriptions ADD COLUMN last_event_poll_lag_ms INTEGER');
     }
     if (!hasColumn(this.db, 'workspace_subscriptions', 'last_pipeline_run_id')) {
       this.db.exec('ALTER TABLE workspace_subscriptions ADD COLUMN last_pipeline_run_id TEXT');

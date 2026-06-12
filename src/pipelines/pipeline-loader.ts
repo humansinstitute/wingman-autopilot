@@ -913,6 +913,7 @@ export async function ensurePipelineDirectories(ownerAlias: string | null): Prom
   await ensurePipelineGitRepository();
   const documentDiscussionDefinition = await readBundledDefaultDefinition("document-discussion.json");
   const softwareImplementationReviewLoopDefinition = await readBundledDefaultDefinition("software-implementation-review-loop.json");
+  const dailyNoteReviewDefinition = await readBundledDefaultDefinition("daily-note-review.json");
   const defaultDefinitions = [
     ["agent-dispatch-chat.json", AGENT_DISPATCH_CHAT_DEFINITION],
     ["fd-agent-dispatch-chat.json", buildFlightDeckPgDefaultDefinition(AGENT_DISPATCH_CHAT_DEFINITION as unknown as DeclarativePipeline, "fd-agent-dispatch-chat")],
@@ -925,6 +926,7 @@ export async function ensurePipelineDirectories(ownerAlias: string | null): Prom
     ["do-and-review.json", DO_AND_REVIEW_DEFINITION],
     ["research-and-report.json", RESEARCH_AND_REPORT_DEFINITION],
     ["software-implementation-review-loop.json", softwareImplementationReviewLoopDefinition],
+    ["daily-note-review.json", dailyNoteReviewDefinition],
   ] as const;
   const renamedBuiltIns = [
     "demo-agent-dispatch-chat-response.json",

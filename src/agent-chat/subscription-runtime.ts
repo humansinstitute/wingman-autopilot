@@ -52,6 +52,8 @@ import type { WingmanInstanceIdentity } from '../identity/wingman-instance-ident
 import {
   buildChatMessageFamilyHash,
   buildRecordFamilyHash,
+  connectFlightDeckPgEventStream,
+  decodeFlightDeckPgEventCursor,
   encodeFlightDeckPgEventCursor,
   buildFailureDiagnostic,
   buildStreamUrl,
@@ -120,7 +122,8 @@ const CHAT_ADVISORY_DECRYPT_TIMEOUT_MS = 15_000;
 const CHAT_ADVISORY_ROUTING_TIMEOUT_MS = 20_000;
 const CHAT_ADVISORY_PIPELINE_TIMEOUT_MS = 60_000;
 const WORKSPACE_KEY_MAPPING_CACHE_MS = 30_000;
-const FLIGHT_DECK_PG_EVENT_POLL_INTERVAL_MS = 5_000;
+const FLIGHT_DECK_PG_EVENT_POLL_INTERVAL_MS = 2_100;
+const FLIGHT_DECK_PG_EVENT_POLL_TIMEOUT_MS = 10_000;
 const DEFAULT_AUTO_AGENT_WORKSPACE_ROOT = new URL('../../data/agent-chat-workspaces', import.meta.url).pathname;
 const DEFAULT_33357_AGENT_CAPABILITIES: AgentCapability[] = [
   'chat_intercept',
@@ -188,6 +191,14 @@ function getOptionalTextArray(value: unknown): string[] {
   return value
     .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
     .filter((entry) => entry.length > 0);
+}
+
+function safeJsonParse(value: string): unknown | null {
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return null;
+  }
 }
 
 function defaultActionForEventType(eventType: AgentWorkspaceEventType) {
@@ -618,9 +629,12 @@ export interface WorkspaceSubscriptionManagerDependencies {
   fetchWorkspaceKeyMappings?: typeof fetchWorkspaceKeyMappings;
   fetchFlightDeckPgWorkspaceMe?: typeof fetchFlightDeckPgWorkspaceMe;
   fetchFlightDeckPgEvents?: typeof fetchFlightDeckPgEvents;
+  connectFlightDeckPgEventStream?: typeof connectFlightDeckPgEventStream;
   fetchFlightDeckPgChannelMessages?: typeof fetchFlightDeckPgChannelMessages;
   decryptRecordPayload?: typeof decryptRecordPayloadWithYoke;
   checkBackendHealth?: typeof checkBackendConnectionHealth;
+  flightDeckPgEventPollIntervalMs?: number;
+  flightDeckPgEventPollTimeoutMs?: number;
   chatRecordPullTimeoutMs?: number;
   chatRecordPullMaxAttempts?: number;
   chatRecordPullRetryDelayMs?: number;
@@ -747,15 +761,19 @@ export class WorkspaceSubscriptionManager {
   private readonly fetchWorkspaceKeyMappingsImpl: typeof fetchWorkspaceKeyMappings;
   private readonly fetchFlightDeckPgWorkspaceMeImpl: typeof fetchFlightDeckPgWorkspaceMe;
   private readonly fetchFlightDeckPgEventsImpl: typeof fetchFlightDeckPgEvents;
+  private readonly connectFlightDeckPgEventStreamImpl: typeof connectFlightDeckPgEventStream;
   private readonly fetchFlightDeckPgChannelMessagesImpl: typeof fetchFlightDeckPgChannelMessages;
   private readonly decryptRecordPayloadImpl: typeof decryptRecordPayloadWithYoke;
   private readonly checkBackendHealthImpl: typeof checkBackendConnectionHealth;
+  private readonly flightDeckPgEventPollIntervalMs: number;
+  private readonly flightDeckPgEventPollTimeoutMs: number;
   private readonly chatRecordPullTimeoutMs: number;
   private readonly chatRecordPullMaxAttempts: number;
   private readonly chatRecordPullRetryDelayMs: number;
   private readonly autoAgentWorkspaceRoot: string;
   private readonly runtimes = new Map<string, RuntimeContext>();
   private readonly workspaceKeyOwnerCache = new Map<string, { fetchedAt: number; owners: Map<string, string> }>();
+  private readonly flightDeckPgInFlightEventKeys = new Set<string>();
 
   constructor(deps: WorkspaceSubscriptionManagerDependencies) {
     this.store = deps.store ?? workspaceSubscriptionStore;
@@ -774,9 +792,12 @@ export class WorkspaceSubscriptionManager {
     this.fetchWorkspaceKeyMappingsImpl = deps.fetchWorkspaceKeyMappings ?? fetchWorkspaceKeyMappings;
     this.fetchFlightDeckPgWorkspaceMeImpl = deps.fetchFlightDeckPgWorkspaceMe ?? fetchFlightDeckPgWorkspaceMe;
     this.fetchFlightDeckPgEventsImpl = deps.fetchFlightDeckPgEvents ?? fetchFlightDeckPgEvents;
+    this.connectFlightDeckPgEventStreamImpl = deps.connectFlightDeckPgEventStream ?? connectFlightDeckPgEventStream;
     this.fetchFlightDeckPgChannelMessagesImpl = deps.fetchFlightDeckPgChannelMessages ?? fetchFlightDeckPgChannelMessages;
     this.decryptRecordPayloadImpl = deps.decryptRecordPayload ?? decryptRecordPayloadWithYoke;
     this.checkBackendHealthImpl = deps.checkBackendHealth ?? checkBackendConnectionHealth;
+    this.flightDeckPgEventPollIntervalMs = Math.max(1, deps.flightDeckPgEventPollIntervalMs ?? FLIGHT_DECK_PG_EVENT_POLL_INTERVAL_MS);
+    this.flightDeckPgEventPollTimeoutMs = Math.max(1, deps.flightDeckPgEventPollTimeoutMs ?? FLIGHT_DECK_PG_EVENT_POLL_TIMEOUT_MS);
     this.chatRecordPullTimeoutMs = Math.max(1, deps.chatRecordPullTimeoutMs ?? CHAT_ADVISORY_RECORD_PULL_TIMEOUT_MS);
     this.chatRecordPullMaxAttempts = Math.max(1, deps.chatRecordPullMaxAttempts ?? CHAT_ADVISORY_RECORD_PULL_MAX_ATTEMPTS);
     this.chatRecordPullRetryDelayMs = Math.max(0, deps.chatRecordPullRetryDelayMs ?? CHAT_ADVISORY_RECORD_PULL_RETRY_DELAY_MS);
@@ -2523,7 +2544,114 @@ export class WorkspaceSubscriptionManager {
     runtime.abortController = controller;
     record.sseStatus = 'connecting';
     this.saveRecord(this.recomputeHealth(record));
+    void this.runFlightDeckPgLiveEventLoop(record.subscriptionId, controller.signal, isStartupReload);
     void this.runFlightDeckPgEventLoop(record.subscriptionId, controller.signal, isStartupReload);
+  }
+
+  private async runFlightDeckPgLiveEventLoop(
+    subscriptionId: string,
+    signal: AbortSignal,
+    isStartupReload: boolean,
+  ): Promise<void> {
+    const runtime = this.getRuntime(subscriptionId);
+    let reconnectAttempts = 0;
+    while (!signal.aborted && !runtime.removed) {
+      let record = this.store.getBySubscriptionId(subscriptionId);
+      if (!record?.workspaceId) {
+        return;
+      }
+      try {
+        record = await this.verifyFlightDeckPgWorkspaceAccess(record, runtime.botIdentity, { signal });
+        if (record.wsKeyStatus === 'failed' || signal.aborted || runtime.removed) {
+          return;
+        }
+        const cursor = record.lastSyncCursor ?? encodeFlightDeckPgEventCursor(0);
+        const response = await this.connectFlightDeckPgEventStreamImpl({
+          backendBaseUrl: record.backendBaseUrl,
+          workspaceId: record.workspaceId,
+          appNpub: record.sourceAppNpub,
+          botIdentity: runtime.botIdentity,
+          cursor,
+          limit: 100,
+          signal,
+        });
+        record.sseStatus = 'connected';
+        if (isStartupReload && !record.lastSuccessfulStartupReloadAt) {
+          record.lastSuccessfulStartupReloadAt = new Date().toISOString();
+        }
+        record.lastErrorCode = null;
+        record.lastErrorAt = null;
+        record = this.saveRecord(this.recomputeHealth(record));
+        this.clearRuntimeFailure(record.subscriptionId, 'flightdeck_pg_event_stream_connected');
+        reconnectAttempts = 0;
+
+        for await (const sseEvent of parseSseEvents(response.body!)) {
+          if (signal.aborted || runtime.removed) {
+            return;
+          }
+          record = this.store.getBySubscriptionId(subscriptionId) ?? record;
+          if (sseEvent.event === 'connected') {
+            record.lastSseEventId = sseEvent.id ?? record.lastSseEventId;
+            record.lastSseEvent = {
+              eventId: sseEvent.id,
+              eventType: 'flightdeck_pg.connected',
+              at: new Date().toISOString(),
+              payload: safeJsonParse(sseEvent.data) ?? { data: sseEvent.data },
+            };
+            record = this.saveRecord(this.recomputeHealth(record));
+            continue;
+          }
+          if (sseEvent.event === 'flightdeck_pg.error') {
+            record.lastSseEventId = sseEvent.id ?? record.lastSseEventId;
+            record.lastSseEvent = {
+              eventId: sseEvent.id,
+              eventType: 'flightdeck_pg.error',
+              at: new Date().toISOString(),
+              payload: safeJsonParse(sseEvent.data) ?? { data: sseEvent.data },
+            };
+            record = this.saveRecord(this.recomputeHealth(record));
+            continue;
+          }
+          if (sseEvent.event !== 'flightdeck_pg.event') {
+            continue;
+          }
+          const parsed = safeJsonParse(sseEvent.data);
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            continue;
+          }
+          record = await this.handleFlightDeckPgEvent(record, parsed as FlightDeckPgEvent);
+        }
+        throw Object.assign(new Error('Flight Deck PG event stream closed.'), {
+          detailCode: 'flightdeck_pg_event_stream_closed',
+        });
+      } catch (error) {
+        if (signal.aborted || runtime.removed) {
+          return;
+        }
+        record = this.store.getBySubscriptionId(subscriptionId);
+        if (!record) {
+          return;
+        }
+        const detailCode = getErrorDetailCode(error) ?? 'flightdeck_pg_event_stream_failed';
+        record.sseStatus = 'backoff';
+        record.lastErrorCode = detailCode;
+        record.lastErrorAt = new Date().toISOString();
+        record.lastSseEvent = {
+          eventId: record.lastSseEventId,
+          eventType: 'flightdeck_pg.error',
+          at: record.lastErrorAt,
+          payload: {
+            message: error instanceof Error ? error.message : String(error),
+            detailCode,
+          },
+        };
+        this.saveRecord(this.recomputeHealth(record));
+        this.markRuntimeFailure(subscriptionId, detailCode, 'flightdeck_pg_event_stream_failed');
+        const delay = Math.min(1_000 * Math.pow(2, reconnectAttempts), 60_000);
+        reconnectAttempts += 1;
+        await sleepWithAbort(delay, signal);
+      }
+    }
   }
 
   private async runFlightDeckPgEventLoop(
@@ -2551,15 +2679,27 @@ export class WorkspaceSubscriptionManager {
       this.clearRuntimeFailure(record.subscriptionId, 'flightdeck_pg_events_connected');
 
       while (!signal.aborted && !runtime.removed) {
+        record = this.store.getBySubscriptionId(subscriptionId) ?? record;
         const cursor = record.lastSyncCursor ?? encodeFlightDeckPgEventCursor(0);
-        const result = await this.fetchFlightDeckPgEventsImpl({
-          backendBaseUrl: record.backendBaseUrl,
-          workspaceId,
-          appNpub: record.sourceAppNpub,
-          botIdentity: runtime.botIdentity,
-          cursor,
-          limit: 100,
-          signal,
+        const pollStartedAt = Date.now();
+        const pollController = new AbortController();
+        const abortPoll = () => pollController.abort();
+        signal.addEventListener('abort', abortPoll, { once: true });
+        const result = await withTimeout(
+          this.fetchFlightDeckPgEventsImpl({
+            backendBaseUrl: record.backendBaseUrl,
+            workspaceId,
+            appNpub: record.sourceAppNpub,
+            botIdentity: runtime.botIdentity,
+            cursor,
+            limit: 100,
+            signal: pollController.signal,
+          }),
+          this.flightDeckPgEventPollTimeoutMs,
+          'flightdeck_pg_event_poll_timeout',
+          () => pollController.abort(),
+        ).finally(() => {
+          signal.removeEventListener('abort', abortPoll);
         });
         const events = result.events;
         for (const event of events) {
@@ -2571,9 +2711,14 @@ export class WorkspaceSubscriptionManager {
         const nextCursor = events.at(-1)?.cursor ?? result.next_cursor ?? record.lastSyncCursor;
         if (nextCursor && nextCursor !== record.lastSyncCursor) {
           record.lastSyncCursor = nextCursor;
-          record = this.saveRecord(this.recomputeHealth(record));
         }
-        await sleepWithAbort(FLIGHT_DECK_PG_EVENT_POLL_INTERVAL_MS, signal);
+        record.lastEventPollOkAt = new Date().toISOString();
+        record.lastEventPollErrorAt = null;
+        record.lastEventPollErrorCode = null;
+        record.lastEventPollEventCount = events.length;
+        record.lastEventPollLagMs = Date.now() - pollStartedAt;
+        record = this.saveRecord(this.recomputeHealth(record));
+        await sleepWithAbort(this.flightDeckPgEventPollIntervalMs, signal);
       }
     } catch (error) {
       if (signal.aborted || runtime.removed) {
@@ -2583,35 +2728,64 @@ export class WorkspaceSubscriptionManager {
       if (!record) {
         return;
       }
-      record.sseStatus = 'backoff';
-      record.lastErrorCode = 'flightdeck_pg_events_failed';
-      record.lastErrorAt = new Date().toISOString();
-      record.lastSseEvent = {
-        eventId: record.lastSseEventId,
-        eventType: 'flightdeck_pg.error',
-        at: new Date().toISOString(),
-        payload: {
-          message: error instanceof Error ? error.message : String(error),
-          detailCode: getErrorDetailCode(error),
-        },
-      };
+      record.lastEventPollErrorAt = new Date().toISOString();
+      record.lastEventPollErrorCode = getErrorDetailCode(error) ?? 'flightdeck_pg_events_failed';
       this.saveRecord(this.recomputeHealth(record));
-      this.markRuntimeFailure(subscriptionId, getErrorDetailCode(error), 'flightdeck_pg_events_failed');
 
       const delay = Math.min(1_000 * Math.pow(2, runtime.reconnectAttempts), 60_000);
       runtime.reconnectAttempts += 1;
-      runtime.reconnectTimer = setTimeout(() => {
-        runtime.reconnectTimer = null;
+      void (async () => {
+        await sleepWithAbort(delay, signal);
+        if (signal.aborted || runtime.removed) {
+          return;
+        }
         const latest = this.store.getBySubscriptionId(subscriptionId);
         if (!latest || runtime.removed) {
           return;
         }
-        void this.ensureFlightDeckPgConnected(latest, runtime.botIdentity, false);
-      }, delay);
+        void this.runFlightDeckPgEventLoop(subscriptionId, signal, false);
+      })();
     }
   }
 
   private async handleFlightDeckPgEvent(
+    record: WorkspaceSubscriptionRecord,
+    event: FlightDeckPgEvent,
+  ): Promise<WorkspaceSubscriptionRecord> {
+    const latest = this.store.getBySubscriptionId(record.subscriptionId) ?? record;
+    const eventCursor = decodeFlightDeckPgEventCursor(event.cursor);
+    const currentCursor = decodeFlightDeckPgEventCursor(latest.lastSyncCursor);
+    if (eventCursor && currentCursor && eventCursor.rowVersion <= currentCursor.rowVersion) {
+      return latest;
+    }
+
+    const eventId = typeof event.event_id === 'string' ? event.event_id : typeof event.id === 'string' ? event.id : null;
+    const keyParts = [
+      latest.subscriptionId,
+      event.cursor,
+      eventId,
+      event.entity_type,
+      event.entity_id,
+      event.row_version,
+    ].filter((value): value is string | number => typeof value === 'string' || typeof value === 'number');
+    const inFlightKey = keyParts.length > 1 ? keyParts.join(':') : null;
+    if (inFlightKey && this.flightDeckPgInFlightEventKeys.has(inFlightKey)) {
+      return latest;
+    }
+
+    if (inFlightKey) {
+      this.flightDeckPgInFlightEventKeys.add(inFlightKey);
+    }
+    try {
+      return await this.processFlightDeckPgEvent(latest, event);
+    } finally {
+      if (inFlightKey) {
+        this.flightDeckPgInFlightEventKeys.delete(inFlightKey);
+      }
+    }
+  }
+
+  private async processFlightDeckPgEvent(
     record: WorkspaceSubscriptionRecord,
     event: FlightDeckPgEvent,
   ): Promise<WorkspaceSubscriptionRecord> {

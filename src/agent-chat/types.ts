@@ -145,6 +145,11 @@ export interface WorkspaceSubscriptionRecord {
   capabilityDefaults?: AgentCapability[];
   dispatchRouteIds?: string[];
   lastSyncCursor?: string | null;
+  lastEventPollOkAt?: string | null;
+  lastEventPollErrorAt?: string | null;
+  lastEventPollErrorCode?: string | null;
+  lastEventPollEventCount?: number | null;
+  lastEventPollLagMs?: number | null;
   lastPipelineRunId?: string | null;
   wsKeyNpub: string | null;
   wsKeyStatus: WorkspaceKeyStatus;

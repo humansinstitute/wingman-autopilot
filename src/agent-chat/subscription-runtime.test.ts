@@ -12,6 +12,7 @@ import { DispatchPipelineRuntime } from './dispatch-pipelines/runtime';
 import { DispatchRouteStore } from './dispatch-pipelines/route-store';
 import { WorkspaceSubscriptionManager } from './subscription-runtime';
 import { WorkspaceSubscriptionStore } from './workspace-subscription-store';
+import { encodeFlightDeckPgEventCursor } from './tower-client';
 import { PipelineStore } from '../pipelines/pipeline-store';
 import type {
   AgentDefinitionRecord,
@@ -806,6 +807,238 @@ describe('WorkspaceSubscriptionManager', () => {
     });
     expect(next.lastPipelineRunId).toBe('run-pg-chat-1');
     expect(store.getBySubscriptionId(imported.subscription.subscriptionId)?.recentDispatches.at(-1)?.pipelineRunId).toBe('run-pg-chat-1');
+  });
+
+  test('times out a stuck Flight Deck PG event poll and records poll failure health', async () => {
+    const dbPath = makeTempDb();
+    const instanceIdentity = makeInstanceIdentity();
+    let pollAborted = false;
+    const { manager, store } = createTestManager(
+      dbPath,
+      new Map(),
+      undefined,
+      instanceIdentity,
+      undefined,
+      {
+        flightDeckPgEventPollTimeoutMs: 5,
+        flightDeckPgEventPollIntervalMs: 5,
+        fetchFlightDeckPgEvents: async (_input) => {
+          await new Promise<void>((resolve) => {
+            _input.signal?.addEventListener('abort', () => {
+              pollAborted = true;
+              resolve();
+            }, { once: true });
+          });
+          await new Promise(() => {});
+          return { events: [], next_cursor: null };
+        },
+      },
+    );
+    const imported = await manager.importAgentConnectPackage({
+      managedByNpub: 'npub1manager',
+      packageJson: makeConnectPackageForWorkspace('workspace-1', 'npub1workspaceservice'),
+      onboardingSource: 'nostr_33357',
+    });
+
+    await (manager as unknown as {
+      runFlightDeckPgEventLoop: (subscriptionId: string, signal: AbortSignal, isStartupReload: boolean) => Promise<void>;
+    }).runFlightDeckPgEventLoop(imported.subscription.subscriptionId, new AbortController().signal, false);
+
+    const saved = store.getBySubscriptionId(imported.subscription.subscriptionId);
+    expect(pollAborted).toBe(true);
+    expect(saved?.sseStatus).toBe('connected');
+    expect(saved?.lastEventPollErrorCode).toBe('flightdeck_pg_event_poll_timeout');
+    expect(saved?.lastEventPollErrorAt).toBeString();
+  });
+
+  test('dispatches a Flight Deck PG message from the live event stream', async () => {
+    const dbPath = makeTempDb();
+    const routeStore = new DispatchRouteStore(dbPath);
+    const dispatches: unknown[] = [];
+    const liveController = new AbortController();
+    const dispatchPipelineRuntime = {
+      listRoutesForSubscription: (subscriptionId: string) => routeStore.listForSubscription(subscriptionId),
+      saveRoute: (input: Parameters<DispatchRouteStore['save']>[0]) => routeStore.save(input),
+      dispatch: async (input: unknown) => {
+        dispatches.push(input);
+        liveController.abort();
+        return {
+          handled: true,
+          lastPipelineRunId: 'run-live-pg-chat-1',
+          historyEntries: [{
+            at: new Date().toISOString(),
+            kind: 'chat',
+            action: 'chat_pipeline_dispatch',
+            agentId: 'dispatch-pipeline',
+            sessionId: null,
+            recordId: (input as { recordId?: string }).recordId ?? null,
+            bindingId: (input as { bindingId?: string }).bindingId ?? null,
+            bindingType: 'thread',
+            routeId: 'route-chat',
+            pipelineRunId: 'run-live-pg-chat-1',
+            status: 'ok',
+          }],
+        };
+      },
+    } as unknown as DispatchPipelineRuntime;
+    const instanceIdentity = makeInstanceIdentity();
+    const liveCursor = encodeFlightDeckPgEventCursor(101);
+    const event = {
+      id: 'event-live-1',
+      event_id: 'event-live-1',
+      cursor: liveCursor,
+      workspace_id: 'workspace-1',
+      scope_id: 'scope-1',
+      channel_id: 'channel-1',
+      actor_id: 'actor-user',
+      event_type: 'message.created',
+      entity_type: 'message',
+      entity_id: 'message-live-1',
+      operation: 'created',
+      entity_row_version: 42,
+      row_version: 101,
+      created_at: '2026-06-10T00:00:00.000Z',
+      payload: {},
+    };
+    const { manager, store } = createTestManager(
+      dbPath,
+      new Map(),
+      undefined,
+      instanceIdentity,
+      dispatchPipelineRuntime,
+      {
+        connectFlightDeckPgEventStream: async () => new Response(new ReadableStream<Uint8Array>({
+          start(controller) {
+            const encoder = new TextEncoder();
+            controller.enqueue(encoder.encode(`event: flightdeck_pg.event\ndata: ${JSON.stringify(event)}\n\n`));
+            controller.close();
+          },
+        })),
+        fetchFlightDeckPgChannelMessages: async () => ({
+          messages: [{
+            id: 'message-live-1',
+            workspace_id: 'workspace-1',
+            scope_id: 'scope-1',
+            channel_id: 'channel-1',
+            thread_id: 'thread-live-1',
+            body: 'Live hello',
+            row_version: 42,
+            created_by_actor_id: 'actor-user',
+            updated_by_actor_id: 'actor-user',
+            created_at: '2026-06-10T00:00:00.000Z',
+            updated_at: '2026-06-10T00:00:00.000Z',
+          }],
+          next_cursor: null,
+        }),
+      },
+    );
+    const imported = await manager.importAgentConnectPackage({
+      managedByNpub: 'npub1manager',
+      packageJson: makeConnectPackageForWorkspace('workspace-1', 'npub1workspaceservice'),
+      onboardingSource: 'nostr_33357',
+    });
+
+    await (manager as unknown as {
+      runFlightDeckPgLiveEventLoop: (subscriptionId: string, signal: AbortSignal, isStartupReload: boolean) => Promise<void>;
+    }).runFlightDeckPgLiveEventLoop(imported.subscription.subscriptionId, liveController.signal, false);
+
+    const saved = store.getBySubscriptionId(imported.subscription.subscriptionId);
+    expect(dispatches).toHaveLength(1);
+    expect(dispatches[0]).toMatchObject({
+      triggerKind: 'chat',
+      recordId: 'message-live-1',
+      bindingId: 'thread-live-1',
+      channelId: 'channel-1',
+    });
+    expect(saved?.lastSyncCursor).toBe(liveCursor);
+    expect(saved?.lastPipelineRunId).toBe('run-live-pg-chat-1');
+  });
+
+  test('skips duplicate Flight Deck PG events already covered by the saved cursor', async () => {
+    const dbPath = makeTempDb();
+    const routeStore = new DispatchRouteStore(dbPath);
+    let dispatchCount = 0;
+    const dispatchPipelineRuntime = {
+      listRoutesForSubscription: (subscriptionId: string) => routeStore.listForSubscription(subscriptionId),
+      saveRoute: (input: Parameters<DispatchRouteStore['save']>[0]) => routeStore.save(input),
+      dispatch: async () => {
+        dispatchCount += 1;
+        return {
+          handled: true,
+          lastPipelineRunId: `run-${dispatchCount}`,
+          historyEntries: [{
+            at: new Date().toISOString(),
+            kind: 'chat',
+            action: 'chat_pipeline_dispatch',
+            agentId: 'dispatch-pipeline',
+            sessionId: null,
+            recordId: 'message-dupe-1',
+            bindingId: 'thread-dupe-1',
+            bindingType: 'thread',
+            routeId: 'route-chat',
+            pipelineRunId: `run-${dispatchCount}`,
+            status: 'ok',
+          }],
+        };
+      },
+    } as unknown as DispatchPipelineRuntime;
+    const instanceIdentity = makeInstanceIdentity();
+    const cursor = encodeFlightDeckPgEventCursor(150);
+    const { manager } = createTestManager(
+      dbPath,
+      new Map(),
+      undefined,
+      instanceIdentity,
+      dispatchPipelineRuntime,
+      {
+        fetchFlightDeckPgChannelMessages: async () => ({
+          messages: [{
+            id: 'message-dupe-1',
+            workspace_id: 'workspace-1',
+            scope_id: 'scope-1',
+            channel_id: 'channel-1',
+            thread_id: 'thread-dupe-1',
+            body: 'Duplicate hello',
+            row_version: 42,
+            created_by_actor_id: 'actor-user',
+            updated_by_actor_id: 'actor-user',
+            created_at: '2026-06-10T00:00:00.000Z',
+            updated_at: '2026-06-10T00:00:00.000Z',
+          }],
+          next_cursor: null,
+        }),
+      },
+    );
+    const imported = await manager.importAgentConnectPackage({
+      managedByNpub: 'npub1manager',
+      packageJson: makeConnectPackageForWorkspace('workspace-1', 'npub1workspaceservice'),
+      onboardingSource: 'nostr_33357',
+    });
+    const event = {
+      id: 'event-dupe-1',
+      event_id: 'event-dupe-1',
+      cursor,
+      workspace_id: 'workspace-1',
+      scope_id: 'scope-1',
+      channel_id: 'channel-1',
+      actor_id: 'actor-user',
+      event_type: 'message.created',
+      entity_type: 'message',
+      entity_id: 'message-dupe-1',
+      operation: 'created',
+      entity_row_version: 42,
+      row_version: 150,
+      created_at: '2026-06-10T00:00:00.000Z',
+      payload: {},
+    };
+
+    const internals = manager as unknown as {
+      handleFlightDeckPgEvent: (record: WorkspaceSubscriptionRecord, event: Record<string, unknown>) => Promise<WorkspaceSubscriptionRecord>;
+    };
+    const first = await internals.handleFlightDeckPgEvent(imported.subscription, event);
+    await internals.handleFlightDeckPgEvent(first, event);
+
+    expect(dispatchCount).toBe(1);
   });
 
   test('suppresses self-authored Flight Deck PG message events by actor id', async () => {
