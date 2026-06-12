@@ -1640,6 +1640,8 @@ const sessionRuntimeActions = createSessionRuntimeActions({
   fetchConversation: (...args) => fetchConversation(...args),
   fetchLogs: (...args) => fetchLogs(...args),
   render: () => render(),
+  refreshLiveTabsBar: () => refreshLiveTabsBar(),
+  syncMenuTabs: () => syncMenuTabs(),
   setCurrentRoute: (route) => {
     currentRoute = route;
   },

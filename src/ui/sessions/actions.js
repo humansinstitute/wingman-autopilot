@@ -15,10 +15,23 @@ import {
   resumeNativeSessionApi,
   forkSessionToWorktreeApi,
 } from "../services/sessions.js";
+import { sortSessionsForTabs } from "./session-order.js";
 
 /** Get the sessions store (safe to call after Alpine.start). */
 function getStore() {
   return Alpine.store("sessions");
+}
+
+function mergeSessionIntoStore(store, session) {
+  if (!session?.id || !Array.isArray(store?.items)) {
+    return;
+  }
+
+  const existingIndex = store.items.findIndex((item) => item?.id === session.id);
+  const nextItems = existingIndex >= 0
+    ? store.items.map((item, index) => (index === existingIndex ? { ...item, ...session } : item))
+    : [...store.items, session];
+  store.items = sortSessionsForTabs(nextItems);
 }
 
 /**
@@ -52,7 +65,14 @@ export async function deleteSession(sessionId) {
  */
 export async function renameSession(sessionId, name, position) {
   const result = await updateSessionNameApi(sessionId, name, position);
-  await getStore().sync();
+  const store = getStore();
+  if (result?.id) {
+    if (typeof ApiSessionStore.patchSession === "function") {
+      await ApiSessionStore.patchSession(result.id, result);
+    }
+    mergeSessionIntoStore(store, result);
+  }
+  void store.sync();
   return result;
 }
 

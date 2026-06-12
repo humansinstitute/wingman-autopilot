@@ -1,4 +1,4 @@
-import { openSessionDetailsDialog } from "./session-details-dialog.js";
+import { openSessionDetailsDialog as defaultOpenSessionDetailsDialog } from "./session-details-dialog.js";
 
 function getComposerTextarea() {
   if (typeof document === "undefined") {
@@ -46,6 +46,9 @@ export function createSessionRuntimeActions(deps) {
     fetchConversation,
     fetchLogs,
     render,
+    refreshLiveTabsBar,
+    syncMenuTabs,
+    openSessionDetailsDialog = defaultOpenSessionDetailsDialog,
     setCurrentRoute,
     setActiveSession,
     stopSessionAction,
@@ -107,6 +110,15 @@ export function createSessionRuntimeActions(deps) {
     return renameSessionAction(sessionId, name, position);
   }
 
+  function refreshSessionTabs() {
+    if (typeof syncMenuTabs === "function") {
+      syncMenuTabs();
+    }
+    if (typeof refreshLiveTabsBar === "function") {
+      refreshLiveTabsBar();
+    }
+  }
+
   async function promptRenameSession(session) {
     const details = await openSessionDetailsDialog({
       session,
@@ -123,7 +135,15 @@ export function createSessionRuntimeActions(deps) {
     }
     try {
       await updateSessionName(session.id, trimmed, position);
-      await fetchSessions();
+      refreshSessionTabs();
+      void fetchSessions()
+        .then(() => {
+          refreshSessionTabs();
+          render();
+        })
+        .catch((error) => {
+          console.warn("Failed to refresh sessions after updating session details", error);
+        });
       render();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to update session details";

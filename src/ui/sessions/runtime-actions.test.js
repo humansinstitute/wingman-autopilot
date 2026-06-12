@@ -14,6 +14,9 @@ describe("session runtime actions", () => {
   let showToast;
   let state;
   let sessions;
+  let renameSessionAction;
+  let refreshLiveTabsBar;
+  let syncMenuTabs;
   let postSessionMessageApi;
   let addToPromptQueue;
   let updateAgentStatusIndicators;
@@ -35,9 +38,11 @@ describe("session runtime actions", () => {
       setActiveSession,
       stopSessionAction: mock(async () => ({ success: true })),
       deleteSessionAction: mock(async () => ({ success: true })),
-      renameSessionAction: mock(async () => ({})),
+      renameSessionAction,
       resumeNativeSessionAction: mock(async () => ({ session: { id: "native-session-1" } })),
       openTextPromptDialog: mock(async () => null),
+      refreshLiveTabsBar,
+      syncMenuTabs,
       showToast,
       postSessionMessageApi,
       updateIdentityState: mock(() => {}),
@@ -66,6 +71,9 @@ describe("session runtime actions", () => {
     showToast = mock(() => {});
     state = { messageDrafts: new Map() };
     sessions = [];
+    renameSessionAction = mock(async () => ({}));
+    refreshLiveTabsBar = mock(() => {});
+    syncMenuTabs = mock(() => {});
     postSessionMessageApi = mock(async () => ({}));
     addToPromptQueue = mock(async () => false);
     updateAgentStatusIndicators = mock(() => {});
@@ -102,6 +110,67 @@ describe("session runtime actions", () => {
     expect(fetchConversation).toHaveBeenCalledWith("session-1");
     expect(fetchLogs).toHaveBeenCalledWith("session-1");
     expect(showToast).not.toHaveBeenCalled();
+  });
+
+  test("promptRenameSession refreshes tabs immediately after session details save", async () => {
+    sessions = [{ id: "session-1", name: "Original", tabOrder: 1 }];
+    let releaseFetch;
+    fetchSessions = mock(
+      () =>
+        new Promise((resolve) => {
+          releaseFetch = resolve;
+        }),
+    );
+    const openSessionDetailsDialog = mock(async () => ({ name: "Renamed", position: 2 }));
+    const actions = createSessionRuntimeActions({
+      state,
+      sessionsStore: () => ({ items: sessions }),
+      getSessionById,
+      getSessionDisplayName: (session) => session?.name ?? session?.id ?? "session",
+      fetchSessions,
+      fetchSessionApi,
+      fetchConversation,
+      fetchLogs,
+      render,
+      refreshLiveTabsBar,
+      syncMenuTabs,
+      setCurrentRoute,
+      setActiveSession,
+      stopSessionAction: mock(async () => ({ success: true })),
+      deleteSessionAction: mock(async () => ({ success: true })),
+      renameSessionAction,
+      resumeNativeSessionAction: mock(async () => ({ session: { id: "native-session-1" } })),
+      openSessionDetailsDialog,
+      showToast,
+      postSessionMessageApi,
+      updateIdentityState: mock(() => {}),
+      isSessionBusy,
+      addToPromptQueue,
+      updateAgentStatusIndicators,
+      renderConversationForSession: mock(async () => {}),
+      scrollPillHide: mock(() => {}),
+      scrollConversationAreaToBottom: mock(() => {}),
+      sessionMessageSendInFlight,
+      focusComposerTextarea: mock(() => {}),
+      isAlpineChatEnabled: () => false,
+      MessageStore: { syncFromServer: mock(async () => {}), syncFromServerIfChanged: mock(async () => ({ changed: false })) },
+      prepareVoiceNoteDraftForSend: mock(async (_sessionId, value) => value),
+    });
+
+    await actions.promptRenameSession(sessions[0]);
+
+    expect(openSessionDetailsDialog).toHaveBeenCalled();
+    expect(renameSessionAction).toHaveBeenCalledWith("session-1", "Renamed", 2);
+    expect(syncMenuTabs).toHaveBeenCalledTimes(1);
+    expect(refreshLiveTabsBar).toHaveBeenCalledTimes(1);
+    expect(fetchSessions).toHaveBeenCalledTimes(1);
+    expect(render).toHaveBeenCalledTimes(1);
+
+    releaseFetch?.();
+    await Promise.resolve();
+    expect(syncMenuTabs).toHaveBeenCalledTimes(2);
+    expect(refreshLiveTabsBar).toHaveBeenCalledTimes(2);
+    expect(render).toHaveBeenCalledTimes(2);
   });
 
   test("resumeSession renders live view without waiting for conversation and logs", async () => {
