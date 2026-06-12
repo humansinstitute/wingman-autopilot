@@ -411,6 +411,7 @@ describe("handleSessionApi", () => {
       origin: null,
       model: null,
       targetFile: null,
+      tabOrder: null,
       metadata: {
         AGENT: true,
         billingMode: "subscription",
@@ -450,7 +451,9 @@ describe("handleSessionApi", () => {
       command: ["codex"],
       workingDirectory: "/tmp/project",
       origin: null,
+      model: null,
       targetFile: null,
+      tabOrder: null,
       metadata: {
         AGENT: true,
         billingMode: "subscription",
@@ -475,6 +478,7 @@ describe("handleSessionApi", () => {
       origin: null,
       model: null,
       targetFile: null,
+      tabOrder: null,
       metadata: {
         AGENT: true,
         billingMode: "subscription",
@@ -528,6 +532,7 @@ describe("handleSessionApi", () => {
       origin: null,
       model: null,
       targetFile: null,
+      tabOrder: null,
       metadata: {
         AGENT: true,
         billingMode: "subscription",
@@ -628,6 +633,7 @@ describe("handleSessionApi", () => {
       origin: null,
       model: null,
       targetFile: null,
+      tabOrder: null,
       metadata: {
         AGENT: true,
         billingMode: "subscription",
@@ -796,6 +802,74 @@ describe("handleSessionApi", () => {
     expect(response!.status).toBe(200);
     await expect(response!.json()).resolves.toMatchObject({
       sessions: [{ id: "session-meta-owner", ownerNpub: "npub1owner" }],
+    });
+  });
+
+  test("PATCH /api/sessions/:id moves a session to the requested tab position", async () => {
+    const sessions = new Map<string, SessionSnapshot>([
+      ["session-1", { ...baseSession, id: "session-1", name: "Autopilot-1", tabOrder: 1 }],
+      ["session-2", { ...baseSession, id: "session-2", name: "Rick-1", tabOrder: 2 }],
+      ["session-3", { ...baseSession, id: "session-3", name: "Fable", tabOrder: 3 }],
+    ]);
+    const recordedOrders: Record<string, number | null | undefined> = {};
+    const ctx = buildCtx({
+      manager: {
+        getSession: (id: string) => sessions.get(id),
+        listSessions: () => Array.from(sessions.values()),
+        renameSession: (id: string, name: string) => {
+          const session = sessions.get(id);
+          if (!session) return null;
+          const next = { ...session, name };
+          sessions.set(id, next);
+          return next;
+        },
+        updateSessionTabOrder: (id: string, tabOrder: number | null) => {
+          const session = sessions.get(id);
+          if (!session) return null;
+          const next = { ...session, tabOrder };
+          sessions.set(id, next);
+          return next;
+        },
+      } as any,
+      messageStore: {
+        recordSession: (session: { id: string; tabOrder?: number | null }) => {
+          recordedOrders[session.id] = session.tabOrder;
+        },
+        getSession: () => null,
+        listSessions: () => [],
+        listSessionMessages: () => [],
+      } as any,
+      serializeSession: (session) => ({
+        id: session.id,
+        name: session.name,
+        tabOrder: session.tabOrder ?? null,
+        npub: session.npub,
+        metadata: session.metadata,
+        origin: session.origin,
+      }),
+    });
+
+    const url = new URL("http://localhost:3021/api/sessions/session-2");
+    const request = new Request(url.toString(), {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Rick-1", position: 1 }),
+    });
+
+    const response = await handleSessionApi(request, url, "PATCH", makeAuth(), ctx);
+    expect(response).not.toBeNull();
+    expect(response!.status).toBe(200);
+    await expect(response!.json()).resolves.toMatchObject({
+      id: "session-2",
+      tabOrder: 1,
+    });
+    expect(sessions.get("session-2")?.tabOrder).toBe(1);
+    expect(sessions.get("session-1")?.tabOrder).toBe(2);
+    expect(sessions.get("session-3")?.tabOrder).toBe(3);
+    expect(recordedOrders).toMatchObject({
+      "session-1": 2,
+      "session-2": 1,
+      "session-3": 3,
     });
   });
 

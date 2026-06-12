@@ -46,6 +46,8 @@ export interface SessionRecordInput {
   model?: string;
   /** Target file for writer-mode sessions */
   targetFile?: string;
+  /** Explicit 1-based ordering for live session tabs */
+  tabOrder?: number | null;
   /** Session metadata flags */
   metadata?: SessionMetadata | null;
 }
@@ -70,6 +72,8 @@ export interface StoredSessionRecord {
   model: string | null;
   /** Target file for writer-mode sessions */
   targetFile: string | null;
+  /** Explicit 1-based ordering for live session tabs */
+  tabOrder: number | null;
   /** Session metadata flags */
   metadata: SessionMetadata;
 }
@@ -172,6 +176,7 @@ export class MessageStore {
       session.origin ? JSON.stringify(session.origin) : null,
       session.model ?? null,
       session.targetFile ?? null,
+      typeof session.tabOrder === "number" && Number.isFinite(session.tabOrder) ? Math.max(1, Math.floor(session.tabOrder)) : null,
       session.metadata?.AGENT ? 1 : 0,
       session.metadata?.billingMode === "credits" ? "credits" : "subscription",
       session.metadata ? JSON.stringify(session.metadata) : null,
@@ -228,6 +233,7 @@ export class MessageStore {
         origin,
         model,
         target_file as targetFile,
+        tab_order as tabOrder,
         agent_flag as agentFlag,
         billing_mode as billingMode,
         metadata_json as metadataJson
@@ -290,6 +296,7 @@ export class MessageStore {
         origin,
         model,
         target_file as targetFile,
+        tab_order as tabOrder,
         agent_flag as agentFlag,
         billing_mode as billingMode,
         metadata_json as metadataJson
@@ -369,6 +376,7 @@ export class MessageStore {
     ensureColumn("origin", "TEXT");
     ensureColumn("model", "TEXT");
     ensureColumn("target_file", "TEXT");
+    ensureColumn("tab_order", "INTEGER");
     ensureColumn("agent_flag", "INTEGER NOT NULL DEFAULT 0");
     ensureColumn("billing_mode", "TEXT NOT NULL DEFAULT 'subscription'");
     ensureColumn("metadata_json", "TEXT");
@@ -384,8 +392,8 @@ export class MessageStore {
 
   private prepareInsertSession() {
     return this.db.prepare(
-      `INSERT INTO sessions (id, agent, started_at, name, npub, port, pid, pm2_name, tmux_session, tmux_window, logs_dir, working_directory, command, runtime_status, origin, model, target_file, agent_flag, billing_mode, metadata_json)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+      `INSERT INTO sessions (id, agent, started_at, name, npub, port, pid, pm2_name, tmux_session, tmux_window, logs_dir, working_directory, command, runtime_status, origin, model, target_file, tab_order, agent_flag, billing_mode, metadata_json)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
        ON CONFLICT(id) DO UPDATE SET
          agent = excluded.agent,
          started_at = excluded.started_at,
@@ -403,6 +411,7 @@ export class MessageStore {
          origin = excluded.origin,
          model = excluded.model,
          target_file = excluded.target_file,
+         tab_order = COALESCE(excluded.tab_order, sessions.tab_order),
          agent_flag = excluded.agent_flag,
          billing_mode = excluded.billing_mode,
          metadata_json = excluded.metadata_json`,
@@ -433,6 +442,7 @@ export class MessageStore {
          origin,
          model,
          target_file as targetFile,
+         tab_order as tabOrder,
          agent_flag as agentFlag,
          billing_mode as billingMode,
          metadata_json as metadataJson

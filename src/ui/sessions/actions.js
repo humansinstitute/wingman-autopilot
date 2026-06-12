@@ -50,8 +50,8 @@ export async function deleteSession(sessionId) {
  * Rename a session.
  * @returns {Promise<*>} API response
  */
-export async function renameSession(sessionId, name) {
-  const result = await updateSessionNameApi(sessionId, name);
+export async function renameSession(sessionId, name, position) {
+  const result = await updateSessionNameApi(sessionId, name, position);
   await getStore().sync();
   return result;
 }

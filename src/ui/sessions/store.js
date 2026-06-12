@@ -13,6 +13,7 @@ import Alpine from "/vendor/alpinejs/module.esm.js";
 import { Dexie, ApiSessionStore } from "../live/db.js";
 import { fetchSessionsApi } from "../services/sessions.js";
 import { resolveSessionOwnerNpub } from "./ownership.js";
+import { sortSessionsForTabs } from "./session-order.js";
 
 /**
  * Normalize an npub value for comparison/filtering.
@@ -68,7 +69,7 @@ export function initSessionsStore({
         // 1. Instant render from Dexie cache
         const cachedSessions = await ApiSessionStore.getAll();
         if (cachedSessions.length > 0) {
-          this.items = cachedSessions;
+          this.items = sortSessionsForTabs(cachedSessions);
           console.log(`[sessions-store] Loaded ${cachedSessions.length} sessions from cache`);
         }
 
@@ -97,7 +98,7 @@ export function initSessionsStore({
       const observable = Dexie.liveQuery(() => ApiSessionStore.getAll());
       this._liveQuerySub = observable.subscribe({
         next: (sessions) => {
-          this.items = sessions;
+          this.items = sortSessionsForTabs(sessions);
         },
         error: (err) => {
           console.error("[sessions-store] liveQuery error:", err);
@@ -141,30 +142,31 @@ export function initSessionsStore({
         }
 
         const sessions = Array.isArray(data.sessions) ? data.sessions : [];
+        const orderedSessions = sortSessionsForTabs(sessions);
         const identities = Array.isArray(data.identities) ? data.identities : [];
         this.identitySummaries = identities;
 
         // Write to Dexie — liveQuery fires -> this.items updates (async)
-        await ApiSessionStore.upsertMany(sessions);
+        await ApiSessionStore.upsertMany(orderedSessions);
         // Sync items immediately so callers see fresh data without
         // waiting for the asynchronous liveQuery callback.
-        this.items = sessions;
+        this.items = orderedSessions;
 
         // Process identity updates for the viewer
         if (onIdentityUpdate) {
-          this._processIdentityUpdates(identity, identities, sessions);
+          this._processIdentityUpdates(identity, identities, orderedSessions);
         }
 
         // Process filter options
         this._processFilters(data);
 
         // Clean up stale lastActiveSessionId
-        const sessionIds = new Set(sessions.map((s) => s.id));
+        const sessionIds = new Set(orderedSessions.map((s) => s.id));
         if (this.lastActiveSessionId && !sessionIds.has(this.lastActiveSessionId)) {
           this.lastActiveSessionId = null;
         }
 
-        console.log(`[sessions-store] Synced ${sessions.length} sessions from API`);
+        console.log(`[sessions-store] Synced ${orderedSessions.length} sessions from API`);
       } catch (err) {
         console.warn("[sessions-store] sync failed:", err);
       }

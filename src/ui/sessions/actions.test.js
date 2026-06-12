@@ -27,6 +27,7 @@ mock.module("../services/sessions.js", () => ({
   stopSessionApi: stopSessionApiMock,
   deleteSessionApi: deleteSessionApiMock,
   updateSessionNameApi: updateSessionNameApiMock,
+  resumeNativeSessionApi: mock(async () => ({})),
   forkSessionToWorktreeApi: mock(async () => ({})),
 }));
 
@@ -62,10 +63,10 @@ describe("session actions", () => {
     expect(result).toEqual({ success: true });
   });
 
-  test("renameSession syncs the sessions store after renaming", async () => {
-    const result = await renameSession("session-1", "Renamed");
+  test("renameSession syncs the sessions store after updating details", async () => {
+    const result = await renameSession("session-1", "Renamed", 2);
 
-    expect(updateSessionNameApiMock).toHaveBeenCalledWith("session-1", "Renamed");
+    expect(updateSessionNameApiMock).toHaveBeenCalledWith("session-1", "Renamed", 2);
     expect(syncMock).toHaveBeenCalledTimes(1);
     expect(result).toEqual({ id: "session-1", name: "Renamed" });
   });

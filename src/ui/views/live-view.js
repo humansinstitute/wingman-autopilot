@@ -80,6 +80,7 @@ import {
 import { createLiveHeaderFullscreenToggle } from "../live/header-fullscreen-toggle.js";
 import { canResumeNativeAgentSession } from "../home/native-session-resume.js";
 import { filterTaskDispatchSessionsForTabs } from "../sessions/session-classification.js";
+import { sortSessionsForTabs } from "../sessions/session-order.js";
 
 export function initLiveView(deps) {
   const {
@@ -440,7 +441,7 @@ export function initLiveView(deps) {
   }
 
   function getVisibleTabSessions(sessions) {
-    return filterTaskDispatchSessionsForTabs(sessions, shouldShowTaskDispatchTabs());
+    return sortSessionsForTabs(filterTaskDispatchSessionsForTabs(sessions, shouldShowTaskDispatchTabs()));
   }
 
   function shouldShowRawTerminalOutput() {
@@ -555,7 +556,7 @@ export function initLiveView(deps) {
     const onSelect = typeof options.onSelect === "function" ? options.onSelect : null;
     const tabs = createTabsContainer("menu");
 
-    getActiveSessions().forEach((session) => {
+    sortSessionsForTabs(getActiveSessions()).forEach((session) => {
       tabs.append(createSessionTab(session, onSelect));
     });
 
@@ -1215,7 +1216,7 @@ export function initLiveView(deps) {
       copyConversationToClipboard(sessionId);
     });
 
-    addCommand("Rename session", () => {
+    addCommand("Session Details", () => {
       const session = sessionsStore().items.find((s) => s.id === sessionId);
       if (session) {
         promptRenameSession(session);

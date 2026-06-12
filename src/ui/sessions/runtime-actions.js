@@ -1,3 +1,5 @@
+import { openSessionDetailsDialog } from "./session-details-dialog.js";
+
 function getComposerTextarea() {
   if (typeof document === "undefined") {
     return null;
@@ -50,7 +52,6 @@ export function createSessionRuntimeActions(deps) {
     deleteSessionAction,
     renameSessionAction,
     resumeNativeSessionAction,
-    openTextPromptDialog,
     showToast,
     postSessionMessageApi,
     updateIdentityState,
@@ -102,35 +103,30 @@ export function createSessionRuntimeActions(deps) {
     }
   }
 
-  async function updateSessionName(sessionId, name) {
-    return renameSessionAction(sessionId, name);
+  async function updateSessionName(sessionId, name, position) {
+    return renameSessionAction(sessionId, name, position);
   }
 
   async function promptRenameSession(session) {
-    const currentLabel =
-      typeof session.name === "string" && session.name.trim().length > 0
-        ? session.name.trim()
-        : getSessionDisplayName(session);
-    const trimmed = await openTextPromptDialog({
-      title: "Rename Session",
-      description: "Update the label used across the session list and live view.",
-      label: "Session name",
-      value: currentLabel,
-      confirmLabel: "Save",
-      testId: "rename-session-dialog",
-      validate: (value) => (value ? "" : "Session name cannot be empty."),
+    const details = await openSessionDetailsDialog({
+      session,
+      sessions: sessionsStore().items,
+      getSessionDisplayName,
     });
-    if (trimmed === null) return;
+    if (details === null) return;
+    const trimmed = details.name;
+    const position = details.position;
     const existing = typeof session.name === "string" ? session.name.trim() : "";
-    if (existing === trimmed) {
+    const existingPosition = typeof session.tabOrder === "number" ? session.tabOrder : null;
+    if (existing === trimmed && existingPosition === position) {
       return;
     }
     try {
-      await updateSessionName(session.id, trimmed);
+      await updateSessionName(session.id, trimmed, position);
       await fetchSessions();
       render();
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to rename session";
+      const message = error instanceof Error ? error.message : "Failed to update session details";
       showToast(message, { type: "error" });
     }
   }

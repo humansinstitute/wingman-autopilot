@@ -96,6 +96,8 @@ export interface SessionSnapshot {
   targetFile?: string;
   /** File pinned as artifact in the UI right-hand panel */
   pinnedFile?: string;
+  /** Explicit 1-based ordering for live session tabs */
+  tabOrder?: number | null;
   metadata?: SessionMetadata;
   /** Selected model for the session */
   model?: string;
@@ -138,6 +140,8 @@ export interface RehydrateSessionInput {
   targetFile?: string;
   /** File pinned as artifact in the UI right-hand panel */
   pinnedFile?: string;
+  /** Explicit 1-based ordering for live session tabs */
+  tabOrder?: number | null;
   metadata?: SessionMetadataInput;
   /** Selected model for the session */
   model?: string;
@@ -205,6 +209,8 @@ interface AgentSession {
   targetFile?: string;
   /** File pinned as artifact in the UI right-hand panel */
   pinnedFile?: string;
+  /** Explicit 1-based ordering for live session tabs */
+  tabOrder?: number | null;
   metadata: SessionMetadata;
   /** Files created by MCP config injection to clean up on session stop. */
   mcpCleanupFiles?: string[];
@@ -354,6 +360,17 @@ export class ProcessManager {
     const session = this.sessions.get(id);
     if (!session) return null;
     session.name = this.normaliseSessionName(name, session.agent, session.port);
+    const snapshot = this.toSnapshot(session);
+    this.emit({ type: "session-updated", session: snapshot });
+    return snapshot;
+  }
+
+  updateSessionTabOrder(id: string, tabOrder: number | null): SessionSnapshot | null {
+    const session = this.sessions.get(id);
+    if (!session) return null;
+    session.tabOrder = typeof tabOrder === "number" && Number.isFinite(tabOrder)
+      ? Math.max(1, Math.floor(tabOrder))
+      : null;
     const snapshot = this.toSnapshot(session);
     this.emit({ type: "session-updated", session: snapshot });
     return snapshot;
@@ -1422,6 +1439,7 @@ export class ProcessManager {
       targetFile: session.targetFile,
       model: session.model,
       pinnedFile: session.pinnedFile,
+      tabOrder: session.tabOrder ?? null,
       metadata: session.metadata,
     };
   }

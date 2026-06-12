@@ -197,6 +197,14 @@ const recordLiveSession = async (
   ctx: SessionApiContext,
   session: SessionSnapshot,
 ): Promise<void> => {
+  persistLiveSessionRecord(ctx, session);
+  await ctx.syncSessionMessages(session.id, true);
+};
+
+const persistLiveSessionRecord = (
+  ctx: SessionApiContext,
+  session: SessionSnapshot,
+): void => {
   ctx.messageStore.recordSession({
     id: session.id,
     agent: session.agent,
@@ -213,9 +221,9 @@ const recordLiveSession = async (
     tmuxSession: session.tmuxSession,
     tmuxWindow: session.tmuxWindow,
     targetFile: session.targetFile,
+    tabOrder: session.tabOrder ?? null,
     metadata: session.metadata,
   });
-  await ctx.syncSessionMessages(session.id, true);
 };
 
 type NativeResumeSourceSession = Pick<
@@ -482,6 +490,7 @@ const persistStoredSessionMetadata = (
     origin: storedSession.origin ?? null,
     model: storedSession.model ?? undefined,
     targetFile: storedSession.targetFile ?? undefined,
+    tabOrder: storedSession.tabOrder ?? null,
     metadata: mergedMetadata,
   });
 
@@ -522,6 +531,7 @@ const serializeStoredSession = (
     origin: storedSession.origin,
     model: storedSession.model,
     targetFile: storedSession.targetFile,
+    tabOrder: storedSession.tabOrder ?? null,
     metadata: storedSession.metadata,
   };
   if (storedSession.pm2Name) {
@@ -534,6 +544,84 @@ const serializeStoredSession = (
     serialized.tmuxWindow = storedSession.tmuxWindow;
   }
   return serialized;
+};
+
+const getSessionSortStartedAt = (session: Pick<SessionSnapshot | StoredSessionRecord, "startedAt">): number => {
+  const time = Date.parse(session.startedAt ?? "");
+  return Number.isFinite(time) ? time : 0;
+};
+
+type SessionTabOrderCandidate = {
+  id: string;
+  startedAt: string;
+  tabOrder?: number | null;
+};
+
+const getSessionSortOrder = (
+  session: SessionTabOrderCandidate,
+): number => {
+  return typeof session.tabOrder === "number" && Number.isFinite(session.tabOrder)
+    ? session.tabOrder
+    : Number.MAX_SAFE_INTEGER;
+};
+
+const compareSessionsForTabs = (
+  a: SessionTabOrderCandidate,
+  b: SessionTabOrderCandidate,
+): number => {
+  const byOrder = getSessionSortOrder(a) - getSessionSortOrder(b);
+  if (byOrder !== 0) return byOrder;
+  const byStarted = getSessionSortStartedAt(a) - getSessionSortStartedAt(b);
+  if (byStarted !== 0) return byStarted;
+  return String(a.id).localeCompare(String(b.id));
+};
+
+const parseSessionPositionInput = (value: unknown): number | null | undefined => {
+  if (value === undefined) return undefined;
+  const numeric = typeof value === "number"
+    ? value
+    : typeof value === "string" && value.trim()
+      ? Number(value)
+      : NaN;
+  if (!Number.isFinite(numeric)) {
+    return null;
+  }
+  const position = Math.floor(numeric);
+  return position >= 1 ? position : null;
+};
+
+const reorderLiveSessionTabs = async (
+  ctx: SessionApiContext,
+  sessions: SessionSnapshot[],
+  sessionId: string,
+  requestedPosition: number,
+): Promise<SessionSnapshot | null> => {
+  const orderedSessions = [...sessions].sort(compareSessionsForTabs);
+  const currentIndex = orderedSessions.findIndex((session) => session.id === sessionId);
+  if (currentIndex < 0) {
+    return null;
+  }
+
+  const [movingSession] = orderedSessions.splice(currentIndex, 1);
+  if (!movingSession) {
+    return null;
+  }
+  const nextIndex = Math.min(Math.max(requestedPosition - 1, 0), orderedSessions.length);
+  orderedSessions.splice(nextIndex, 0, movingSession);
+
+  let updatedTarget: SessionSnapshot | null = null;
+  for (let index = 0; index < orderedSessions.length; index += 1) {
+    const session = orderedSessions[index];
+    if (!session) continue;
+    const updated = ctx.manager.updateSessionTabOrder(session.id, index + 1);
+    if (updated) {
+      persistLiveSessionRecord(ctx, ctx.manager.getSession(session.id) ?? updated);
+      if (session.id === sessionId) {
+        updatedTarget = ctx.manager.getSession(session.id) ?? updated;
+      }
+    }
+  }
+  return updatedTarget;
 };
 
 const rehydrateStoredSession = (
@@ -1079,6 +1167,7 @@ export async function handleSessionApi(
         .filter((session) =>
           ctx.sessionBelongsToViewer(session.npub ?? null, session.metadata, normaliseNpub(targetOwnerNpub), false),
         )
+        .sort(compareSessionsForTabs)
         .map(ctx.serializeSession);
       return Response.json({ ownerNpub: targetOwnerNpub, sessions });
     }
@@ -1210,13 +1299,26 @@ export async function handleSessionApi(
       if (!trimmedName) {
         return Response.json({ error: "Session name is required" }, { status: 400 });
       }
+      const requestedPosition = parseSessionPositionInput((payload as Record<string, unknown>).position);
+      if (requestedPosition === null) {
+        return Response.json({ error: "Session position must be a positive number" }, { status: 400 });
+      }
       const renamed = ctx.manager.renameSession(resolvedId, trimmedName);
       if (!renamed) return Response.json({ error: "Not found" }, { status: 404 });
       ctx.manager.updateSessionMetadata(resolvedId, {
         lastManagedByNpub: authContext.subjectNpub ?? authContext.npub ?? undefined,
       });
-      await recordLiveSession(ctx, ctx.manager.getSession(resolvedId) ?? renamed);
-      return Response.json(ctx.serializeSession(ctx.manager.getSession(resolvedId) ?? renamed));
+      const ownedSessions = ctx.manager
+        .listSessions()
+        .filter((session) =>
+          ctx.sessionBelongsToViewer(session.npub ?? null, session.metadata, normaliseNpub(targetOwnerNpub), false),
+        );
+      const updated = requestedPosition === undefined
+        ? ctx.manager.getSession(resolvedId) ?? renamed
+        : await reorderLiveSessionTabs(ctx, ownedSessions, resolvedId, requestedPosition);
+      if (!updated) return Response.json({ error: "Not found" }, { status: 404 });
+      await recordLiveSession(ctx, updated);
+      return Response.json(ctx.serializeSession(updated));
     }
 
     if (method === "DELETE" && ownerRoute.remainder.length === 1) {
@@ -1419,7 +1521,7 @@ export async function handleSessionApi(
     }));
 
     return Response.json({
-      sessions: filteredSessions.map(ctx.serializeSession),
+      sessions: filteredSessions.sort(compareSessionsForTabs).map(ctx.serializeSession),
       identities: identitySummaries,
       filters: {
         npubs: npubFilters,
@@ -1609,9 +1711,23 @@ export async function handleSessionApi(
       if (!trimmedName) {
         return Response.json({ error: "Session name is required" }, { status: 400 });
       }
+      const requestedPosition = parseSessionPositionInput(record.position);
+      if (requestedPosition === null) {
+        return Response.json({ error: "Session position must be a positive number" }, { status: 400 });
+      }
       const renamed = ctx.manager.renameSession(resolvedId, trimmedName);
       if (!renamed) return Response.json({ error: "Not found" }, { status: 404 });
-      return Response.json(ctx.serializeSession(renamed));
+      const accessibleSessions = ctx.manager
+        .listSessions()
+        .filter((session) =>
+          ctx.sessionBelongsToViewer(session.npub ?? null, session.metadata, viewerNormalizedNpub, viewerIsAdmin),
+        );
+      const updated = requestedPosition === undefined
+        ? renamed
+        : await reorderLiveSessionTabs(ctx, accessibleSessions, resolvedId, requestedPosition);
+      if (!updated) return Response.json({ error: "Not found" }, { status: 404 });
+      await recordLiveSession(ctx, updated);
+      return Response.json(ctx.serializeSession(updated));
     }
 
     if (method === "DELETE" && parts.length === 4) {

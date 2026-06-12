@@ -104,14 +104,19 @@ export async function deleteSessionApi(sessionId) {
  * Updates a session's name.
  * @param {string} sessionId - The session ID
  * @param {string} name - The new name
+ * @param {number} [position] - Optional 1-based tab position
  * @returns {Promise<Object>} Updated session data
  * @throws {Error} If the request fails
  */
-export async function updateSessionNameApi(sessionId, name) {
+export async function updateSessionNameApi(sessionId, name, position) {
+  const body = { name };
+  if (typeof position === "number" && Number.isFinite(position)) {
+    body.position = Math.max(1, Math.floor(position));
+  }
   const response = await fetch(`/api/sessions/${sessionId}`, {
     method: "PATCH",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ name }),
+    body: JSON.stringify(body),
   });
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
