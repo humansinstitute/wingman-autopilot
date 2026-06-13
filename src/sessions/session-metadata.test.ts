@@ -67,6 +67,20 @@ describe("normaliseSessionMetadata", () => {
     });
   });
 
+  test("preserves the per-session speech auto-read flag", () => {
+    expect(
+      normaliseSessionMetadata({
+        AGENT: false,
+        billingMode: "subscription",
+        speechAlwaysRead: true,
+      }),
+    ).toMatchObject({
+      AGENT: false,
+      billingMode: "subscription",
+      speechAlwaysRead: true,
+    });
+  });
+
   test("drops legacy flow orchestration binding metadata", () => {
     expect(
       normaliseSessionMetadata({

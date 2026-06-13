@@ -93,6 +93,9 @@ export interface SessionApiContext {
   artifactsStore: {
     listBySession: (sessionId: string) => unknown[];
   };
+  userSettingsStore?: {
+    getAll: (npub: string) => Record<string, string>;
+  };
 
   // Directory paths
   userIdentityRoot: string;
@@ -2009,6 +2012,31 @@ function findSpeechMessage(messages: StoredMessage[], messageId: string): Stored
   return messages.find((message) => message.id === messageId) ?? null;
 }
 
+function resolveSpeechSettings(
+  ctx: SessionApiContext,
+  npub: string | null,
+): {
+  apiKey?: string;
+  baseUrl?: string;
+  model?: string;
+  voice?: string;
+} | null {
+  if (!npub || typeof ctx.userSettingsStore?.getAll !== "function") {
+    return null;
+  }
+  const settings = ctx.userSettingsStore.getAll(npub);
+  const apiKey = settings.speech_api_key?.trim() || settings.openai_api_key?.trim() || "";
+  const baseUrl = settings.speech_base_url?.trim() || "";
+  const model = settings.speech_model?.trim() || "";
+  const voice = settings.speech_voice?.trim() || "";
+  return {
+    ...(apiKey ? { apiKey } : {}),
+    ...(baseUrl ? { baseUrl } : {}),
+    ...(model ? { model } : {}),
+    ...(voice ? { voice } : {}),
+  };
+}
+
 async function handleMessageSpeech(
   request: Request,
   method: HttpMethod,
@@ -2062,6 +2090,7 @@ async function handleMessageSpeech(
     generated = await generateSpeechAudio({
       text: speechText,
       voice: typeof payload?.voice === "string" ? payload.voice : null,
+      config: resolveSpeechSettings(ctx, authContext.npub ?? sessionOwnerNpub),
     });
   } catch (error) {
     const messageText = error instanceof Error ? error.message : String(error);

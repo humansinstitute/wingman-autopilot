@@ -54,6 +54,7 @@ export function createSessionRuntimeActions(deps) {
     stopSessionAction,
     deleteSessionAction,
     renameSessionAction,
+    updateSessionMetadataAction,
     resumeNativeSessionAction,
     showToast,
     postSessionMessageApi,
@@ -128,13 +129,27 @@ export function createSessionRuntimeActions(deps) {
     if (details === null) return;
     const trimmed = details.name;
     const position = details.position;
+    const speechAlwaysRead = Boolean(details.speechAlwaysRead);
     const existing = typeof session.name === "string" ? session.name.trim() : "";
     const existingPosition = typeof session.tabOrder === "number" ? session.tabOrder : null;
-    if (existing === trimmed && existingPosition === position) {
+    const existingSpeechAlwaysRead = Boolean(session.metadata?.speechAlwaysRead);
+    if (existing === trimmed && existingPosition === position && existingSpeechAlwaysRead === speechAlwaysRead) {
       return;
     }
     try {
-      await updateSessionName(session.id, trimmed, position);
+      const updates = [];
+      if (existing !== trimmed || existingPosition !== position) {
+        updates.push(updateSessionName(session.id, trimmed, position));
+      }
+      if (existingSpeechAlwaysRead !== speechAlwaysRead && typeof updateSessionMetadataAction === "function") {
+        updates.push(updateSessionMetadataAction(session.id, {
+          metadata: {
+            ...(session.metadata ?? {}),
+            speechAlwaysRead,
+          },
+        }));
+      }
+      await Promise.all(updates);
       refreshSessionTabs();
       void fetchSessions()
         .then(() => {

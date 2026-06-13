@@ -253,6 +253,138 @@ export function createApiKeysSection() {
   return container;
 }
 
+export function createSpeechSettingsSection() {
+  const container = document.createElement('div');
+  container.className = 'wm-settings__speech';
+  container.style.cssText = 'margin-top:16px;';
+
+  const heading = document.createElement('h3');
+  heading.textContent = 'Speech';
+
+  const description = document.createElement('p');
+  description.className = 'wm-settings__port-note';
+  description.textContent = 'Optional server speech settings for generated audio. The live Read button can still use browser speech without these values.';
+
+  const apiKeyRow = document.createElement('div');
+  apiKeyRow.className = 'wm-settings__key-row';
+  apiKeyRow.style.cssText = 'display:flex;gap:8px;align-items:center;margin-top:8px;';
+  const apiKeyLabel = createRowLabel('API Key', 140, 'speech-api-key-input');
+  const apiKeyInput = createInput('sk-...', 'password', 'Speech API key', 'settings-speech-api-key');
+  apiKeyInput.id = 'speech-api-key-input';
+  apiKeyRow.append(apiKeyLabel, apiKeyInput);
+
+  const baseUrlRow = document.createElement('div');
+  baseUrlRow.className = 'wm-settings__key-row';
+  baseUrlRow.style.cssText = 'display:flex;gap:8px;align-items:center;margin-top:8px;';
+  const baseUrlLabel = createRowLabel('Base URL', 140, 'speech-base-url-input');
+  const baseUrlInput = createInput('https://api.openai.com/v1', 'url', 'Speech API base URL', 'settings-speech-base-url');
+  baseUrlInput.id = 'speech-base-url-input';
+  baseUrlRow.append(baseUrlLabel, baseUrlInput);
+
+  const modelRow = document.createElement('div');
+  modelRow.className = 'wm-settings__key-row';
+  modelRow.style.cssText = 'display:flex;gap:8px;align-items:center;margin-top:8px;';
+  const modelLabel = createRowLabel('Model', 140, 'speech-model-input');
+  const modelInput = createInput('tts-1', 'text', 'Speech model', 'settings-speech-model');
+  modelInput.id = 'speech-model-input';
+  modelRow.append(modelLabel, modelInput);
+
+  const voiceRow = document.createElement('div');
+  voiceRow.className = 'wm-settings__key-row';
+  voiceRow.style.cssText = 'display:flex;gap:8px;align-items:center;margin-top:8px;';
+  const voiceLabel = createRowLabel('Voice', 140, 'speech-voice-input');
+  const voiceInput = createInput('alloy', 'text', 'Speech voice', 'settings-speech-voice');
+  voiceInput.id = 'speech-voice-input';
+  voiceRow.append(voiceLabel, voiceInput);
+
+  const actionsRow = document.createElement('div');
+  actionsRow.style.cssText = 'display:flex;gap:8px;align-items:center;margin-top:8px;';
+  const saveBtn = createActionButton('Save');
+  saveBtn.dataset.testid = 'settings-speech-save';
+  saveBtn.setAttribute('aria-label', 'Save speech settings');
+  const clearBtn = createActionButton('Clear');
+  clearBtn.dataset.testid = 'settings-speech-clear';
+  clearBtn.setAttribute('aria-label', 'Clear speech settings');
+  const status = createStatusText();
+  actionsRow.append(saveBtn, clearBtn, status);
+
+  loadUserSettings().then((settings) => {
+    const keyMasked = settings.speech_api_key;
+    if (keyMasked) {
+      apiKeyInput.placeholder = keyMasked;
+      setStatus(status, 'Speech provider configured', 'var(--success, #4caf50)');
+    }
+    if (typeof settings.speech_base_url === 'string') {
+      baseUrlInput.value = settings.speech_base_url;
+    }
+    if (typeof settings.speech_model === 'string') {
+      modelInput.value = settings.speech_model;
+    }
+    if (typeof settings.speech_voice === 'string') {
+      voiceInput.value = settings.speech_voice;
+    }
+  });
+
+  saveBtn.addEventListener('click', async () => {
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving...';
+    try {
+      const apiKey = apiKeyInput.value.trim();
+      const baseUrl = baseUrlInput.value.trim();
+      const model = modelInput.value.trim();
+      const voice = voiceInput.value.trim();
+      const saves = [];
+      if (apiKey) saves.push(saveUserSetting('speech_api_key', apiKey));
+      if (baseUrl) saves.push(saveUserSetting('speech_base_url', baseUrl));
+      if (model) saves.push(saveUserSetting('speech_model', model));
+      if (voice) saves.push(saveUserSetting('speech_voice', voice));
+      if (saves.length === 0) {
+        setStatus(status, 'Enter at least one value to save', 'var(--error, #f44336)');
+      } else {
+        await Promise.all(saves);
+        if (apiKey) {
+          apiKeyInput.value = '';
+          apiKeyInput.placeholder = apiKey.length > 8 ? `${apiKey.slice(0, 4)}..${apiKey.slice(-4)}` : '****';
+        }
+        setStatus(status, 'Saved', 'var(--success, #4caf50)');
+      }
+    } catch (error) {
+      setStatus(status, error.message || 'Save failed', 'var(--error, #f44336)');
+    }
+    saveBtn.disabled = false;
+    saveBtn.textContent = 'Save';
+  });
+
+  clearBtn.addEventListener('click', async () => {
+    clearBtn.disabled = true;
+    try {
+      await Promise.all([
+        deleteUserSetting('speech_api_key'),
+        deleteUserSetting('speech_base_url'),
+        deleteUserSetting('speech_model'),
+        deleteUserSetting('speech_voice'),
+      ]);
+      apiKeyInput.value = '';
+      apiKeyInput.placeholder = 'sk-...';
+      baseUrlInput.value = '';
+      modelInput.value = '';
+      voiceInput.value = '';
+      setStatus(status, 'Cleared');
+    } catch (error) {
+      setStatus(status, error.message || 'Failed to clear', 'var(--error, #f44336)');
+    }
+    clearBtn.disabled = false;
+  });
+
+  const helpText = document.createElement('p');
+  helpText.className = 'wm-settings__port-note';
+  helpText.style.cssText = 'margin-top:6px;font-size:0.8em;';
+  helpText.textContent = 'Defaults are OpenAI-compatible: base URL https://api.openai.com/v1, model tts-1, voice alloy.';
+
+  container.append(heading, description, apiKeyRow, baseUrlRow, modelRow, voiceRow, actionsRow, helpText);
+  return container;
+}
+
 export function createGitHubSection() {
   const container = document.createElement('div');
   container.className = 'wm-settings__github';

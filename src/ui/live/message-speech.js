@@ -1,6 +1,5 @@
 import { generateMessageSpeechApi } from "../services/message-speech.js";
 
-const ALWAYS_READ_STORAGE_KEY = "wingman:message-speech:always-read";
 const generatedSpeech = new Map();
 const autoPlayedMessages = new Set();
 const autoReadTimers = new Map();
@@ -41,6 +40,9 @@ function stopActiveAudio() {
     // Ignore browser audio state errors.
   }
   activeAudio = null;
+  if (typeof speechSynthesis !== "undefined") {
+    speechSynthesis.cancel();
+  }
 }
 
 function playSpeech(publicPath) {
@@ -58,23 +60,21 @@ function playSpeech(publicPath) {
   void audio.play();
 }
 
-function readAlwaysReadPreference() {
-  try {
-    return localStorage.getItem(ALWAYS_READ_STORAGE_KEY) === "true";
-  } catch {
+function canUseBrowserSpeech() {
+  return typeof SpeechSynthesisUtterance !== "undefined" && typeof speechSynthesis !== "undefined";
+}
+
+function readWithBrowserSpeech(text) {
+  if (!canUseBrowserSpeech()) {
     return false;
   }
+  stopActiveAudio();
+  const utterance = new SpeechSynthesisUtterance(text);
+  speechSynthesis.speak(utterance);
+  return true;
 }
 
-function writeAlwaysReadPreference(enabled) {
-  try {
-    localStorage.setItem(ALWAYS_READ_STORAGE_KEY, enabled ? "true" : "false");
-  } catch {
-    // Ignore localStorage failures.
-  }
-}
-
-async function resolveSpeech({ sessionId, message, showToast, button = null }) {
+async function resolveServerSpeech({ sessionId, message, button = null }) {
   const existing = getSpeech(message);
   if (existing?.publicPath) {
     return existing;
@@ -109,7 +109,6 @@ async function resolveSpeech({ sessionId, message, showToast, button = null }) {
     generatedSpeech.set(cacheKey, speech);
     return speech;
   } catch (error) {
-    showToast?.(error instanceof Error ? error.message : "Speech generation failed", { type: "error" });
     throw error;
   } finally {
     if (button) {
@@ -119,18 +118,27 @@ async function resolveSpeech({ sessionId, message, showToast, button = null }) {
   }
 }
 
-export function isAlwaysReadEnabled() {
-  return readAlwaysReadPreference();
+async function readMessageAloud({ sessionId, message, showToast, button = null }) {
+  const text = getMessageText(message);
+  if (!text) {
+    showToast?.("Message has no readable text", { type: "warning" });
+    return;
+  }
+
+  if (readWithBrowserSpeech(text)) {
+    return;
+  }
+
+  try {
+    const speech = await resolveServerSpeech({ sessionId, message, button });
+    playSpeech(speech.publicPath);
+  } catch (error) {
+    showToast?.(error instanceof Error ? error.message : "Speech is not available in this browser", { type: "error" });
+  }
 }
 
-export function setAlwaysReadEnabled(enabled) {
-  writeAlwaysReadPreference(Boolean(enabled));
-}
-
-export function toggleAlwaysRead() {
-  const next = !readAlwaysReadPreference();
-  writeAlwaysReadPreference(next);
-  return next;
+export function isSessionAlwaysReadEnabled(session) {
+  return Boolean(session?.metadata?.speechAlwaysRead);
 }
 
 export function createMessageSpeechCard({ sessionId, message, showToast }) {
@@ -151,23 +159,17 @@ export function createMessageSpeechCard({ sessionId, message, showToast }) {
   button.className = "wm-message-speech-card__button";
   button.dataset.testid = "message-speech-play";
   button.setAttribute("aria-label", "Read this response aloud");
-  button.textContent = getSpeech(message)?.publicPath ? "Play" : "Create and play";
-  button.addEventListener("click", async () => {
-    try {
-      const speech = await resolveSpeech({ sessionId, message, showToast, button });
-      button.textContent = "Play";
-      playSpeech(speech.publicPath);
-    } catch {
-      // Error toast handled in resolveSpeech.
-    }
+  button.textContent = "Read";
+  button.addEventListener("click", () => {
+    void readMessageAloud({ sessionId, message, showToast, button });
   });
 
   card.append(label, button);
   return card;
 }
 
-export async function autoReadLatestAssistantMessage({ sessionId, conversation, showToast }) {
-  if (!readAlwaysReadPreference() || !Array.isArray(conversation) || conversation.length === 0) {
+export async function autoReadLatestAssistantMessage({ sessionId, session, conversation, showToast }) {
+  if (!isSessionAlwaysReadEnabled(session) || !Array.isArray(conversation) || conversation.length === 0) {
     return;
   }
 
@@ -188,12 +190,7 @@ export async function autoReadLatestAssistantMessage({ sessionId, conversation, 
       return;
     }
     autoPlayedMessages.add(cacheKey);
-    try {
-      const speech = await resolveSpeech({ sessionId, message: latestSnapshot, showToast });
-      playSpeech(speech.publicPath);
-    } catch {
-      // Error toast handled in resolveSpeech.
-    }
+    await readMessageAloud({ sessionId, message: latestSnapshot, showToast });
   }, AUTO_READ_IDLE_MS);
   autoReadTimers.set(cacheKey, timer);
 }

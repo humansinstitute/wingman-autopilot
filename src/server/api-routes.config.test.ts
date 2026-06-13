@@ -216,4 +216,40 @@ describe("createApiRouteHandler config defaults", () => {
     expect(body.error).toContain("pi");
     expect(saved).toEqual([]);
   });
+
+  test("saves and masks speech API settings", async () => {
+    const authContext: RequestAuthContext = {
+      npub: "npub1viewer",
+      actorNpub: "npub1viewer",
+      session: null,
+      delegatedByBot: false,
+    };
+    const saved: Array<{ npub: string; key: string; value: string }> = [];
+    const handler = createHandler({
+      authContext,
+      settings: {
+        speech_api_key: "sk-test-1234567890",
+        speech_model: "tts-1",
+      },
+      onSet: (npub, key, value) => {
+        saved.push({ npub, key, value });
+      },
+    });
+
+    const putUrl = new URL("http://localhost:3000/api/user/settings/speech_model");
+    const putRequest = new Request(putUrl.toString(), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: " gpt-4o-mini-tts " }),
+    });
+    const putResponse = await handler(putRequest, putUrl, "PUT", authContext);
+    expect(putResponse.status).toBe(200);
+    expect(saved).toEqual([{ npub: "npub1viewer", key: "speech_model", value: "gpt-4o-mini-tts" }]);
+
+    const getUrl = new URL("http://localhost:3000/api/user/settings");
+    const getResponse = await handler(new Request(getUrl), getUrl, "GET", authContext);
+    const body = await getResponse.json() as { settings: Record<string, string> };
+    expect(body.settings.speech_api_key).toBe("sk-t..7890");
+    expect(body.settings.speech_model).toBe("tts-1");
+  });
 });

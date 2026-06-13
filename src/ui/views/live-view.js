@@ -64,8 +64,6 @@ import {
 } from "../live/conversation-window.js";
 import {
   autoReadLatestAssistantMessage,
-  isAlwaysReadEnabled,
-  toggleAlwaysRead,
 } from "../live/message-speech.js";
 import { focusComposerTextarea } from "../live/mobile-runtime.js";
 import {
@@ -651,6 +649,7 @@ export function initLiveView(deps) {
     const { prependedScrollState = null } = options;
     const current = state.conversationContainers.get(sessionId);
     const conversation = await MessageStore.getSessionMessages(sessionId);
+    const session = sessionsStore().items.find((item) => item.id === sessionId) ?? null;
     const next = createConversationElement({
       sessionId,
       conversation,
@@ -680,7 +679,7 @@ export function initLiveView(deps) {
       attachComposerScrollControls(composerEl);
     }
 
-    void autoReadLatestAssistantMessage({ sessionId, conversation, showToast });
+    void autoReadLatestAssistantMessage({ sessionId, session, conversation, showToast });
 
     return next;
   };
@@ -1143,15 +1142,6 @@ export function initLiveView(deps) {
 
     addCommand("Record voice note", () => {
       openVoiceNoteRecorder(sessionId);
-    });
-
-    addCommand(isAlwaysReadEnabled() ? "Always read: On" : "Always read: Off", () => {
-      const enabled = toggleAlwaysRead();
-      showToast(enabled ? "Always read responses enabled" : "Always read responses disabled", {
-        type: "info",
-        duration: 2200,
-      });
-      render();
     });
 
     addCommandDivider();

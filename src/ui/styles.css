@@ -7446,6 +7446,22 @@ dialog textarea {
   display: block;
 }
 
+.wm-dialog__field--checkbox {
+  gap: 4px;
+}
+
+.wm-dialog__checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.wm-dialog__field-description {
+  color: var(--text-tertiary);
+  font-size: 0.85rem;
+  line-height: 1.35;
+}
+
 .wm-dialog__input {
   width: 100%;
   box-sizing: border-box;

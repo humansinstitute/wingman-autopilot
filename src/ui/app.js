@@ -112,6 +112,7 @@ import {
   fetchSessionApi,
   postSessionMessageApi,
   setPinnedArtifactApi,
+  updateSessionMetadataApi,
 } from "./services/sessions.js";
 import {
   stopSession as stopSessionAction,
@@ -1649,6 +1650,7 @@ const sessionRuntimeActions = createSessionRuntimeActions({
   stopSessionAction,
   deleteSessionAction,
   renameSessionAction,
+  updateSessionMetadataAction: updateSessionMetadataApi,
   resumeNativeSessionAction,
   openTextPromptDialog,
   showToast,

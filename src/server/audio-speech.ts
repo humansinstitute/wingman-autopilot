@@ -18,6 +18,7 @@ export type AudioSpeechConfig = z.infer<typeof speechConfigSchema>;
 export type GenerateSpeechInput = {
   text: string;
   voice?: string | null;
+  config?: Partial<AudioSpeechConfig> | null;
 };
 
 function normalizeSpeechText(value: string): string {
@@ -55,8 +56,9 @@ function extractProviderErrorMessage(rawBody: string): string {
   return trimmed;
 }
 
-export function resolveAudioSpeechConfig(): AudioSpeechConfig | null {
+export function resolveAudioSpeechConfig(overrides: Partial<AudioSpeechConfig> | null = null): AudioSpeechConfig | null {
   const apiKey =
+    overrides?.apiKey?.trim() ||
     Bun.env.WINGMAN_SPEECH_API_KEY?.trim() ||
     Bun.env.OPENAI_API_KEY?.trim() ||
     Bun.env.CODEX_API_KEY?.trim() ||
@@ -66,21 +68,25 @@ export function resolveAudioSpeechConfig(): AudioSpeechConfig | null {
   }
 
   const baseUrl =
+    overrides?.baseUrl?.trim() ||
     Bun.env.WINGMAN_SPEECH_BASE_URL?.trim() ||
     Bun.env.OPENAI_BASE_URL?.trim() ||
     DEFAULT_SPEECH_BASE_URL;
 
   const model =
+    overrides?.model?.trim() ||
     Bun.env.WINGMAN_SPEECH_MODEL?.trim() ||
     Bun.env.OPENAI_SPEECH_MODEL?.trim() ||
     DEFAULT_SPEECH_MODEL;
 
   const voice =
+    overrides?.voice?.trim() ||
     Bun.env.WINGMAN_SPEECH_VOICE?.trim() ||
     Bun.env.OPENAI_SPEECH_VOICE?.trim() ||
     DEFAULT_SPEECH_VOICE;
 
   const format =
+    overrides?.format?.trim() ||
     Bun.env.WINGMAN_SPEECH_FORMAT?.trim() ||
     DEFAULT_SPEECH_FORMAT;
 
@@ -123,7 +129,7 @@ export async function generateSpeechAudio(input: GenerateSpeechInput): Promise<{
   voice: string;
   format: string;
 }> {
-  const config = resolveAudioSpeechConfig();
+  const config = resolveAudioSpeechConfig(input.config ?? null);
   if (!config) {
     throw new Error("No speech API key configured");
   }

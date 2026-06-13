@@ -30,6 +30,31 @@ function createField({ label, control }) {
   return field;
 }
 
+function createCheckboxField({ label, description, control }) {
+  const field = document.createElement("label");
+  field.className = "wm-dialog__field wm-dialog__field--checkbox";
+
+  const row = document.createElement("span");
+  row.className = "wm-dialog__checkbox-row";
+
+  const labelEl = document.createElement("span");
+  labelEl.className = "wm-dialog__field-label";
+  labelEl.textContent = label;
+
+  control.setAttribute("aria-label", label);
+  row.append(control, labelEl);
+  field.append(row);
+
+  if (description) {
+    const descriptionEl = document.createElement("span");
+    descriptionEl.className = "wm-dialog__field-description";
+    descriptionEl.textContent = description;
+    field.append(descriptionEl);
+  }
+
+  return field;
+}
+
 function createPositionSelect(session, sessions) {
   const ordered = sortSessionsForTabs(sessions);
   const currentPosition = getSessionPosition(session, ordered);
@@ -97,6 +122,10 @@ export async function openSessionDetailsDialog({
     nameInput.dataset.testid = "session-details-name";
 
     const positionSelect = createPositionSelect(session, sessions);
+    const alwaysReadInput = document.createElement("input");
+    alwaysReadInput.type = "checkbox";
+    alwaysReadInput.checked = Boolean(session?.metadata?.speechAlwaysRead);
+    alwaysReadInput.dataset.testid = "session-details-speech-always-read";
 
     const status = document.createElement("p");
     status.className = "wm-dialog__status";
@@ -107,6 +136,11 @@ export async function openSessionDetailsDialog({
     body.append(
       createField({ label: "Name", control: nameInput }),
       createField({ label: "Position", control: positionSelect }),
+      createCheckboxField({
+        label: "Always read responses",
+        description: "Read new assistant responses aloud in this session.",
+        control: alwaysReadInput,
+      }),
       status,
     );
 
@@ -148,6 +182,7 @@ export async function openSessionDetailsDialog({
           ? {
               name: nameInput.value.trim(),
               position: Number(positionSelect.value),
+              speechAlwaysRead: alwaysReadInput.checked,
             }
           : null;
         removeDialog(dialog);

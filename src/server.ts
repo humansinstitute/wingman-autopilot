@@ -2229,6 +2229,7 @@ const sessionApiContext: SessionApiContext = {
   isAdminNpub: isConfiguredAdminNpub,
   agentHost,
   messageStore,
+  userSettingsStore,
   sessionArchiveStore,
   identityUserStore,
   promptQueueStore,

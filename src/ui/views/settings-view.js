@@ -10,6 +10,7 @@ import {
   createGitHubSection,
   createGiteaSection,
   createHostedAppRoutingSection,
+  createSpeechSettingsSection,
 } from './settings/workspace-sections.js';
 import { createDefaultAgentSection } from './settings/profile-sections.js';
 import { createTeamBillingSection } from './settings/admin-billing-section.js';
@@ -51,6 +52,7 @@ export function initSettingsView(deps) {
 
     if (state.identity.authenticated) {
       wingmanCard.append(createApiKeysSection());
+      wingmanCard.append(createSpeechSettingsSection());
       wingmanCard.append(createGitHubSection());
       wingmanCard.append(createHostedAppRoutingSection({
         config: state.config,
