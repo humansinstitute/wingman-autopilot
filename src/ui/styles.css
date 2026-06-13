@@ -3558,6 +3558,17 @@ body[data-live-header-collapsed="true"]:has(#app[data-route="live"]) .wm-live-dr
   align-self: flex-start;
 }
 
+.wm-message-speech-summary {
+  margin: 0.7rem 3.1rem 0 0;
+  padding: 0.65rem 0.75rem;
+  border-left: 3px solid rgba(16, 185, 129, 0.45);
+  border-radius: 0.4rem;
+  background: rgba(15, 23, 42, 0.18);
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
 .wm-message-actions {
   position: absolute;
   bottom: 0.65rem;

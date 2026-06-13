@@ -310,6 +310,10 @@ export function registerChatComponent() {
       });
     },
 
+    getSpeechSummary(message) {
+      return typeof message?.speech?.summary === "string" ? message.speech.summary.trim() : "";
+    },
+
     canReadMessage(message) {
       return isReadableAgentMessage(message);
     },
@@ -538,6 +542,12 @@ export function getChatTemplate(sessionId) {
                :data-role="(message.role || message.type || 'assistant').toLowerCase()"
                :class="message.role === 'user' ? 'user' : (message.role === 'assistant' || message.role === 'agent' ? 'assistant' : 'system')">
         <div class="wm-message-body" x-html="$store.chat.renderMessageContent(message)"></div>
+        <template x-if="$store.chat.getSpeechSummary(message)">
+          <p class="wm-message-speech-summary"
+             data-testid="message-speech-summary"
+             x-text="$store.chat.getSpeechSummary(message)">
+          </p>
+        </template>
         <div class="wm-message-actions">
           <template x-if="$store.chat.canReadMessage(message)">
             <button type="button"

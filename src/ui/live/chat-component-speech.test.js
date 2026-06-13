@@ -15,6 +15,8 @@ describe("Alpine chat speech controls", () => {
     expect(source).toContain("canReadMessage(message)");
     expect(source).toContain("return isReadableAgentMessage(message);");
     expect(source).toContain('"Generate spoken summary"');
+    expect(source).toContain("getSpeechSummary(message)");
+    expect(source).toContain('data-testid="message-speech-summary"');
     expect(source).toContain('class="wm-message-actions"');
     expect(source).toContain('class="wm-message-speech-play"');
     expect(source).toContain('data-testid="message-speech-play"');

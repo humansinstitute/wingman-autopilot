@@ -11,6 +11,9 @@ describe("live message speech controls", () => {
   test("renders speech playback in the shared message action group", () => {
     expect(conversationSource).toContain("attachCopyButton(bubble);");
     expect(conversationSource).toContain("attachMessageSpeechButton(bubble");
+    expect(conversationSource).toContain("function getSpeechSummary(message)");
+    expect(conversationSource).toContain('element.className = "wm-message-speech-summary"');
+    expect(conversationSource).toContain('element.dataset.testid = "message-speech-summary"');
     expect(clipboardSource).toContain('bubble.querySelector(".wm-message-actions")');
     expect(speechSource).toContain('bubble.querySelector(".wm-message-actions")');
     expect(speechSource).toContain('button.className = "wm-message-speech-play"');
@@ -76,6 +79,7 @@ describe("live message speech controls", () => {
   test("styles message actions as bottom-right icon controls", () => {
     expect(styles).toContain(".wm-message-actions");
     expect(styles).toContain(".wm-message-copy,\n.wm-message-speech-play");
+    expect(styles).toContain(".wm-message-speech-summary");
     expect(styles).toContain(".wm-speech-playback-modal");
     expect(styles).toContain(".wm-speech-playback-modal__stop");
     expect(styles).toContain("bottom: 0.65rem;");

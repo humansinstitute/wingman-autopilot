@@ -121,6 +121,19 @@ function shouldFormatAgentMessage(message) {
   return role === "assistant" || role === "agent";
 }
 
+function getSpeechSummary(message) {
+  const summary = typeof message?.speech?.summary === "string" ? message.speech.summary.trim() : "";
+  return summary;
+}
+
+function createSpeechSummaryElement(summary) {
+  const element = document.createElement("p");
+  element.className = "wm-message-speech-summary";
+  element.dataset.testid = "message-speech-summary";
+  element.textContent = summary;
+  return element;
+}
+
 function createMessageBubble(message, options = {}) {
   const role = String(message?.role ?? message?.type ?? "assistant").toLowerCase();
   const bubble = document.createElement("article");
@@ -132,6 +145,10 @@ function createMessageBubble(message, options = {}) {
     cleanAgentText: Boolean(options.agentOutputFormattingEnabled && shouldFormatAgentMessage(message)),
   });
   bubble.append(body);
+  const speechSummary = getSpeechSummary(message);
+  if (speechSummary) {
+    bubble.append(createSpeechSummaryElement(speechSummary));
+  }
   attachCopyButton(bubble);
   attachMessageSpeechButton(bubble, {
     sessionId: options.sessionId,
