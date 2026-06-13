@@ -2804,7 +2804,7 @@ dialog.addEventListener("cancel", (event) => {
   // ── Parallel data fetches (independent of each other) ──
   const dataFetches = [];
   if (state.identity.authenticated) {
-    dataFetches.push(fetchSessions());
+    dataFetches.push(fetchSessions({ waitForActiveSessionDetails: false }));
     dataFetches.push(fetchApps({ tail: APP_LOG_PREVIEW_LINES }));
     dataFetches.push(fetchNpubProjects().catch(() => {}));
     dataFetches.push(syncAuthenticatedStartupStores());
@@ -2820,10 +2820,10 @@ dialog.addEventListener("cancel", (event) => {
   if (state.identity.authenticated) {
     startSessionSubscriber({
       onConnect: () => {
-        void fetchSessions();
+        void fetchSessions({ waitForActiveSessionDetails: false });
       },
       onEvent: (event) => {
-        void fetchSessions().then(() => {
+        void fetchSessions({ waitForActiveSessionDetails: false }).then(() => {
           if (event?.artifactIntent?.action === "open" && event.sessionId) {
             openArtifactPane(event.sessionId);
           }

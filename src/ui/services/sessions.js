@@ -55,8 +55,9 @@ export async function fetchSessionLogsApi(sessionId) {
  * @param {string} sessionId - The session ID
  * @returns {Promise<{messages: Array} | null>}
  */
-export async function fetchSessionMessagesApi(sessionId) {
-  const response = await fetch(`/api/sessions/${sessionId}/messages?refresh=true`);
+export async function fetchSessionMessagesApi(sessionId, options = {}) {
+  const query = options.refresh ? "?refresh=true" : "";
+  const response = await fetch(`/api/sessions/${sessionId}/messages${query}`);
   if (!response.ok) return null;
   return response.json();
 }

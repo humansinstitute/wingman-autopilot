@@ -112,7 +112,8 @@ export function initSessionRuntimeSync({
     updateIdentityState({ npub: state.identity.npub }, { persist: false, emit: true });
   }
 
-  async function fetchSessions() {
+  async function fetchSessions(options = {}) {
+    const { waitForActiveSessionDetails = true } = options;
     const sessionState = sessionsStore();
     await sessionState.sync();
 
@@ -143,11 +144,18 @@ export function initSessionRuntimeSync({
     const activeId = sessionState.activeSessionId;
 
     if (getCurrentRoute() === "live" && activeId) {
-      await Promise.all([
+      const activeSessionDetails = Promise.all([
         fetchLogs(activeId),
         fetchConversation(activeId),
         fetchSessionQueue(activeId),
       ]);
+      if (waitForActiveSessionDetails) {
+        await activeSessionDetails;
+      } else {
+        void activeSessionDetails.catch((error) => {
+          console.warn("[sessions] failed to hydrate active session details:", error);
+        });
+      }
     }
   }
 
