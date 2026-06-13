@@ -41,9 +41,15 @@ The current local route table has four subscriptions with the same three trigger
 | `task` | `task_dispatch` | `fd-agent-dispatch-task-response` for three subscriptions, `agent-dispatch-task-response` for one subscription | `skip` | subscription + record + route |
 | `comment` | `comment_dispatch` | `fd-agent-dispatch-comment-response` for three subscriptions, `agent-dispatch-comment-response` for one subscription | `skip` | subscription + record + route |
 
+<comment>task and comment dispatch should be activated.</comment>
+
 All current stored route `matchJson` values are `{}`, so trigger, capability, route enabled state, self-authorship, active policy, and dedupe are the effective routing controls.
 
+<comment>Explain what this empty matchJson means in the chat, what is the example where would this be used?</comment>
+
 The `fd-*` pipelines are Flight Deck PG workspace-first variants. The older `agent-dispatch-*` definitions are still valid fallbacks and are used by one configured subscription for task and comment dispatch. Their high-level flow is the same.
+
+<comment>Remove fallbacks and delete the pipelines, it gets too complicated and its never clear if the desired behaivour is actually working.</comment>
 
 ## Chat Dispatch
 
@@ -57,16 +63,17 @@ Primary definitions:
 
 1. `hydrate-chat-context` calls `dispatch.hydrateChatContext`.
    - PG workspaces load the source thread through Flight Deck PG.
-   - Yoke workspaces run `chat context`; on failure they sync and retry; on another failure they build fallback context from the triggering message.
+   - Yoke workspaces run `chat context`; on failure they sync and retry; on another failure they build fallback context from the triggering message. <comment>Remove this step we are turning of yoke / encrypted records. Does this step send the emoji response? I would like the thumbs up on receipt to be very quick</comment>
    - The step also acknowledges the source message, records hydration warnings, lists referenced records, and marks `shouldProceed: false` for self-authored chat.
 2. If `chatContext.shouldProceed` is not `true`, all later chat steps are skipped and no reply is published.
-3. `prepare-intent-input` compacts the latest thread, referenced records, scopes, and up to eight valid child pipelines for the intent agent.
+3. `prepare-intent-input` compacts the latest thread, referenced records, scopes, and up to eight valid child pipelines for the intent agent. <comment>I feel like we get some blow out in the initial prompt here by including all pipelines, perhaps we can have a step later that loads pipelines as a single step and agent acction if it decides it needs to route work.</comment>
 4. `analyse-intent` asks the default agent to classify the request:
    - direct chat response
    - clarification needed
    - no-task discussion
    - task-backed work
    - ignore
+   - <comment>What are the differences etween task-backed work and no task discussion vs. direct chat response?</comment>
 5. `normalise-decision` converts the agent output into deterministic routing fields:
    - `intent: "ignore"` suppresses all response and work.
    - `dispatchTask` only remains true when the agent explicitly requested task-backed work, the selected pipeline is not a dispatch pipeline, a workdir exists, instructions exist, and no clarifying question is present.
@@ -75,11 +82,11 @@ Primary definitions:
 6. The shared `fd-agent-dispatch-chat` and `agent-dispatch-chat` definitions run `detect-review-approval`.
    - If the latest chat text is not approval-like, nothing happens.
    - If approval text is present and exactly one linked task is in review, `complete-review-task-from-chat` marks it done and comments on the task.
-   - If approval text is ambiguous or no review task is linked, the final response asks for the missing target.
+   - If approval text is ambiguous or no review task is linked, the final response asks for the missing target. <comment>THIS STEP FEELS LIKE AN OLD CONCPET THATS NOT NEEDED ANYMORE</comment>
 7. `route-discussion-chat` may turn the decision into a no-task child pipeline.
    - It preserves simple direct replies when the agent supplied a direct chat answer and did not request a pipeline.
    - It launches discussion when the selected pipeline is a discussion/document discussion pipeline, the intent reads as discussion/planning/design thinking, or the latest text looks document-discussion related.
-   - It sets `dispatchDiscussion: true`, keeps `dispatchTask: false`, and creates a discussion work plan.
+   - It sets `dispatchDiscussion: true`, keeps `dispatchTask: false`, and creates a discussion work plan. <comment>what is a discussion workplan</comment>
    - In `wm21-agent-dispatch-chat`, this step uses the user function `discussion.chatRouting` instead of the shared `dispatch.routeDiscussionChat`.
 8. If `decision.dispatchDiscussion` is true, `start-discussion-pipeline` starts the selected no-task child pipeline and stores it as `childPipeline`.
 9. If `decision.dispatchTask` is true, `create-in-progress-task` creates a Flight Deck task in `in_progress`, assigned to the bot, with source-message metadata.
@@ -87,6 +94,7 @@ Primary definitions:
 11. If the child pipeline failed to start, `block-task-on-launch-failure` moves the created task to `blocked` and comments with the launch failure.
 12. Shared chat definitions reload the thread before replying. The `wm21` override skips that closeout reload.
 13. `prepare-chat-response` decides the final chat response:
+   -<comment>task management actions dont really belong in this workflow APPROVAL records are not in PG Flight DEck, it didnt work too abstract keep this pipeline to chat, tasks. we can always route to task workflows if there is a task referenced in the thread.</comment>
    - Review approval success: "marked task complete" response.
    - Review approval ambiguous: asks which task to mark done.
    - Suppressed/ignored decision: no response.
