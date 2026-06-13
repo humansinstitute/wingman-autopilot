@@ -41,6 +41,10 @@ import type { NightWatchStartOptions } from "../nightwatch/nightwatch-start-conf
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "HEAD";
 const MAX_SPEECH_TEXT_LENGTH = 4_000;
+const DEFAULT_SETTINGS_SPEECH_BASE_URL = "https://openrouter.ai/api/v1";
+const DEFAULT_SETTINGS_SPEECH_MODEL = "hexgrad/kokoro-82m";
+const DEFAULT_SETTINGS_SPEECH_VOICE = "af_heart";
+const DEFAULT_SETTINGS_SPEECH_FORMAT = "mp3";
 
 // ---------- Types shared with server.ts ----------
 
@@ -2020,20 +2024,25 @@ function resolveSpeechSettings(
   baseUrl?: string;
   model?: string;
   voice?: string;
+  format?: string;
 } | null {
   if (!npub || typeof ctx.userSettingsStore?.getAll !== "function") {
     return null;
   }
   const settings = ctx.userSettingsStore.getAll(npub);
-  const apiKey = settings.speech_api_key?.trim() || settings.openai_api_key?.trim() || "";
-  const baseUrl = settings.speech_base_url?.trim() || "";
-  const model = settings.speech_model?.trim() || "";
-  const voice = settings.speech_voice?.trim() || "";
+  const speechApiKey = settings.speech_api_key?.trim() || "";
+  const apiKey = speechApiKey || settings.openai_api_key?.trim() || "";
+  const useOpenRouterDefaults = Boolean(speechApiKey);
+  const baseUrl = settings.speech_base_url?.trim() || (useOpenRouterDefaults ? DEFAULT_SETTINGS_SPEECH_BASE_URL : "");
+  const model = settings.speech_model?.trim() || (useOpenRouterDefaults ? DEFAULT_SETTINGS_SPEECH_MODEL : "");
+  const voice = settings.speech_voice?.trim() || (useOpenRouterDefaults ? DEFAULT_SETTINGS_SPEECH_VOICE : "");
+  const format = settings.speech_format?.trim() || (useOpenRouterDefaults ? DEFAULT_SETTINGS_SPEECH_FORMAT : "");
   return {
     ...(apiKey ? { apiKey } : {}),
     ...(baseUrl ? { baseUrl } : {}),
     ...(model ? { model } : {}),
     ...(voice ? { voice } : {}),
+    ...(format ? { format } : {}),
   };
 }
 

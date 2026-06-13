@@ -230,6 +230,7 @@ describe("createApiRouteHandler config defaults", () => {
       settings: {
         speech_api_key: "sk-test-1234567890",
         speech_model: "tts-1",
+        speech_format: "mp3",
       },
       onSet: (npub, key, value) => {
         saved.push({ npub, key, value });
@@ -251,5 +252,6 @@ describe("createApiRouteHandler config defaults", () => {
     const body = await getResponse.json() as { settings: Record<string, string> };
     expect(body.settings.speech_api_key).toBe("sk-t..7890");
     expect(body.settings.speech_model).toBe("tts-1");
+    expect(body.settings.speech_format).toBe("mp3");
   });
 });

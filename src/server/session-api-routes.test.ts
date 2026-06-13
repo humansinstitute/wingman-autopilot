@@ -3,6 +3,9 @@ process.env.IDENTITY_SESSION_SECRET = "TestSecretValue_With-Numbers123!AndSymbol
 Bun.env.IDENTITY_SESSION_SECRET = "TestSecretValue_With-Numbers123!AndSymbols@2026";
 
 import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 import { handleSessionApi, type SessionApiContext } from "./session-api-routes";
 import type { RequestAuthContext } from "../auth/request-context";
@@ -131,9 +134,11 @@ const buildCtx = (overrides?: Partial<SessionApiContext>): SessionApiContext => 
 
 describe("handleSessionApi", () => {
   const originalFetch = globalThis.fetch;
+  const tempPaths: string[] = [];
 
-  afterEach(() => {
+  afterEach(async () => {
     globalThis.fetch = originalFetch;
+    await Promise.all(tempPaths.splice(0).map((path) => rm(path, { recursive: true, force: true })));
   });
 
   test("POST /api/sessions passes the effective npub into session creation", async () => {
@@ -270,6 +275,67 @@ describe("handleSessionApi", () => {
     expect(response).not.toBeNull();
     expect(response!.status).toBe(200);
     await expect(response!.json()).resolves.toEqual({ sessionId: "session-1", messageId: "message-1", speech });
+  });
+
+  test("POST /api/sessions/:id/messages/:messageId/speech uses OpenRouter speech defaults", async () => {
+    const attachmentRoot = await mkdtemp(join(tmpdir(), "wingman-speech-test-"));
+    tempPaths.push(attachmentRoot);
+    let providerUrl = "";
+    let providerBody: Record<string, unknown> | null = null;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      providerUrl = String(input);
+      providerBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+      return new Response(new Uint8Array([1, 2, 3]), {
+        status: 200,
+        headers: { "content-type": "audio/mpeg" },
+      });
+    }) as typeof fetch;
+
+    const ctx = buildCtx({
+      attachmentRoot,
+      messageStore: {
+        recordSession: () => {},
+        getSession: () => ({ id: "session-1", agent: "codex", npub: "npub1owner", metadata: null }),
+        listSessions: () => [],
+        listSessionMessages: () => [{
+          id: "message-1",
+          sessionId: "session-1",
+          role: "assistant",
+          content: "READY",
+          createdAt: "2026-06-13T02:00:00.000Z",
+        }],
+        getMessageSpeechAttachment: () => null,
+        saveMessageSpeechAttachment: (attachment: unknown) => attachment,
+      } as any,
+      userSettingsStore: {
+        getAll: () => ({ speech_api_key: "sk-or-test" }),
+      },
+    });
+
+    const url = new URL("http://localhost:3021/api/sessions/session-1/messages/message-1/speech");
+    const request = new Request(url.toString(), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+
+    const response = await handleSessionApi(request, url, "POST", makeAuth({ delegatedByBot: false }), ctx);
+    const body = await response!.json() as { speech: Record<string, unknown> };
+
+    expect(response!.status).toBe(201);
+    expect(providerUrl).toBe("https://openrouter.ai/api/v1/audio/speech");
+    expect(providerBody).toMatchObject({
+      model: "hexgrad/kokoro-82m",
+      input: "READY",
+      voice: "af_heart",
+      response_format: "mp3",
+    });
+    expect(body.speech).toMatchObject({
+      mimeType: "audio/mpeg",
+      voice: "af_heart",
+      model: "hexgrad/kokoro-82m",
+      summary: "READY",
+    });
   });
 
   test("POST /api/sessions/:id/resume-native creates a new session from native metadata", async () => {

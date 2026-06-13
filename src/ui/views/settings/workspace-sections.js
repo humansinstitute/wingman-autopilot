@@ -58,6 +58,13 @@ function createActionButton(text) {
   return button;
 }
 
+const OPENROUTER_SPEECH_DEFAULTS = {
+  baseUrl: 'https://openrouter.ai/api/v1',
+  model: 'hexgrad/kokoro-82m',
+  voice: 'af_heart',
+  format: 'mp3',
+};
+
 function normalizeHostname(value) {
   const trimmed = typeof value === 'string' ? value.trim() : '';
   if (!trimmed) return '';
@@ -263,7 +270,7 @@ export function createSpeechSettingsSection() {
 
   const description = document.createElement('p');
   description.className = 'wm-settings__port-note';
-  description.textContent = 'Optional server speech settings for generated audio. The live Read button can still use browser speech without these values.';
+  description.textContent = 'Optional server speech settings for generated audio. OpenRouter Kokoro is prefilled; add your API key and save.';
 
   const apiKeyRow = document.createElement('div');
   apiKeyRow.className = 'wm-settings__key-row';
@@ -277,25 +284,37 @@ export function createSpeechSettingsSection() {
   baseUrlRow.className = 'wm-settings__key-row';
   baseUrlRow.style.cssText = 'display:flex;gap:8px;align-items:center;margin-top:8px;';
   const baseUrlLabel = createRowLabel('Base URL', 140, 'speech-base-url-input');
-  const baseUrlInput = createInput('https://api.openai.com/v1', 'url', 'Speech API base URL', 'settings-speech-base-url');
+  const baseUrlInput = createInput(OPENROUTER_SPEECH_DEFAULTS.baseUrl, 'url', 'Speech API base URL', 'settings-speech-base-url');
   baseUrlInput.id = 'speech-base-url-input';
+  baseUrlInput.value = OPENROUTER_SPEECH_DEFAULTS.baseUrl;
   baseUrlRow.append(baseUrlLabel, baseUrlInput);
 
   const modelRow = document.createElement('div');
   modelRow.className = 'wm-settings__key-row';
   modelRow.style.cssText = 'display:flex;gap:8px;align-items:center;margin-top:8px;';
   const modelLabel = createRowLabel('Model', 140, 'speech-model-input');
-  const modelInput = createInput('tts-1', 'text', 'Speech model', 'settings-speech-model');
+  const modelInput = createInput(OPENROUTER_SPEECH_DEFAULTS.model, 'text', 'Speech model', 'settings-speech-model');
   modelInput.id = 'speech-model-input';
+  modelInput.value = OPENROUTER_SPEECH_DEFAULTS.model;
   modelRow.append(modelLabel, modelInput);
 
   const voiceRow = document.createElement('div');
   voiceRow.className = 'wm-settings__key-row';
   voiceRow.style.cssText = 'display:flex;gap:8px;align-items:center;margin-top:8px;';
   const voiceLabel = createRowLabel('Voice', 140, 'speech-voice-input');
-  const voiceInput = createInput('alloy', 'text', 'Speech voice', 'settings-speech-voice');
+  const voiceInput = createInput(OPENROUTER_SPEECH_DEFAULTS.voice, 'text', 'Speech voice', 'settings-speech-voice');
   voiceInput.id = 'speech-voice-input';
+  voiceInput.value = OPENROUTER_SPEECH_DEFAULTS.voice;
   voiceRow.append(voiceLabel, voiceInput);
+
+  const formatRow = document.createElement('div');
+  formatRow.className = 'wm-settings__key-row';
+  formatRow.style.cssText = 'display:flex;gap:8px;align-items:center;margin-top:8px;';
+  const formatLabel = createRowLabel('Format', 140, 'speech-format-input');
+  const formatInput = createInput(OPENROUTER_SPEECH_DEFAULTS.format, 'text', 'Speech response format', 'settings-speech-format');
+  formatInput.id = 'speech-format-input';
+  formatInput.value = OPENROUTER_SPEECH_DEFAULTS.format;
+  formatRow.append(formatLabel, formatInput);
 
   const actionsRow = document.createElement('div');
   actionsRow.style.cssText = 'display:flex;gap:8px;align-items:center;margin-top:8px;';
@@ -323,6 +342,9 @@ export function createSpeechSettingsSection() {
     if (typeof settings.speech_voice === 'string') {
       voiceInput.value = settings.speech_voice;
     }
+    if (typeof settings.speech_format === 'string') {
+      formatInput.value = settings.speech_format;
+    }
   });
 
   saveBtn.addEventListener('click', async () => {
@@ -333,11 +355,13 @@ export function createSpeechSettingsSection() {
       const baseUrl = baseUrlInput.value.trim();
       const model = modelInput.value.trim();
       const voice = voiceInput.value.trim();
+      const format = formatInput.value.trim();
       const saves = [];
       if (apiKey) saves.push(saveUserSetting('speech_api_key', apiKey));
       if (baseUrl) saves.push(saveUserSetting('speech_base_url', baseUrl));
       if (model) saves.push(saveUserSetting('speech_model', model));
       if (voice) saves.push(saveUserSetting('speech_voice', voice));
+      if (format) saves.push(saveUserSetting('speech_format', format));
       if (saves.length === 0) {
         setStatus(status, 'Enter at least one value to save', 'var(--error, #f44336)');
       } else {
@@ -363,12 +387,14 @@ export function createSpeechSettingsSection() {
         deleteUserSetting('speech_base_url'),
         deleteUserSetting('speech_model'),
         deleteUserSetting('speech_voice'),
+        deleteUserSetting('speech_format'),
       ]);
       apiKeyInput.value = '';
       apiKeyInput.placeholder = 'sk-...';
-      baseUrlInput.value = '';
-      modelInput.value = '';
-      voiceInput.value = '';
+      baseUrlInput.value = OPENROUTER_SPEECH_DEFAULTS.baseUrl;
+      modelInput.value = OPENROUTER_SPEECH_DEFAULTS.model;
+      voiceInput.value = OPENROUTER_SPEECH_DEFAULTS.voice;
+      formatInput.value = OPENROUTER_SPEECH_DEFAULTS.format;
       setStatus(status, 'Cleared');
     } catch (error) {
       setStatus(status, error.message || 'Failed to clear', 'var(--error, #f44336)');
@@ -379,9 +405,9 @@ export function createSpeechSettingsSection() {
   const helpText = document.createElement('p');
   helpText.className = 'wm-settings__port-note';
   helpText.style.cssText = 'margin-top:6px;font-size:0.8em;';
-  helpText.textContent = 'Defaults are OpenAI-compatible: base URL https://api.openai.com/v1, model tts-1, voice alloy.';
+  helpText.textContent = 'Recommended OpenRouter config: base URL https://openrouter.ai/api/v1, model hexgrad/kokoro-82m, voice af_heart, format mp3.';
 
-  container.append(heading, description, apiKeyRow, baseUrlRow, modelRow, voiceRow, actionsRow, helpText);
+  container.append(heading, description, apiKeyRow, baseUrlRow, modelRow, voiceRow, formatRow, actionsRow, helpText);
   return container;
 }
 
