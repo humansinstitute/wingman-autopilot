@@ -24,8 +24,9 @@ describe("live message speech controls", () => {
     expect(speechSource).toContain("fetchSessionMessagesApi(sessionId, { refresh: true })");
   });
 
-  test("renders play controls for stale local rows without a local message id", () => {
-    expect(speechSource).toContain("!isAssistantRole(message) || !getMessageText(message)");
+  test("hides play controls until audio exists", () => {
+    expect(speechSource).toContain("export function hasMessageSpeech(message)");
+    expect(speechSource).toContain("!isAssistantRole(message) || !getMessageText(message) || !hasMessageSpeech(message)");
     expect(speechSource).not.toContain("!isAssistantRole(message) || !getMessageId(message) || !getMessageText(message)");
   });
 

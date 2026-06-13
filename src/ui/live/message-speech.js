@@ -39,6 +39,10 @@ function getSpeech(message) {
   return message?.speech && typeof message.speech === "object" ? message.speech : null;
 }
 
+export function hasMessageSpeech(message) {
+  return Boolean(getSpeech(message)?.publicPath);
+}
+
 function getSpeechCacheKey(sessionId, message) {
   const messageId = getMessageId(message);
   if (messageId) {
@@ -191,7 +195,7 @@ export function attachMessageSpeechButton(bubble, { sessionId, message, showToas
   if (!bubble || bubble.dataset.speechAttached === "true") {
     return;
   }
-  if (!isAssistantRole(message) || !getMessageText(message)) {
+  if (!isAssistantRole(message) || !getMessageText(message) || !hasMessageSpeech(message)) {
     return;
   }
 

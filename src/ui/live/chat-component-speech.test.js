@@ -8,7 +8,9 @@ describe("Alpine chat speech controls", () => {
   test("renders spoken summary playback beside copy controls", () => {
     expect(source).toContain("readMessageAloud");
     expect(source).toContain("autoReadLatestAssistantMessage");
+    expect(source).toContain("hasMessageSpeech");
     expect(source).toContain("canReadMessage(message)");
+    expect(source).toContain("isReadableAgentMessage(message) && hasMessageSpeech(message)");
     expect(source).toContain('class="wm-message-actions"');
     expect(source).toContain('class="wm-message-speech-play"');
     expect(source).toContain('data-testid="message-speech-play"');

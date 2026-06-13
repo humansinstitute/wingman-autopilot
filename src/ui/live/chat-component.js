@@ -22,6 +22,7 @@ import {
 } from "./conversation-window.js";
 import {
   autoReadLatestAssistantMessage,
+  hasMessageSpeech,
   isSessionAlwaysReadEnabled,
   readMessageAloud,
 } from "./message-speech.js";
@@ -280,7 +281,7 @@ export function registerChatComponent() {
     },
 
     canReadMessage(message) {
-      return isReadableAgentMessage(message);
+      return isReadableAgentMessage(message) && hasMessageSpeech(message);
     },
 
     async playMessageSpeech(message, button) {
