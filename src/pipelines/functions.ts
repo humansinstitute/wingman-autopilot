@@ -1885,7 +1885,8 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const taskMention = taskId ? mention("task", taskId, taskLabel) : null;
     const pipelineName = getText(childPipeline.pipelineName) ?? getText(decision.pipelineDefinitionId);
     const pipelineRunId = getText(childPipeline.pipelineRunId);
-    const launchFailed = childPipeline.started === false || getText(childPipeline.status) === "failed";
+    const childPipelineStatus = getText(childPipeline.status);
+    const launchFailed = childPipeline.started === false || childPipelineStatus === "failed" || childPipelineStatus === "error";
     const needsInput = getText(childPipeline.status) === "needs_input";
     const needsInputUpdate = objectValue(childPipeline.needsInputUpdate);
     let responseDraft = getText(decision.responseDraft) ?? "Done.";
@@ -1905,6 +1906,8 @@ export const builtinPipelineFunctions: FunctionRegistry = {
         ? "Asked a clarifying question instead of dispatching work."
         : taskCreationFailed
           ? "Task-backed dispatch was requested, but task creation failed; reporting the issue in chat."
+        : launchFailed
+          ? "Task-backed dispatch created a task, but the selected child pipeline failed to start or errored immediately."
         : needsInput
           ? "The child pipeline needs input; a clarification question was published."
         : decision.dispatchTask === true

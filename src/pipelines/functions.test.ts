@@ -1331,6 +1331,35 @@ describe("memory pipeline functions", () => {
     expect(result.actionsTaken).toEqual(["created task task-1", "started pipeline run run-1"]);
   });
 
+  test("dispatch.prepareChatDispatchResponse reports immediate child pipeline errors", async () => {
+    const result = await builtinPipelineFunctions["dispatch.prepareChatDispatchResponse"]!({
+      decision: {
+        dispatchTask: true,
+        pipelineDefinitionId: "research-and-report",
+        confidence: 0.9,
+      },
+      createdTask: {
+        taskId: "task-1",
+        workPlan: {
+          taskSummary: "Session review",
+        },
+      },
+      childPipeline: {
+        started: true,
+        status: "error",
+        pipelineName: "research-and-report",
+        pipelineRunId: "run-1",
+        reason: "agent callback timed out",
+      },
+    });
+
+    expect(result.responseDraft).toContain(
+      "I created task @[Session review](mention:task:task-1), but the selected pipeline did not start: agent callback timed out.",
+    );
+    expect(result.reasoningSummary).toBe("Task-backed dispatch created a task, but the selected child pipeline failed to start or errored immediately.");
+    expect(result.actionsTaken).toEqual(["created task task-1", "started pipeline run run-1"]);
+  });
+
   test("dispatch.prepareChatDispatchResponse suppresses duplicate reply when needs input was already posted", async () => {
     const result = await builtinPipelineFunctions["dispatch.prepareChatDispatchResponse"]!({
       decision: {
