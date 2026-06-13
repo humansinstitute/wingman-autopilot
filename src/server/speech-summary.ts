@@ -107,11 +107,11 @@ export async function generateSpeechSummary(input: GenerateSpeechSummaryInput): 
     body: JSON.stringify({
       model: input.config.model,
       temperature: 0.2,
-      max_tokens: 120,
+      max_tokens: 700,
       messages: [
         {
           role: "system",
-          content: "You write short natural spoken summaries of agent replies.",
+          content: "You write short natural spoken summaries of agent replies. Return only the final spoken summary. Do not explain your reasoning.",
         },
         {
           role: "user",

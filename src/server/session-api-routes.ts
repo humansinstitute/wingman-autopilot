@@ -51,7 +51,7 @@ const DEFAULT_LOCAL_SPEECH_BASE_URL = "http://127.0.0.1:8880/v1";
 const DEFAULT_LOCAL_SPEECH_MODEL = "kokoro";
 const DEFAULT_LOCAL_SPEECH_VOICE = "am_onyx";
 const DEFAULT_LOCAL_SPEECH_SUMMARY_BASE_URL = "http://127.0.0.1:11434/v1";
-const DEFAULT_LOCAL_SPEECH_SUMMARY_MODEL = "gemma3:4b";
+const DEFAULT_LOCAL_SPEECH_SUMMARY_MODEL = "gemma4:e4b";
 
 // ---------- Types shared with server.ts ----------
 

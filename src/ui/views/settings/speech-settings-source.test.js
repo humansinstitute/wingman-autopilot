@@ -11,7 +11,7 @@ describe("speech settings section", () => {
     expect(source).toContain("model: 'kokoro'");
     expect(source).toContain("voice: 'am_onyx'");
     expect(source).toContain("summaryBaseUrl: 'http://127.0.0.1:11434/v1'");
-    expect(source).toContain("summaryModel: 'gemma3:4b'");
+    expect(source).toContain("summaryModel: 'gemma4:e4b'");
     expect(source).toContain("providerSelect.dataset.testid = 'settings-speech-provider'");
     expect(source).toContain("settings-speech-summary-base-url");
     expect(source).toContain("saveUserSetting('speech_summary_base_url', summaryBaseUrl)");

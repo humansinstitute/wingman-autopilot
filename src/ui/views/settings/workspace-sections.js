@@ -73,7 +73,7 @@ const LOCAL_SPEECH_DEFAULTS = {
   voice: 'am_onyx',
   format: 'mp3',
   summaryBaseUrl: 'http://127.0.0.1:11434/v1',
-  summaryModel: 'gemma3:4b',
+  summaryModel: 'gemma4:e4b',
 };
 
 function normalizeHostname(value) {
@@ -492,7 +492,7 @@ export function createSpeechSettingsSection() {
   const helpText = document.createElement('p');
   helpText.className = 'wm-settings__port-note';
   helpText.style.cssText = 'margin-top:6px;font-size:0.8em;';
-  helpText.textContent = 'OpenRouter default: hexgrad/kokoro-82m with OpenRouter summaries. Local default: Kokoro at http://127.0.0.1:8880/v1 plus Ollama summaries at http://127.0.0.1:11434/v1, model gemma3:4b.';
+  helpText.textContent = 'OpenRouter default: hexgrad/kokoro-82m with OpenRouter summaries. Local default: Kokoro at http://127.0.0.1:8880/v1 plus Ollama summaries at http://127.0.0.1:11434/v1, model gemma4:e4b.';
 
   container.append(heading, description, providerRow, apiKeyRow, baseUrlRow, modelRow, voiceRow, formatRow, summaryBaseUrlRow, summaryModelRow, actionsRow, helpText);
   return container;
