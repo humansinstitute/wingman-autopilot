@@ -76,13 +76,11 @@ describe("pipeline definition version paths", () => {
       "prepare-intent-input",
       "analyse-intent",
       "normalise-decision",
-      "detect-review-approval",
-      "complete-review-task-from-chat",
-      "route-discussion-chat",
-      "start-discussion-pipeline",
+      "prepare-task-pipeline-input",
+      "select-task-pipeline",
+      "normalise-task-pipeline-selection",
       "create-in-progress-task",
       "start-selected-pipeline",
-      "block-task-on-launch-failure",
       "reload-chat-thread-before-reply",
       "prepare-chat-response",
       "publish-chat-response",
@@ -91,13 +89,13 @@ describe("pipeline definition version paths", () => {
       when: { path: "$.chatContext.shouldProceed", equals: true },
     });
     expect(JSON.stringify(definition?.spec.steps.find((step) => step.name === "analyse-intent"))).toContain(
-      "One valid intent is ignore",
+      "answer_now, think_then_answer, or create_task",
     );
     expect(JSON.stringify(definition?.spec.steps.find((step) => step.name === "analyse-intent"))).toContain(
-      "choose do-and-review",
+      "pipeline catalog is intentionally unavailable",
     );
-    expect(JSON.stringify(definition?.spec.steps.find((step) => step.name === "analyse-intent"))).toContain(
-      "set scopeId null and continue",
+    expect(JSON.stringify(definition?.spec.steps.find((step) => step.name === "select-task-pipeline"))).toContain(
+      "choose exactly one task-capable downstream pipeline",
     );
     expect(definition?.spec.steps.find((step) => step.name === "hydrate-chat-context")?.display?.out).toContainEqual({
       label: "Self Authored",

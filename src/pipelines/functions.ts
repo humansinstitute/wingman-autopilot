@@ -372,11 +372,18 @@ function isDocumentDiscussionPipelineIdentifier(value: string | null): boolean {
 }
 
 const coreChatChildPipelineSlugs = new Set([
-  "document-discussion",
-  "discussion-chat-response",
   "do-and-review",
   "software-implementation-review-loop",
   "research-and-report",
+]);
+
+const chatOnlyIntents = new Set([
+  "answer_now",
+  "think_then_answer",
+]);
+
+const createTaskIntents = new Set([
+  "create_task",
 ]);
 
 function compactText(value: unknown, maxLength: number): string | null {
@@ -910,23 +917,6 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const runtime = objectValue(input.runtime);
     const chatContext = objectValue(input.chatContext);
     const latestThread = latestThreadWithTrigger(chatContext, record, chat);
-    const promptTokens = tokenizeForMatch(latestThread.map((message) => getText(message.body)).filter(Boolean).join(" "));
-    const rawPipelines = Array.isArray(runtime.availablePipelines)
-      ? runtime.availablePipelines
-      : Array.isArray(chatContext.availablePipelines)
-        ? chatContext.availablePipelines
-        : [];
-    const validChildPipelines = rawPipelines
-      .map((pipeline) => compactPipelineDefinition(pipeline, promptTokens))
-      .filter((pipeline): pipeline is JsonObject => Boolean(pipeline))
-      .sort((a, b) => {
-        const aSlug = getText(a.slug)?.toLowerCase() ?? "";
-        const bSlug = getText(b.slug)?.toLowerCase() ?? "";
-        const aCore = coreChatChildPipelineSlugs.has(aSlug) ? 0 : 1;
-        const bCore = coreChatChildPipelineSlugs.has(bSlug) ? 0 : 1;
-        return aCore - bCore || aSlug.localeCompare(bSlug);
-      })
-      .slice(0, 8);
     const scopes = extractScopeRecords(chatContext.scopes)
       .map(compactScope)
       .filter((scope) => Boolean(scope.id));
@@ -965,20 +955,80 @@ export const builtinPipelineFunctions: FunctionRegistry = {
       latestThread,
       referencedRecords,
       scopes,
-      validChildPipelines,
       notes: [
         "Use latestThread as the authoritative current conversation.",
         "Use referencedRecords only as supporting Flight Deck context.",
-        "Choose only a pipeline listed in validChildPipelines.",
-        "Discussion, planning, design thinking, term clarification, and graph-memory discussion should use a no-task discussion pipeline without creating a task.",
-        "Use document-discussion without creating a task when the chat is about a plan, design document, document comments, inline review notes, or the next useful document question.",
-        "Never set dispatchTask true for discussion-chat-response or document-discussion.",
-        "Simple conversational answers, poems, short creative writing, summaries, rewrites, copy snippets, and small one-shot drafting requests should be handled directly in chat.",
-        "For generic or miscellaneous chat-created tasks that need extended work beyond a direct reply, choose do-and-review.",
-        "Use software-implementation-review-loop only for code, repository, build, test, deployment, or implementation work.",
-        "Use research-and-report when the requested output is explicitly research with a report or document.",
-        "When dispatching a task, include the concrete visible request details in taskDraft.instructions instead of telling the worker to go inspect the thread.",
-        "Choose a scope from scopes when one fits; if scopes is empty or no scope fits, set scopeId to null and continue.",
+        "Classify only as answer_now, think_then_answer, or create_task.",
+        "Use create_task only for durable output such as code, docs, files, WApp changes, migrations, or operational artifacts.",
+        "Use answer_now for direct explanations, summaries, opinions, recommendations, status answers, and simple conversational replies.",
+        "Use think_then_answer when more reasoning, research, or context loading is needed but the final output is still only a chat answer.",
+        "Do not choose a child pipeline in this stage; task pipeline candidates are loaded only after create_task.",
+      ],
+    };
+  },
+
+  async "dispatch.prepareChatTaskPipelineInput"(input) {
+    const dispatch = objectValue(input.dispatch);
+    const workspace = objectValue(input.workspace);
+    const agent = objectValue(input.agent);
+    const chat = objectValue(input.chat);
+    const record = objectValue(input.record);
+    const runtime = objectValue(input.runtime);
+    const chatContext = objectValue(input.chatContext);
+    const decision = objectValue(input.decision);
+    const latestThread = latestThreadWithTrigger(chatContext, record, chat);
+    const promptTokens = tokenizeForMatch([
+      latestThread.map((message) => getText(message.body)).filter(Boolean).join(" "),
+      getText(objectValue(decision.taskDraft).title),
+      getText(objectValue(decision.taskDraft).instructions),
+    ].filter(Boolean).join(" "));
+    const rawPipelines = Array.isArray(runtime.availablePipelines)
+      ? runtime.availablePipelines
+      : Array.isArray(chatContext.availablePipelines)
+        ? chatContext.availablePipelines
+        : [];
+    const validChildPipelines = rawPipelines
+      .map((pipeline) => compactPipelineDefinition(pipeline, promptTokens))
+      .filter((pipeline): pipeline is JsonObject => Boolean(pipeline))
+      .sort((a, b) => {
+        const aSlug = getText(a.slug)?.toLowerCase() ?? "";
+        const bSlug = getText(b.slug)?.toLowerCase() ?? "";
+        const aCore = coreChatChildPipelineSlugs.has(aSlug) ? 0 : 1;
+        const bCore = coreChatChildPipelineSlugs.has(bSlug) ? 0 : 1;
+        return aCore - bCore || aSlug.localeCompare(bSlug);
+      })
+      .slice(0, 8);
+
+    return {
+      objective: "Select the downstream task pipeline for a durable chat request.",
+      source: {
+        routeId: getText(dispatch.routeId),
+        triggerKind: getText(dispatch.triggerKind) ?? "chat",
+        channelId: getText(chat.channelId),
+        threadId: getText(chat.threadId),
+        messageId: getText(record.recordId),
+      },
+      workspace: {
+        workspaceOwnerNpub: getText(workspace.workspaceOwnerNpub),
+        sourceAppNpub: getText(workspace.sourceAppNpub),
+      },
+      defaults: {
+        workdir: getText(agent.workingDirectory),
+        defaultAgent: getText(agent.defaultAgent),
+      },
+      intent: getText(decision.intent) ?? "create_task",
+      taskDraft: objectValue(decision.taskDraft),
+      latestThread,
+      referencedRecords: Array.isArray(chatContext.referencedRecords)
+        ? chatContext.referencedRecords.slice(0, 12).map(compactReferencedRecord)
+        : [],
+      validChildPipelines,
+      notes: [
+        "Choose only a task-capable pipeline listed in validChildPipelines.",
+        "Use software-implementation-review-loop for code, repository, build, test, deployment, or implementation work.",
+        "Use research-and-report when the requested durable output is explicitly research with a report or document.",
+        "Use do-and-review for generic durable work when no specialised task pipeline fits.",
+        "Do not choose any agent-dispatch, intake, discussion, or chat-only pipeline.",
       ],
     };
   },
@@ -1388,7 +1438,10 @@ export const builtinPipelineFunctions: FunctionRegistry = {
         ?? raw.pipelineDefinitionId
         ?? raw.recommendedPipeline,
     );
-    const dispatchTask = raw.dispatchTask === true && !isDiscussionPipelineIdentifier(requestedPipelineId);
+    const recognisedIntent = intent && (chatOnlyIntents.has(intent) || createTaskIntents.has(intent))
+      ? intent
+      : (raw.dispatchTask === true ? "create_task" : "answer_now");
+    const dispatchTask = recognisedIntent === "create_task";
     const originThread = getThreadMessages(chatContext).slice(-8).map(compactThreadMessage);
     const latestOriginMessage = originThread[originThread.length - 1] ?? {};
     const originalPrompt = getText(latestOriginMessage.body)
@@ -1397,7 +1450,9 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const referencedRecords = Array.isArray(chatContext.referencedRecords)
       ? chatContext.referencedRecords.slice(0, 12).map(compactReferencedRecord)
       : [];
-    const pipelineDefinitionId = requestedPipelineId;
+    const pipelineDefinitionId = dispatchTask && requestedPipelineId && !isDiscussionPipelineIdentifier(requestedPipelineId)
+      ? requestedPipelineId
+      : null;
     const taskDraft = objectValue(raw.taskDraft);
     const scopeId = getText(raw.scopeId ?? taskDraft.scopeId);
     const workdir = getText(raw.workdir ?? taskDraft.workdir ?? agent.workingDirectory);
@@ -1414,7 +1469,7 @@ export const builtinPipelineFunctions: FunctionRegistry = {
       ?? getText(raw.responseDraft)
       ?? getText(raw.replyDraft)
       ?? getText(raw.answer);
-    const missing = dispatchTask
+    const missing = dispatchTask && pipelineDefinitionId
       ? [
           !pipelineDefinitionId ? "pipeline" : "",
           selectedDispatchPipeline ? "downstream work pipeline" : "",
@@ -1422,23 +1477,28 @@ export const builtinPipelineFunctions: FunctionRegistry = {
           !instructions ? "instructions" : "",
         ].filter(Boolean)
       : [];
-    const shouldDispatchTask = dispatchTask && missing.length === 0 && !clarifyingQuestion;
+    const hasTaskDraft = Boolean(instructions);
+    const shouldDispatchTask = dispatchTask && Boolean(pipelineDefinitionId) && missing.length === 0 && !clarifyingQuestion;
     const responseDraft = shouldDispatchTask
       ? (chatResponseBody ?? "I have the request and am starting the right pipeline-backed task now.")
       : clarifyingQuestion
         ?? chatResponseBody
         ?? (missing.length > 0
           ? `I need one clarification before starting work: ${missing.join(", ")}.`
-          : "I can handle this directly in chat.");
+          : dispatchTask
+            ? "I have the request and am choosing the right task workflow now."
+            : "I can handle this directly in chat.");
     return {
       dispatchTask: shouldDispatchTask,
       requestedDispatchTask: dispatchTask,
+      intent: recognisedIntent,
       pipelineDefinitionId: shouldDispatchTask ? pipelineDefinitionId : null,
       scopeId: shouldDispatchTask ? scopeId : null,
       workdir: shouldDispatchTask ? workdir : null,
       missing,
       clarifyingQuestion,
       responseDraft,
+      taskRoutingPending: dispatchTask && hasTaskDraft && !shouldDispatchTask && !clarifyingQuestion,
       taskDraft: {
         title,
         instructions: instructions ?? "",
@@ -1474,44 +1534,75 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     };
   },
 
-  async "dispatch.prepareChatDispatchResponse"(input) {
-    const reviewApproval = objectValue(input.reviewApproval);
-    const reviewCompletion = objectValue(input.reviewCompletion);
-    if (reviewApproval.shouldComplete === true) {
-      const taskId = getText(reviewApproval.taskId) ?? getText(reviewCompletion.taskId);
-      const taskTitle = getText(reviewApproval.taskTitle) ?? "review task";
-      if (reviewCompletion.completed === false && getText(reviewCompletion.status) && getText(reviewCompletion.status) !== "skipped") {
-        return {
-          shouldRespond: true,
-          responseDraft: `I saw the approval for ${taskId ? mention("task", taskId, taskTitle) : "the review task"}, but I could not mark it complete: ${getText(reviewCompletion.reason) ?? "unknown error"}.`,
-          reasoningSummary: "A chat approval matched one linked review task, but completion failed.",
-          actionsTaken: [],
-          confidence: 0.6,
-        };
-      }
-      return {
-        shouldRespond: true,
-        responseDraft: taskId
-          ? `Done, I've marked ${mention("task", taskId, taskTitle)} complete.`
-          : "Done, I've marked the review task complete.",
-        reasoningSummary: "A chat approval matched one linked review task, so the task was moved to done.",
-        actionsTaken: [
-          ...(taskId ? [`completed review task ${taskId}`] : []),
-        ],
-        confidence: 0.9,
-      };
-    }
-    const approvalDraft = getText(reviewApproval.responseDraft);
-    if (approvalDraft) {
-      return {
-        shouldRespond: true,
-        responseDraft: approvalDraft,
-        reasoningSummary: getText(reviewApproval.reason) ?? "Review approval text was detected but could not be resolved to one task.",
-        actionsTaken: [],
-        confidence: 0.7,
-      };
+  async "dispatch.normaliseChatTaskPipelineSelection"(input) {
+    const decision = objectValue(input.decision);
+    if (decision.requestedDispatchTask !== true || decision.taskRoutingPending !== true) {
+      return decision;
     }
 
+    const raw = objectValue(input.taskPipelineDecision ?? input.agentDecision ?? input.pipelineDecision);
+    const requestedPipelineId = getText(
+      raw.recommendedPipelineId
+        ?? raw.recommendedPipelineDefinitionId
+        ?? raw.pipelineDefinitionId
+        ?? raw.recommendedPipeline,
+    );
+    const validPipelines = Array.isArray(objectValue(input.taskPipelineInput).validChildPipelines)
+      ? objectValue(input.taskPipelineInput).validChildPipelines.map((pipeline) => objectValue(pipeline))
+      : [];
+    const selectedPipeline = validPipelines.find((pipeline) => {
+      const id = getText(pipeline.id);
+      const slug = getText(pipeline.slug);
+      const name = getText(pipeline.name);
+      return requestedPipelineId === id || requestedPipelineId === slug || requestedPipelineId === name;
+    }) ?? null;
+    const pipelineDefinitionId = getText(selectedPipeline?.id)
+      ?? getText(selectedPipeline?.slug)
+      ?? requestedPipelineId;
+    const selectedDispatchPipeline = isDispatchPipelineIdentifier(pipelineDefinitionId);
+    const selectedDiscussionPipeline = isDiscussionPipelineIdentifier(pipelineDefinitionId);
+    const taskDraft = objectValue(decision.taskDraft);
+    const workPlan = objectValue(decision.workPlan);
+    const workdir = getText(raw.workdir ?? taskDraft.workdir ?? decision.workdir ?? workPlan.workdir);
+    const instructions = getText(taskDraft.instructions ?? raw.instructions);
+    const missing = [
+      !pipelineDefinitionId ? "pipeline" : "",
+      selectedDispatchPipeline || selectedDiscussionPipeline ? "task-capable downstream pipeline" : "",
+      !workdir ? "workdir" : "",
+      !instructions ? "instructions" : "",
+    ].filter(Boolean);
+    const clarifyingQuestion = getText(raw.clarifyingQuestion ?? decision.clarifyingQuestion);
+    const shouldDispatchTask = missing.length === 0 && !clarifyingQuestion;
+    const responseDraft = shouldDispatchTask
+      ? (getText(objectValue(raw.chatResponse).body)
+        ?? getText(raw.responseDraft)
+        ?? getText(decision.responseDraft)
+        ?? "I have the request and am starting the right pipeline-backed task now.")
+      : clarifyingQuestion
+        ?? `I need one clarification before starting work: ${missing.join(", ")}.`;
+
+    return {
+      ...decision,
+      dispatchTask: shouldDispatchTask,
+      pipelineDefinitionId: shouldDispatchTask ? pipelineDefinitionId : null,
+      scopeId: shouldDispatchTask ? getText(raw.scopeId ?? decision.scopeId) : null,
+      workdir: shouldDispatchTask ? workdir : null,
+      missing,
+      clarifyingQuestion,
+      responseDraft,
+      taskRoutingPending: false,
+      workPlan: {
+        ...workPlan,
+        childPipelineDefinitionId: shouldDispatchTask ? pipelineDefinitionId : null,
+        pipelineDefinitionId: shouldDispatchTask ? pipelineDefinitionId : null,
+        scopeId: shouldDispatchTask ? getText(raw.scopeId ?? decision.scopeId) : null,
+        workdir: shouldDispatchTask ? workdir : null,
+      },
+      confidence: clampConfidence(raw.confidence ?? decision.confidence),
+    };
+  },
+
+  async "dispatch.prepareChatDispatchResponse"(input) {
     const decision = objectValue(input.decision);
     if (decision.shouldRespond === false || decision.suppressed === true) {
       return {
