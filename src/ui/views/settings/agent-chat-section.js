@@ -1,5 +1,6 @@
 import {
   importAgentConnectPackage,
+  deleteAgentChatSubscription,
   listAgentChatBackendConnections,
   listAgentChatDispatchRoutes,
   listAgentChatAgents,
@@ -35,6 +36,7 @@ import {
   getAgentForSubscription,
   getRoutesForSubscription,
   getSubscriptionById,
+  hasDuplicateWorkspaceAppOnAnotherTower,
   resolveSelectedSubscriptionId,
 } from './agent-chat-section-state.js';
 
@@ -253,11 +255,33 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
           statusLine.textContent = 'Loading selected workspace subscription...';
           void refreshList();
         },
+        edit: (subscription) => {
+          selectedSubscriptionId = subscription.subscriptionId;
+          subscriptionEditor.workspaceOwnerField.input.value = subscription?.workspaceOwnerNpub || '';
+          subscriptionEditor.backendUrlField.input.value = subscription?.backendBaseUrl || '';
+          subscriptionEditor.sourceAppField.input.value = subscription?.sourceAppNpub || '';
+          subscriptionEditor.card.style.display = '';
+          subscriptionEditor.workspaceOwnerField.input.focus();
+        },
+        remove: async (subscription) => {
+          statusLine.textContent = 'Removing workspace subscription...';
+          try {
+            await deleteAgentChatSubscription(subscription.subscriptionId);
+            if (selectedSubscriptionId === subscription.subscriptionId) {
+              selectedSubscriptionId = null;
+            }
+            statusLine.textContent = 'Workspace subscription removed.';
+            await refreshList();
+          } catch (error) {
+            statusLine.textContent = error instanceof Error ? error.message : 'Failed to remove workspace subscription.';
+          }
+        },
         dispatchRoutes,
         getDispatchRoutes: (subscription) => getRoutesForSubscription(allDispatchRoutes, subscription.subscriptionId),
+        hasDuplicateWorkspaceApp: (subscription) => hasDuplicateWorkspaceAppOnAnotherTower(subscriptions, subscription),
         selectedSubscriptionId,
         pipelineDefinitions,
-        allowConnectionManagement: false,
+        allowConnectionManagement: true,
       };
 
       subscriptions.forEach((subscription) => {

@@ -6,10 +6,12 @@ import {
   filterDispatchRoutesForSubscription,
   getAdditionalAgents,
   getAgentForSubscription,
+  hasDuplicateWorkspaceAppOnAnotherTower,
   resolveSelectedSubscriptionId,
 } from "./agent-chat-section-state.js";
 import { createAgentDispatchSetupCards } from "./agent-chat-setup-cards.js";
 import { createProfileWorkspaceSettingsCard } from "./agent-chat-profile-workspace-card.js";
+import { createConfiguredDispatchesPanel } from "./agent-chat-shared-ui.js";
 
 mock.module("../../pipelines/api.js", () => ({
   fetchPipelineRun: async () => null,
@@ -100,6 +102,29 @@ function collectText(node) {
   ].filter(Boolean).join(" ");
 }
 
+function queryByText(node, text) {
+  if (!node || !(node instanceof FakeElement)) {
+    return null;
+  }
+  if (node.textContent === text) {
+    return node;
+  }
+  for (const child of node.children) {
+    const match = queryByText(child, text);
+    if (match) {
+      return match;
+    }
+  }
+  return null;
+}
+
+async function clickAsync(node) {
+  const listeners = node?.listeners?.get("click") || [];
+  for (const listener of listeners) {
+    await listener({ currentTarget: node });
+  }
+}
+
 describe("agent chat settings subscription selection", () => {
   const subscriptions = [
     {
@@ -149,6 +174,30 @@ describe("agent chat settings subscription selection", () => {
       { routeId: "route-secondary", subscriptionId: "sub-secondary" },
     ]);
     expect(filterDispatchRoutesForSubscription(routes, null)).toEqual([]);
+  });
+
+  test("detects duplicate workspace/app subscriptions on another tower", () => {
+    const duplicateSubscriptions = [
+      {
+        subscriptionId: "sub-primary",
+        workspaceOwnerNpub: "npub1workspace",
+        sourceAppNpub: "npub1source",
+        backendBaseUrl: "https://tower-one.example",
+      },
+      {
+        subscriptionId: "sub-secondary",
+        workspaceOwnerNpub: "npub1workspace",
+        sourceAppNpub: "npub1source",
+        backendBaseUrl: "https://tower-two.example",
+      },
+    ];
+
+    expect(hasDuplicateWorkspaceAppOnAnotherTower(duplicateSubscriptions, duplicateSubscriptions[0])).toBe(true);
+    expect(hasDuplicateWorkspaceAppOnAnotherTower(duplicateSubscriptions, {
+      ...duplicateSubscriptions[0],
+      subscriptionId: "sub-third",
+      sourceAppNpub: "npub1other",
+    })).toBe(false);
   });
 
   test("builds agent binding input from the selected subscription", () => {
@@ -281,7 +330,44 @@ describe("agent chat settings subscription selection", () => {
     });
   });
 
-  test("hides manual connection controls for Flight Deck onboarded subscriptions", async () => {
+  test("saves routes against a selected non-first subscription", async () => {
+    await withFakeDocument(async () => {
+      const savedRoutes = [];
+      const panel = createConfiguredDispatchesPanel({
+        agentId: "agent-secondary",
+        label: "Secondary",
+        workingDirectory: "/workspace/secondary",
+        enabled: true,
+        capabilities: ["task_dispatch"],
+      }, {}, {
+        subscription: {
+          subscriptionId: "sub-secondary",
+          workspaceOwnerNpub: "npub1workspace2",
+          sourceAppNpub: "npub1source2",
+          botNpub: "npub1bot2",
+        },
+        dispatchRoutes: [],
+        pipelineDefinitions: [{ id: "task-pipeline", name: "Task Pipeline" }],
+        onSaveRoute: async (route) => {
+          savedRoutes.push(route);
+          return route;
+        },
+      });
+
+      queryByTestId(panel, "agent-chat-capability-pipeline-task-dispatch").value = "task-pipeline";
+      await clickAsync(queryByText(panel, "Save Pipeline"));
+
+      expect(savedRoutes).toHaveLength(1);
+      expect(savedRoutes[0]).toMatchObject({
+        subscriptionId: "sub-secondary",
+        triggerKind: "task",
+        capability: "task_dispatch",
+        pipelineDefinitionId: "task-pipeline",
+      });
+    });
+  });
+
+  test("allows editing but not removing Flight Deck onboarded subscriptions", async () => {
     const { createSubscriptionCard } = await import("./agent-chat-operator-cards.js");
     withFakeDocument(() => {
       const card = createSubscriptionCard({
@@ -305,7 +391,7 @@ describe("agent chat settings subscription selection", () => {
           candidateAgentCount: 1,
         },
       }, [], {
-        allowConnectionManagement: false,
+        allowConnectionManagement: true,
         dispatchRoutes: [],
         getDispatchRoutes: () => [],
         pipelineDefinitions: [],
@@ -318,9 +404,38 @@ describe("agent chat settings subscription selection", () => {
       expect(text).toContain("Pete Postgres Workspace");
       expect(text).toContain("workspace npub1workspaceservice");
       expect(text).toContain("owner npub1workspace");
-      expect(queryByTestId(card, "agent-chat-edit-sub-flight-deck")).toBeNull();
+      expect(queryByTestId(card, "agent-chat-edit-sub-flight-deck")).not.toBeNull();
       expect(queryByTestId(card, "agent-chat-remove-sub-flight-deck")).toBeNull();
       expect(queryByTestId(card, "agent-chat-reconnect-sub-flight-deck")).not.toBeNull();
+    });
+  });
+
+  test("warns when a subscription shares workspace and app on another tower", async () => {
+    const { createSubscriptionCard } = await import("./agent-chat-operator-cards.js");
+    withFakeDocument(() => {
+      const card = createSubscriptionCard({
+        subscriptionId: "sub-primary",
+        workspaceOwnerNpub: "npub1workspace",
+        botNpub: "npub1bot",
+        sourceAppNpub: "npub1source",
+        backendBaseUrl: "https://tower-one.example",
+        onboardingSource: "nostr_33357",
+        operator: {
+          canManage: true,
+          enabled: true,
+          candidateAgentCount: 1,
+        },
+      }, [], {
+        dispatchRoutes: [],
+        getDispatchRoutes: () => [],
+        hasDuplicateWorkspaceApp: () => true,
+        pipelineDefinitions: [],
+        runAction: () => {},
+        select: () => {},
+        selectedSubscriptionId: "sub-primary",
+      });
+
+      expect(collectText(card)).toContain("Same workspace/app on another Tower. Requires subscription-safe routing.");
     });
   });
 });

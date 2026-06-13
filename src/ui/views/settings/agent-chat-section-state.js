@@ -44,6 +44,26 @@ export function getRoutesForSubscription(routes, subscriptionId) {
     : [];
 }
 
+export function hasDuplicateWorkspaceAppOnAnotherTower(subscriptions, subscription) {
+  if (!subscription || !Array.isArray(subscriptions)) {
+    return false;
+  }
+  const workspaceOwnerNpub = subscription.workspaceOwnerNpub || '';
+  const sourceAppNpub = subscription.sourceAppNpub || '';
+  const backendBaseUrl = subscription.backendBaseUrl || '';
+  if (!workspaceOwnerNpub || !sourceAppNpub || !backendBaseUrl) {
+    return false;
+  }
+  return subscriptions.some((candidate) => (
+    candidate
+    && candidate.subscriptionId !== subscription.subscriptionId
+    && candidate.workspaceOwnerNpub === workspaceOwnerNpub
+    && candidate.sourceAppNpub === sourceAppNpub
+    && candidate.backendBaseUrl
+    && candidate.backendBaseUrl !== backendBaseUrl
+  ));
+}
+
 function getEffectiveWorkspaceNpub(subscription) {
   return subscription?.workspaceServiceNpub || subscription?.workspaceOwnerNpub || '';
 }

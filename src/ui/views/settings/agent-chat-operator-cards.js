@@ -941,6 +941,9 @@ export function createSubscriptionCard(subscription, chatSessions, handlers) {
     createTonePill(`${subscription.operator?.candidateAgentCount ?? 0} Agents`, subscription.operator?.candidateAgentCount > 0 ? 'success' : 'warning'),
     createTonePill(`${enabledRouteCount}/${routeCount} Routes`, enabledRouteCount > 0 ? 'success' : 'warning'),
   ]));
+  if (handlers.hasDuplicateWorkspaceApp?.(subscription)) {
+    card.append(createNotice('Same workspace/app on another Tower. Requires subscription-safe routing.', 'warning'));
+  }
 
   card.append(createEventStreamPager(subscription, {
     routes,
