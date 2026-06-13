@@ -150,6 +150,18 @@ function formatSpeechTime(seconds) {
   return `${minutes}:${remainder}`;
 }
 
+function getSpeechSeekableEnd(audio) {
+  const ranges = audio?.seekable;
+  if (!ranges?.length) {
+    return 0;
+  }
+  try {
+    return ranges.end(ranges.length - 1);
+  } catch {
+    return 0;
+  }
+}
+
 function updateSpeechTimeline(audio = activeAudio) {
   if (!activeSpeechModal || !audio) {
     return;
@@ -158,10 +170,12 @@ function updateSpeechTimeline(audio = activeAudio) {
   const elapsed = activeSpeechModal.querySelector("[data-part='speech-elapsed']");
   const duration = activeSpeechModal.querySelector("[data-part='speech-duration']");
   const currentTime = Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
-  const totalTime = Number.isFinite(audio.duration) ? audio.duration : 0;
+  const reportedDuration = Number.isFinite(audio.duration) ? audio.duration : 0;
+  const seekableEnd = getSpeechSeekableEnd(audio);
+  const totalTime = Math.max(reportedDuration, seekableEnd, currentTime);
   if (scrubber) {
-    scrubber.max = totalTime > 0 ? String(Math.floor(totalTime)) : "0";
-    scrubber.value = String(Math.min(Math.floor(currentTime), Math.floor(totalTime || currentTime)));
+    scrubber.max = totalTime > 0 ? String(Math.ceil(totalTime)) : "0";
+    scrubber.value = String(Math.floor(currentTime));
     scrubber.disabled = totalTime <= 0;
   }
   if (elapsed) {

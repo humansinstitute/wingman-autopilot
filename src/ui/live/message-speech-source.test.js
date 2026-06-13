@@ -63,6 +63,9 @@ describe("live message speech controls", () => {
     expect(speechSource).toContain('overlay.dataset.testid = "speech-playback-modal"');
     expect(speechSource).toContain('stopButton.dataset.testid = "speech-playback-stop"');
     expect(speechSource).toContain("function updateSpeechTimeline(audio = activeAudio)");
+    expect(speechSource).toContain("function getSpeechSeekableEnd(audio)");
+    expect(speechSource).toContain("const totalTime = Math.max(reportedDuration, seekableEnd, currentTime)");
+    expect(speechSource).toContain("scrubber.max = totalTime > 0 ? String(Math.ceil(totalTime)) : \"0\";");
     expect(speechSource).toContain('scrubber.dataset.testid = "speech-playback-scrubber"');
     expect(speechSource).toContain('audio.addEventListener("timeupdate", () => updateSpeechTimeline(audio))');
     expect(speechSource).toContain("activeAudio.currentTime = nextTime");
