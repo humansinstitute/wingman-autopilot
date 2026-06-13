@@ -1,6 +1,8 @@
 import { describe, expect, mock, test } from "bun:test";
 
 import {
+  buildAgentBindingInput,
+  buildBackendSubscriptionInput,
   filterDispatchRoutesForSubscription,
   getAdditionalAgents,
   getAgentForSubscription,
@@ -147,6 +149,50 @@ describe("agent chat settings subscription selection", () => {
       { routeId: "route-secondary", subscriptionId: "sub-secondary" },
     ]);
     expect(filterDispatchRoutesForSubscription(routes, null)).toEqual([]);
+  });
+
+  test("builds agent binding input from the selected subscription", () => {
+    expect(buildAgentBindingInput({
+      subscriptionId: "sub-secondary",
+      workspaceOwnerNpub: "npub1owner",
+      workspaceServiceNpub: "npub1workspace-service",
+      botNpub: "npub1bot-secondary",
+    }, {
+      agentId: "agent-secondary",
+      label: "Secondary",
+      workingDirectory: "/workspace/secondary",
+      capabilities: ["chat_intercept", "task_dispatch"],
+    })).toMatchObject({
+      agentId: "agent-secondary",
+      label: "Secondary",
+      botNpub: "npub1bot-secondary",
+      workspaceOwnerNpub: "npub1workspace-service",
+      workingDirectory: "/workspace/secondary",
+      capabilities: ["chat_intercept", "task_dispatch"],
+      enabled: true,
+    });
+  });
+
+  test("builds secondary subscription input from a selected backend connection", () => {
+    expect(buildBackendSubscriptionInput({
+      backendConnectionId: "backend-secondary",
+      backendBaseUrl: "https://secondary.example",
+      setupWorkspaceOwnerNpub: "npub1owner-secondary",
+      setupWorkspaceServiceNpub: "npub1workspace-secondary",
+      setupWorkspaceId: "workspace-secondary",
+      setupSourceAppNpub: "npub1source-secondary",
+      serviceNpub: "npub1tower-secondary",
+      operator: { shared: true },
+    })).toEqual({
+      backendConnectionId: "backend-secondary",
+      backendBaseUrl: "https://secondary.example",
+      workspaceOwnerNpub: "npub1owner-secondary",
+      workspaceServiceNpub: "npub1workspace-secondary",
+      workspaceId: "workspace-secondary",
+      sourceAppNpub: "npub1source-secondary",
+      towerServiceNpub: "npub1tower-secondary",
+      backendConnectionGrantKind: "shared_service",
+    });
   });
 
   test("renders setup-ready backend choices for a secondary subscription", () => {

@@ -43,3 +43,33 @@ export function getRoutesForSubscription(routes, subscriptionId) {
     ? routes.filter((route) => route?.subscriptionId === subscriptionId)
     : [];
 }
+
+function getEffectiveWorkspaceNpub(subscription) {
+  return subscription?.workspaceServiceNpub || subscription?.workspaceOwnerNpub || '';
+}
+
+export function buildAgentBindingInput(subscription, defaults) {
+  return {
+    agentId: defaults.agentId,
+    label: defaults.label,
+    botNpub: subscription?.botNpub || '',
+    workspaceOwnerNpub: getEffectiveWorkspaceNpub(subscription),
+    workingDirectory: defaults.workingDirectory,
+    groupNpubs: [],
+    capabilities: Array.isArray(defaults.capabilities) ? defaults.capabilities : ['chat_intercept'],
+    enabled: true,
+  };
+}
+
+export function buildBackendSubscriptionInput(backendConnection) {
+  return {
+    backendConnectionId: backendConnection.backendConnectionId,
+    backendBaseUrl: backendConnection.backendBaseUrl,
+    workspaceOwnerNpub: backendConnection.setupWorkspaceOwnerNpub || '',
+    workspaceServiceNpub: backendConnection.setupWorkspaceServiceNpub || null,
+    workspaceId: backendConnection.setupWorkspaceId || null,
+    sourceAppNpub: backendConnection.setupSourceAppNpub || '',
+    towerServiceNpub: backendConnection.serviceNpub || null,
+    backendConnectionGrantKind: backendConnection.operator?.shared ? 'shared_service' : null,
+  };
+}

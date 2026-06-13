@@ -1,9 +1,14 @@
 import {
+  importAgentConnectPackage,
+  listAgentChatBackendConnections,
   listAgentChatDispatchRoutes,
   listAgentChatAgents,
   listAgentChatSubscriptions,
   runAgentChatSubscriptionAction,
+  saveAgentChatAgent,
+  saveAgentChatBackendConnectionAvailability,
   saveAgentChatDispatchRoute,
+  saveAgentChatSubscription,
   saveAgentChatProfileWorkspace,
 } from '../../services/agent-chat.js';
 import { fetchSessionsApi } from '../../services/sessions.js';
@@ -17,7 +22,15 @@ import {
   createStatusLine,
 } from './agent-chat-shared-ui.js';
 import { createProfileWorkspaceSettingsPanel } from './agent-chat-profile-workspace-card.js';
+import { createAgentDispatchSetupCards } from './agent-chat-setup-cards.js';
+import { createAgentConnectImportModal } from './agent-chat-connect-import-card.js';
 import {
+  createPrimaryAgentNameModal,
+  createSubscriptionEditorCard,
+} from './agent-chat-editor-cards.js';
+import {
+  buildAgentBindingInput,
+  buildBackendSubscriptionInput,
   filterDispatchRoutesForSubscription,
   getAgentForSubscription,
   getRoutesForSubscription,
@@ -26,12 +39,13 @@ import {
 } from './agent-chat-section-state.js';
 
 async function loadOperatorState(selectedSubscriptionId = null) {
-  const [subscriptions, agentPayload, sessionPayload, definitionPayload, dispatchRoutes] = await Promise.all([
+  const [subscriptions, agentPayload, sessionPayload, definitionPayload, dispatchRoutes, backendConnections] = await Promise.all([
     listAgentChatSubscriptions(),
     listAgentChatAgents(),
     fetchSessionsApi(),
     fetchPipelineDefinitions().catch(() => ({ definitions: [] })),
     listAgentChatDispatchRoutes().catch(() => []),
+    listAgentChatBackendConnections().catch(() => []),
   ]);
   const onboardedSubscriptions = Array.isArray(subscriptions)
     ? subscriptions.filter((subscription) => subscription?.onboardingSource === 'nostr_33357')
@@ -51,10 +65,11 @@ async function loadOperatorState(selectedSubscriptionId = null) {
     selectedSubscription,
     selectedSubscriptionId: effectiveSelectedSubscriptionId,
     pipelineDefinitions: Array.isArray(definitionPayload?.definitions) ? definitionPayload.definitions : [],
+    backendConnections: Array.isArray(backendConnections) ? backendConnections : [],
   };
 }
 
-export function createAgentChatSection({ standalone = false } = {}) {
+export function createAgentChatSection({ standalone = false, openDirectoryBrowser = null } = {}) {
   const container = document.createElement('div');
   container.className = 'wm-settings__agent-chat';
   let selectedSubscriptionId = null;
@@ -75,8 +90,33 @@ export function createAgentChatSection({ standalone = false } = {}) {
     container.append(description);
   }
   const statusLine = createStatusLine();
+  const setupCardsContainer = document.createElement('div');
+  setupCardsContainer.setAttribute('data-testid', 'agent-chat-setup-cards');
   const configuredDispatchesContainer = document.createElement('div');
   const profileWorkspaceContainer = document.createElement('div');
+  const subscriptionEditor = createSubscriptionEditorCard();
+  const connectImportModal = createAgentConnectImportModal({
+    onImport: async (input) => {
+      const result = await importAgentConnectPackage(input);
+      selectedSubscriptionId = result?.subscription?.subscriptionId || selectedSubscriptionId;
+      await refreshList();
+      return result;
+    },
+  });
+  const agentNameModal = createPrimaryAgentNameModal({
+    onBrowseDirectory: openDirectoryBrowser,
+    onCreate: async (defaults) => {
+      if (!selectedSubscriptionId) {
+        throw new Error('Select a workspace subscription before creating a binding.');
+      }
+      const state = await loadOperatorState(selectedSubscriptionId);
+      if (!state.selectedSubscription) {
+        throw new Error('Selected workspace subscription was not found.');
+      }
+      await saveAgentChatAgent(buildAgentBindingInput(state.selectedSubscription, defaults));
+      await refreshList();
+    },
+  });
   const setupPanel = document.createElement('div');
   setupPanel.setAttribute('data-testid', 'agent-chat-setup-panel');
   const setupHeading = document.createElement('h3');
@@ -84,6 +124,8 @@ export function createAgentChatSection({ standalone = false } = {}) {
   setupPanel.append(setupHeading);
   setupPanel.append(
     statusLine,
+    setupCardsContainer,
+    subscriptionEditor.card,
     profileWorkspaceContainer,
     configuredDispatchesContainer,
   );
@@ -95,6 +137,7 @@ export function createAgentChatSection({ standalone = false } = {}) {
   listContainer.setAttribute('data-testid', 'agent-chat-subscription-list');
   operatorPanel.append(liveHeading, listContainer);
   async function refreshList() {
+    setupCardsContainer.replaceChildren();
     configuredDispatchesContainer.replaceChildren();
     profileWorkspaceContainer.replaceChildren();
     listContainer.replaceChildren();
@@ -111,6 +154,7 @@ export function createAgentChatSection({ standalone = false } = {}) {
         selectedSubscription,
         selectedSubscriptionId: effectiveSelectedSubscriptionId,
         pipelineDefinitions,
+        backendConnections,
       } = await loadOperatorState(selectedSubscriptionId);
       promptDefaults = {
         chatPromptTemplate: typeof defaults.chatPromptTemplate === 'string' ? defaults.chatPromptTemplate : promptDefaults.chatPromptTemplate,
@@ -127,6 +171,34 @@ export function createAgentChatSection({ standalone = false } = {}) {
       };
       selectedSubscriptionId = effectiveSelectedSubscriptionId;
       const selectedAgent = getAgentForSubscription(agents, selectedSubscription);
+      setupCardsContainer.append(createAgentDispatchSetupCards({
+        subscription: selectedSubscription,
+        primaryAgent: selectedAgent,
+        canManage: permissions?.canManage !== false,
+        shared: permissions?.shared === true,
+        availableBackendConnections: backendConnections,
+        onConnectWorkspace: () => connectImportModal.open(),
+        onEditSubscription: (subscription) => {
+          subscriptionEditor.workspaceOwnerField.input.value = subscription?.workspaceOwnerNpub || '';
+          subscriptionEditor.backendUrlField.input.value = subscription?.backendBaseUrl || '';
+          subscriptionEditor.sourceAppField.input.value = subscription?.sourceAppNpub || '';
+          subscriptionEditor.card.style.display = '';
+          subscriptionEditor.workspaceOwnerField.input.focus();
+        },
+        onUseBackendConnection: async (backendConnection) => {
+          statusLine.textContent = 'Creating workspace subscription...';
+          const subscription = await saveAgentChatSubscription(buildBackendSubscriptionInput(backendConnection));
+          selectedSubscriptionId = subscription?.subscriptionId || selectedSubscriptionId;
+          statusLine.textContent = 'Workspace subscription created.';
+          await refreshList();
+        },
+        onSaveBackendAvailability: async (backendConnection, input) => (
+          saveAgentChatBackendConnectionAvailability(backendConnection.backendConnectionId, input)
+        ),
+        onCreateAgent: () => agentNameModal.open(selectedSubscription?.profileWorkspace?.workspace?.workspaceTitle || ''),
+        onEditAgent: null,
+        onRefresh: refreshList,
+      }));
       configuredDispatchesContainer.append(createConfiguredDispatchesPanel(selectedAgent, promptDefaults, {
         subscription: selectedSubscription,
         dispatchRoutes,
@@ -195,7 +267,37 @@ export function createAgentChatSection({ standalone = false } = {}) {
       statusLine.textContent = error instanceof Error ? error.message : 'Failed to load Agent Dispatch state.';
     }
   }
+  subscriptionEditor.saveButton.addEventListener('click', async () => {
+    const workspaceOwnerNpub = subscriptionEditor.workspaceOwnerField.input.value.trim();
+    const backendBaseUrl = subscriptionEditor.backendUrlField.input.value.trim();
+    const sourceAppNpub = subscriptionEditor.sourceAppField.input.value.trim();
+    if (!workspaceOwnerNpub || !backendBaseUrl || !sourceAppNpub) {
+      statusLine.textContent = 'Workspace owner, backend URL, and source app are required.';
+      return;
+    }
+    subscriptionEditor.saveButton.disabled = true;
+    statusLine.textContent = 'Saving workspace subscription...';
+    try {
+      const subscription = await saveAgentChatSubscription({
+        workspaceOwnerNpub,
+        backendBaseUrl,
+        sourceAppNpub,
+      });
+      selectedSubscriptionId = subscription?.subscriptionId || selectedSubscriptionId;
+      subscriptionEditor.card.style.display = 'none';
+      statusLine.textContent = 'Workspace subscription saved.';
+      await refreshList();
+    } catch (error) {
+      statusLine.textContent = error instanceof Error ? error.message : 'Failed to save workspace subscription.';
+    } finally {
+      subscriptionEditor.saveButton.disabled = false;
+    }
+  });
+  subscriptionEditor.closeButton.addEventListener('click', () => {
+    subscriptionEditor.card.style.display = 'none';
+  });
   container.append(operatorPanel, setupPanel);
+  container.append(connectImportModal.element, agentNameModal.element);
   void refreshList();
   return container;
 }
