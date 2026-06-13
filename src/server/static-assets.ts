@@ -89,7 +89,7 @@ const resolveUiAsset = (pathname: string): Response | undefined => {
   return new Response(file, {
     headers: {
       "content-type": asset.type,
-      "cache-control": "public, max-age=60",
+      "cache-control": "no-cache",
     },
   });
 };
