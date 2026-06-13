@@ -69,10 +69,11 @@ export const MessageStore = {
       .find((entry) => entry.role === role);
 
     if (matchingMessage) {
+      const speech = normalized.speech ?? matchingMessage.speech ?? null;
       await db.messages.update(matchingMessage.id, {
         content,
         messageId: messageId ?? matchingMessage.messageId ?? null,
-        speech: normalized.speech ?? null,
+        speech,
         updatedAt: now,
       });
       return { id: matchingMessage.id, isStreamingUpdate: true };
@@ -87,10 +88,11 @@ export const MessageStore = {
     if (existing && existing.role === role) {
       const oldContent = existing.content || "";
       if (content.length > oldContent.length && content.startsWith(oldContent.slice(0, 50))) {
+        const speech = normalized.speech ?? existing.speech ?? null;
         await db.messages.update(existing.id, {
           content,
           messageId: messageId ?? existing.messageId ?? null,
-          speech: normalized.speech ?? null,
+          speech,
           updatedAt: now,
         });
         return { id: existing.id, isStreamingUpdate: true };
@@ -205,7 +207,7 @@ export const MessageStore = {
             content: inc.content,
             role: inc.role,
             messageId: inc.messageId ?? old.messageId ?? null,
-            speech: inc.speech ?? null,
+            speech: inc.speech ?? old.speech ?? null,
             updatedAt: now,
           }),
         );
@@ -244,8 +246,20 @@ export const MessageStore = {
   async syncFromServerIfChanged(sessionId, messages) {
     const normalized = normalizeConversationMessages(messages);
     const existing = await this.getSessionMessages(sessionId);
+    const comparable = normalized.map((message, index) => {
+      const local = existing[index];
+      const sameMessage =
+        local &&
+        local.role === message.role &&
+        local.content === message.content &&
+        (local.messageId ?? null) === (message.messageId ?? local.messageId ?? null);
+      if (!message.speech && sameMessage && local.speech) {
+        return { ...message, speech: local.speech };
+      }
+      return message;
+    });
 
-    if (areConversationMessagesEqual(existing, normalized)) {
+    if (areConversationMessagesEqual(existing, comparable)) {
       return {
         changed: false,
         messages: existing,

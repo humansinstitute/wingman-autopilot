@@ -50,13 +50,13 @@ export function hasMessageSpeech(message) {
 }
 
 function getSpeechCacheKey(sessionId, message) {
-  const messageId = getMessageId(message);
-  if (messageId) {
-    return `${sessionId}:${messageId}`;
-  }
   const createdAt = getMessageCreatedAt(message);
   const text = getMessageText(message);
-  return createdAt && text ? `${sessionId}:${createdAt}:${text.slice(0, 80)}` : "";
+  if (createdAt && text) {
+    return `${sessionId}:${createdAt}:${text.slice(0, 80)}`;
+  }
+  const messageId = getMessageId(message);
+  return messageId ? `${sessionId}:${messageId}` : "";
 }
 
 export function getMessageSpeechKey(sessionId, message) {

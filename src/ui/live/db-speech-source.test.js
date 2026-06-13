@@ -11,4 +11,12 @@ describe("live message speech persistence", () => {
     expect(source).toContain("entry.messageId === normalized.messageId");
     expect(source).toContain("speech,");
   });
+
+  test("preserves speech audio when stale message updates omit speech", () => {
+    expect(source).toContain("normalized.speech ?? matchingMessage.speech ?? null");
+    expect(source).toContain("normalized.speech ?? existing.speech ?? null");
+    expect(source).toContain("speech: inc.speech ?? old.speech ?? null");
+    expect(source).toContain("if (!message.speech && sameMessage && local.speech)");
+    expect(source).toContain("return { ...message, speech: local.speech };");
+  });
 });

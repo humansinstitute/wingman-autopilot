@@ -39,6 +39,8 @@ describe("live message speech controls", () => {
   test("separates generation from auto-read playback", () => {
     expect(speechSource).toContain("export function isSessionSpeechGenerationEnabled(session)");
     expect(speechSource).toContain("export function getLatestAssistantSpeechKey(sessionId, conversation)");
+    expect(speechSource).toContain("if (createdAt && text)");
+    expect(speechSource).toContain("return messageId ? `${sessionId}:${messageId}` : \"\";");
     expect(speechSource).toContain("return isSessionSpeechGenerationEnabled(session) && Boolean(session?.metadata?.speechAlwaysRead)");
     expect(speechSource).toContain("export async function ensureLatestAssistantSpeech");
     expect(speechSource).toContain("generateIfMissing: false");
