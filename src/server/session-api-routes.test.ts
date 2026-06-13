@@ -237,6 +237,41 @@ describe("handleSessionApi", () => {
     });
   });
 
+  test("GET /api/sessions/:id/messages/:messageId/speech returns an existing attachment", async () => {
+    const speech = {
+      publicPath: "/uploads/files/owner/codex/speech/response.mp3",
+      relativePath: "owner/codex/speech/response.mp3",
+      mimeType: "audio/mpeg",
+      voice: "alloy",
+      model: "tts-1",
+      summary: "READY",
+      createdAt: "2026-06-13T02:01:00.000Z",
+    };
+    const ctx = buildCtx({
+      messageStore: {
+        recordSession: () => {},
+        getSession: () => null,
+        listSessions: () => [],
+        listSessionMessages: () => [{
+          id: "message-1",
+          sessionId: "session-1",
+          role: "assistant",
+          content: "READY",
+          createdAt: "2026-06-13T02:00:00.000Z",
+        }],
+        getMessageSpeechAttachment: () => speech,
+      } as any,
+    });
+
+    const url = new URL("http://localhost:3021/api/sessions/session-1/messages/message-1/speech");
+    const request = new Request(url.toString(), { method: "GET" });
+
+    const response = await handleSessionApi(request, url, "GET", makeAuth(), ctx);
+    expect(response).not.toBeNull();
+    expect(response!.status).toBe(200);
+    await expect(response!.json()).resolves.toEqual({ sessionId: "session-1", messageId: "message-1", speech });
+  });
+
   test("POST /api/sessions/:id/resume-native creates a new session from native metadata", async () => {
     const sourceSession: SessionSnapshot = {
       ...baseSession,

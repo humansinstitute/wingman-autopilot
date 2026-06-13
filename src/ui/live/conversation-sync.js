@@ -21,6 +21,9 @@ export function normalizeConversationMessage(message, fallbackCreatedAt = new Da
   if (message && Object.prototype.hasOwnProperty.call(message, "id")) {
     normalized.id = message.id;
   }
+  if (message?.speech && typeof message.speech === "object") {
+    normalized.speech = message.speech;
+  }
 
   return normalized;
 }
@@ -46,7 +49,8 @@ export function areConversationMessagesEqual(previousMessages, nextMessages) {
       readMessageField(current, "id") !== readMessageField(incoming, "id") ||
       readMessageField(current, "role", "type") !== readMessageField(incoming, "role", "type") ||
       readMessageField(current, "content", "message") !== readMessageField(incoming, "content", "message") ||
-      readMessageField(current, "createdAt", "created_at") !== readMessageField(incoming, "createdAt", "created_at")
+      readMessageField(current, "createdAt", "created_at") !== readMessageField(incoming, "createdAt", "created_at") ||
+      JSON.stringify(current.speech ?? null) !== JSON.stringify(incoming.speech ?? null)
     ) {
       return false;
     }

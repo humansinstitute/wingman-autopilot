@@ -62,6 +62,11 @@ import {
   capturePrependedScrollState,
   schedulePrependedScrollRestore,
 } from "../live/conversation-window.js";
+import {
+  autoReadLatestAssistantMessage,
+  isAlwaysReadEnabled,
+  toggleAlwaysRead,
+} from "../live/message-speech.js";
 import { focusComposerTextarea } from "../live/mobile-runtime.js";
 import {
   closeArtifactPaneForSession,
@@ -651,6 +656,7 @@ export function initLiveView(deps) {
       conversation,
       windowStore: state.liveMessageWindows,
       agentOutputFormattingEnabled: agentOutputFormattingEnabled(),
+      showToast,
       onRevealOlder: (scrollElement) => {
         const snapshot = capturePrependedScrollState(scrollElement);
         expandConversationWindow(state.liveMessageWindows, sessionId, conversation.length);
@@ -673,6 +679,8 @@ export function initLiveView(deps) {
     if (composerEl) {
       attachComposerScrollControls(composerEl);
     }
+
+    void autoReadLatestAssistantMessage({ sessionId, conversation, showToast });
 
     return next;
   };
@@ -1135,6 +1143,15 @@ export function initLiveView(deps) {
 
     addCommand("Record voice note", () => {
       openVoiceNoteRecorder(sessionId);
+    });
+
+    addCommand(isAlwaysReadEnabled() ? "Always read: On" : "Always read: Off", () => {
+      const enabled = toggleAlwaysRead();
+      showToast(enabled ? "Always read responses enabled" : "Always read responses disabled", {
+        type: "info",
+        duration: 2200,
+      });
+      render();
     });
 
     addCommandDivider();

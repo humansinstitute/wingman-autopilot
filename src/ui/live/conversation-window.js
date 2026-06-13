@@ -1,5 +1,6 @@
 import { attachCopyButton } from "../utils/clipboard.js";
 import { renderChatMessageHtml } from "../rendering/chat-message-content.js";
+import { createMessageSpeechCard } from "./message-speech.js";
 
 export const LIVE_MESSAGE_WINDOW_DEFAULT = 80;
 export const LIVE_MESSAGE_PAGE_SIZE = 80;
@@ -131,6 +132,14 @@ function createMessageBubble(message, options = {}) {
     cleanAgentText: Boolean(options.agentOutputFormattingEnabled && shouldFormatAgentMessage(message)),
   });
   bubble.append(body);
+  const speechCard = createMessageSpeechCard({
+    sessionId: options.sessionId,
+    message,
+    showToast: options.showToast,
+  });
+  if (speechCard) {
+    bubble.append(speechCard);
+  }
   attachCopyButton(bubble);
   return bubble;
 }
@@ -165,6 +174,7 @@ export function createConversationElement(options) {
     windowStore,
     onRevealOlder,
     agentOutputFormattingEnabled = false,
+    showToast = null,
   } = options;
   const snapshot = getConversationWindowSnapshot(windowStore, sessionId, conversation);
 
@@ -186,7 +196,7 @@ export function createConversationElement(options) {
   }
 
   snapshot.visibleMessages.forEach((message) => {
-    wrapper.append(createMessageBubble(message, { agentOutputFormattingEnabled }));
+    wrapper.append(createMessageBubble(message, { agentOutputFormattingEnabled, sessionId, showToast }));
   });
 
   return wrapper;

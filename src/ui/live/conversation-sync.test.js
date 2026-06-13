@@ -40,4 +40,30 @@ describe("conversation-sync", () => {
       [{ role: "assistant", content: "hi", createdAt: "2026-04-06T12:00:00.000Z" }],
     )).toBe(true);
   });
+
+  test("preserves speech attachments in normalized messages", () => {
+    const speech = {
+      publicPath: "/uploads/files/user/codex/speech/response.mp3",
+      mimeType: "audio/mpeg",
+    };
+
+    expect(normalizeConversationMessage({
+      id: "message-1",
+      role: "assistant",
+      content: "Ready",
+      createdAt: "2026-04-06T13:00:00.000Z",
+      speech,
+    })).toEqual({
+      id: "message-1",
+      role: "assistant",
+      content: "Ready",
+      createdAt: "2026-04-06T13:00:00.000Z",
+      speech,
+    });
+
+    expect(areConversationMessagesEqual(
+      [{ role: "assistant", content: "Ready", createdAt: "2026-04-06T13:00:00.000Z" }],
+      [{ role: "assistant", content: "Ready", createdAt: "2026-04-06T13:00:00.000Z", speech }],
+    )).toBe(false);
+  });
 });

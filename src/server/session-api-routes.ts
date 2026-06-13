@@ -3,6 +3,8 @@
  * Extracted from server.ts to reduce file size.
  */
 
+import { randomUUID } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
 import { normalize, join, resolve as resolvePath } from "node:path";
 import type { AgentType } from "../config";
 import type { ProcessManager, SessionOrigin, SessionSnapshot } from "../agents/process-manager";
@@ -18,6 +20,7 @@ import type { ForkToWorktreeInput } from "../sessions/fork-to-worktree";
 import { resolveSessionOwnerNpub } from "../sessions/session-ownership";
 import { deliverSessionAgentMessage } from "./session-agent-message";
 import { normalizeBusySessionMessageFailure } from "./session-message-failures";
+import { generateSpeechAudio, resolveSpeechExtension } from "./audio-speech";
 import type { PromptReadiness } from "../agents/agent-adapter";
 import {
   isAgentManagedByMetadataOrOrigin,
@@ -37,6 +40,7 @@ import type { WorkspaceDelegationStore } from "../storage/workspace-delegation-s
 import type { NightWatchStartOptions } from "../nightwatch/nightwatch-start-config";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "HEAD";
+const MAX_SPEECH_TEXT_LENGTH = 4_000;
 
 // ---------- Types shared with server.ts ----------
 
@@ -1855,6 +1859,10 @@ export async function handleSessionApi(
     // Note: SSE endpoint (/events) is handled earlier in the route chain
 
     if (parts[4] === "messages") {
+      if (parts[5] && parts[6] === "speech" && (method === "GET" || method === "POST")) {
+        return handleMessageSpeech(request, method, resolvedId, parts[5], liveOwnedSession, authContext, ctx);
+      }
+
       if (method === "GET") {
         const refresh = url.searchParams.get("refresh") === "true";
         const messages = await (
@@ -1979,6 +1987,113 @@ async function handlePostMessage(
       { status: 502 },
     );
   }
+}
+
+function normalizeMessageRole(value: unknown): string {
+  const role = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return role || "assistant";
+}
+
+function normalizeSpeechText(value: unknown): string {
+  if (typeof value !== "string") {
+    return "";
+  }
+  return value.replace(/\s+/g, " ").trim().slice(0, MAX_SPEECH_TEXT_LENGTH);
+}
+
+function sanitizeSpeechSummary(value: string): string {
+  return value.replace(/[\r\n]+/g, " ").trim().slice(0, 240);
+}
+
+function findSpeechMessage(messages: StoredMessage[], messageId: string): StoredMessage | null {
+  return messages.find((message) => message.id === messageId) ?? null;
+}
+
+async function handleMessageSpeech(
+  request: Request,
+  method: HttpMethod,
+  sessionId: string,
+  messageId: string,
+  liveOwnedSession: SessionSnapshot | null,
+  authContext: RequestAuthContext,
+  ctx: SessionApiContext,
+): Promise<Response> {
+  const messages = ctx.messageStore.listSessionMessages(sessionId);
+  const message = findSpeechMessage(messages, messageId);
+  if (!message) {
+    return Response.json({ error: "Message not found" }, { status: 404 });
+  }
+
+  const role = normalizeMessageRole(message.role);
+  if (role !== "assistant" && role !== "agent") {
+    return Response.json({ error: "Speech is only available for assistant messages" }, { status: 400 });
+  }
+
+  const existing = ctx.messageStore.getMessageSpeechAttachment(sessionId, message.role, message.createdAt);
+  if (method === "GET" || existing) {
+    if (!existing) {
+      return Response.json({ error: "Speech has not been generated for this message" }, { status: 404 });
+    }
+    return Response.json({ sessionId, messageId, speech: existing });
+  }
+
+  let payload: Record<string, unknown> | null = null;
+  try {
+    payload = await request.json() as Record<string, unknown>;
+  } catch {
+    payload = null;
+  }
+
+  const speechText = normalizeSpeechText(payload?.text) || normalizeSpeechText(message.content);
+  if (!speechText) {
+    return Response.json({ error: "Message has no readable text" }, { status: 400 });
+  }
+
+  const storedSession = ctx.messageStore.getSession(sessionId);
+  const sessionOwnerNpub = resolveSessionOwnerNpub(
+    liveOwnedSession?.npub ?? storedSession?.npub ?? authContext.npub ?? null,
+    liveOwnedSession?.metadata ?? storedSession?.metadata ?? null,
+  ) ?? authContext.npub ?? null;
+  const agent = liveOwnedSession?.agent ?? storedSession?.agent ?? "codex";
+  const ownerSegment = deriveNpubSegment(sessionOwnerNpub);
+
+  let generated;
+  try {
+    generated = await generateSpeechAudio({
+      text: speechText,
+      voice: typeof payload?.voice === "string" ? payload.voice : null,
+    });
+  } catch (error) {
+    const messageText = error instanceof Error ? error.message : String(error);
+    return Response.json({ error: `Speech generation failed: ${messageText}` }, { status: 502 });
+  }
+
+  const directory = join(ctx.attachmentRoot, ownerSegment, agent, "speech");
+  const filename = `message-speech-${Date.now()}-${randomUUID()}${resolveSpeechExtension(generated.format)}`;
+  const relativePath = normalize(join(ownerSegment, agent, "speech", filename)).replace(/\\/g, "/");
+  const publicPath = `/uploads/files/${relativePath}`;
+
+  try {
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, filename), generated.audio);
+  } catch (error) {
+    console.error("[message-speech] failed to persist generated audio", error);
+    return Response.json({ error: "Failed to store generated speech" }, { status: 500 });
+  }
+
+  const attachment = ctx.messageStore.saveMessageSpeechAttachment({
+    sessionId,
+    messageRole: message.role,
+    messageCreatedAt: message.createdAt,
+    publicPath,
+    relativePath,
+    mimeType: generated.mimeType,
+    voice: generated.voice,
+    model: generated.model,
+    summary: sanitizeSpeechSummary(speechText),
+  });
+
+  return Response.json({ sessionId, messageId, speech: attachment }, { status: 201 });
 }
 
 async function handleDelegatedQueuedMessage(

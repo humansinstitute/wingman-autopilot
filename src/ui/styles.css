@@ -3592,6 +3592,53 @@ body[data-live-header-collapsed="true"]:has(#app[data-route="live"]) .wm-live-dr
   color: #ffffff;
 }
 
+.wm-message-speech-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: fit-content;
+  max-width: 100%;
+  margin-top: 0.85rem;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid rgba(59, 130, 246, 0.28);
+  border-radius: 0.5rem;
+  background: rgba(15, 23, 42, 0.32);
+}
+
+.wm-message-speech-card__label {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.wm-message-speech-card__button {
+  border: 1px solid rgba(16, 185, 129, 0.32);
+  border-radius: 0.45rem;
+  background: rgba(16, 185, 129, 0.14);
+  color: var(--accent-primary);
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 700;
+  line-height: 1.2;
+  padding: 0.35rem 0.55rem;
+}
+
+.wm-message-speech-card__button:hover,
+.wm-message-speech-card__button:focus-visible {
+  background: rgba(16, 185, 129, 0.24);
+  outline: 2px solid rgba(16, 185, 129, 0.45);
+  outline-offset: 2px;
+}
+
+.wm-message-speech-card__button:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.wm-message-speech-card__button[data-loading="true"] {
+  color: var(--text-secondary);
+}
+
 /* Alpine.js Chat Component Styles */
 .alpine-chat {
   display: flex;

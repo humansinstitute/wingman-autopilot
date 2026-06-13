@@ -41,6 +41,7 @@ export function initSessionsStore({
   getIdentity,
   onUnauthorized,
   onIdentityUpdate,
+  onItemsChanged,
   syncOnInit = true,
 }) {
   Alpine.store("sessions", {
@@ -99,6 +100,9 @@ export function initSessionsStore({
       this._liveQuerySub = observable.subscribe({
         next: (sessions) => {
           this.items = sortSessionsForTabs(sessions);
+          if (typeof onItemsChanged === "function") {
+            onItemsChanged(this.items);
+          }
         },
         error: (err) => {
           console.error("[sessions-store] liveQuery error:", err);
@@ -151,6 +155,9 @@ export function initSessionsStore({
         // Sync items immediately so callers see fresh data without
         // waiting for the asynchronous liveQuery callback.
         this.items = orderedSessions;
+        if (typeof onItemsChanged === "function") {
+          onItemsChanged(this.items);
+        }
 
         // Process identity updates for the viewer
         if (onIdentityUpdate) {

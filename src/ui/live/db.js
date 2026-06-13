@@ -70,6 +70,7 @@ export const MessageStore = {
     if (matchingMessage) {
       await db.messages.update(matchingMessage.id, {
         content,
+        speech: normalized.speech ?? null,
         updatedAt: now,
       });
       return { id: matchingMessage.id, isStreamingUpdate: true };
@@ -86,6 +87,7 @@ export const MessageStore = {
       if (content.length > oldContent.length && content.startsWith(oldContent.slice(0, 50))) {
         await db.messages.update(existing.id, {
           content,
+          speech: normalized.speech ?? null,
           updatedAt: now,
         });
         return { id: existing.id, isStreamingUpdate: true };
@@ -97,6 +99,7 @@ export const MessageStore = {
       sessionId,
       role,
       content,
+      speech: normalized.speech ?? null,
       createdAt,
       updatedAt: now,
       messageHash: `${sessionId}:${role}:${Date.now()}`,
@@ -151,7 +154,11 @@ export const MessageStore = {
       for (let i = 0; i < minLen; i++) {
         const old = existing[i];
         const inc = incoming[i];
-        if (old.content === inc.content && old.role === inc.role) {
+        if (
+          old.content === inc.content &&
+          old.role === inc.role &&
+          JSON.stringify(old.speech ?? null) === JSON.stringify(inc.speech ?? null)
+        ) {
           continue;
         }
         // Don't let a momentarily-stale server snapshot shrink a bubble that the
@@ -169,6 +176,7 @@ export const MessageStore = {
           db.messages.update(old.id, {
             content: inc.content,
             role: inc.role,
+            speech: inc.speech ?? null,
             updatedAt: now,
           }),
         );
@@ -186,6 +194,7 @@ export const MessageStore = {
           sessionId,
           role: inc.role,
           content: inc.content,
+          speech: inc.speech ?? null,
           createdAt: inc.createdAt,
           updatedAt: now,
           messageHash: `${sessionId}:${existing.length + idx}:${now}`,

@@ -18,12 +18,35 @@ export interface StoredMessage {
   role: string;
   content: string;
   createdAt: string;
+  speech?: StoredMessageSpeechAttachment | null;
 }
 
 export interface ReplaceMessageInput {
   role: string;
   content: string;
   createdAt: string;
+}
+
+export interface StoredMessageSpeechAttachment {
+  publicPath: string;
+  relativePath: string;
+  mimeType: string;
+  voice: string | null;
+  model: string | null;
+  summary: string | null;
+  createdAt: string;
+}
+
+export interface MessageSpeechAttachmentInput {
+  sessionId: string;
+  messageRole: string;
+  messageCreatedAt: string;
+  publicPath: string;
+  relativePath: string;
+  mimeType: string;
+  voice?: string | null;
+  model?: string | null;
+  summary?: string | null;
 }
 
 export interface SessionRecordInput {
@@ -140,6 +163,8 @@ export class MessageStore {
   private readonly insertMessage: ReturnType<MessageStore["prepareInsertMessage"]>;
   private readonly listMessages: ReturnType<MessageStore["prepareListMessages"]>;
   private readonly countMessages: ReturnType<MessageStore["prepareCountMessages"]>;
+  private readonly upsertMessageSpeechAttachment: ReturnType<MessageStore["prepareUpsertMessageSpeechAttachment"]>;
+  private readonly getMessageSpeechAttachmentStmt: ReturnType<MessageStore["prepareGetMessageSpeechAttachment"]>;
 
   constructor(filePath: string) {
     mkdirSync(dirname(filePath), { recursive: true });
@@ -155,6 +180,8 @@ export class MessageStore {
     this.insertMessage = this.prepareInsertMessage();
     this.listMessages = this.prepareListMessages();
     this.countMessages = this.prepareCountMessages();
+    this.upsertMessageSpeechAttachment = this.prepareUpsertMessageSpeechAttachment();
+    this.getMessageSpeechAttachmentStmt = this.prepareGetMessageSpeechAttachment();
   }
 
   recordSession(session: SessionRecordInput) {
@@ -205,7 +232,75 @@ export class MessageStore {
   }
 
   listSessionMessages(sessionId: string): StoredMessage[] {
-    return this.listMessages.all(sessionId) as StoredMessage[];
+    const rows = this.listMessages.all(sessionId) as Array<StoredMessage & {
+      speechPublicPath: string | null;
+      speechRelativePath: string | null;
+      speechMimeType: string | null;
+      speechVoice: string | null;
+      speechModel: string | null;
+      speechSummary: string | null;
+      speechCreatedAt: string | null;
+    }>;
+    return rows.map((row) => {
+      const {
+        speechPublicPath,
+        speechRelativePath,
+        speechMimeType,
+        speechVoice,
+        speechModel,
+        speechSummary,
+        speechCreatedAt,
+        ...message
+      } = row;
+      return {
+        ...message,
+        speech: speechPublicPath && speechRelativePath && speechMimeType && speechCreatedAt
+          ? {
+              publicPath: speechPublicPath,
+              relativePath: speechRelativePath,
+              mimeType: speechMimeType,
+              voice: speechVoice,
+              model: speechModel,
+              summary: speechSummary,
+              createdAt: speechCreatedAt,
+            }
+          : null,
+      };
+    });
+  }
+
+  saveMessageSpeechAttachment(input: MessageSpeechAttachmentInput): StoredMessageSpeechAttachment {
+    const createdAt = new Date().toISOString();
+    this.upsertMessageSpeechAttachment.run(
+      input.sessionId,
+      input.messageRole,
+      input.messageCreatedAt,
+      input.publicPath,
+      input.relativePath,
+      input.mimeType,
+      input.voice ?? null,
+      input.model ?? null,
+      input.summary ?? null,
+      createdAt,
+    );
+    return {
+      publicPath: input.publicPath,
+      relativePath: input.relativePath,
+      mimeType: input.mimeType,
+      voice: input.voice ?? null,
+      model: input.model ?? null,
+      summary: input.summary ?? null,
+      createdAt,
+    };
+  }
+
+  getMessageSpeechAttachment(
+    sessionId: string,
+    messageRole: string,
+    messageCreatedAt: string,
+  ): StoredMessageSpeechAttachment | null {
+    const row = this.getMessageSpeechAttachmentStmt.get(sessionId, messageRole, messageCreatedAt) as StoredMessageSpeechAttachment | null;
+    return row ?? null;
   }
 
   hasMessages(sessionId: string): boolean {
@@ -352,6 +447,24 @@ export class MessageStore {
       );
 
       CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, created_at);
+
+      CREATE TABLE IF NOT EXISTS message_speech_attachments (
+        session_id TEXT NOT NULL,
+        message_role TEXT NOT NULL,
+        message_created_at TEXT NOT NULL,
+        public_path TEXT NOT NULL,
+        relative_path TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        voice TEXT,
+        model TEXT,
+        summary TEXT,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (session_id, message_role, message_created_at),
+        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_message_speech_session
+        ON message_speech_attachments(session_id, message_created_at);
     `);
 
     const sessionColumns = this.db.query("PRAGMA table_info(sessions)").all() as { name: string }[];
@@ -463,10 +576,26 @@ export class MessageStore {
 
   private prepareListMessages() {
     return this.db.prepare(
-      `SELECT id, session_id as sessionId, role, content, created_at as createdAt
+      `SELECT
+         messages.id,
+         messages.session_id as sessionId,
+         messages.role,
+         messages.content,
+         messages.created_at as createdAt,
+         speech.public_path as speechPublicPath,
+         speech.relative_path as speechRelativePath,
+         speech.mime_type as speechMimeType,
+         speech.voice as speechVoice,
+         speech.model as speechModel,
+         speech.summary as speechSummary,
+         speech.created_at as speechCreatedAt
        FROM messages
-       WHERE session_id = ?1
-       ORDER BY datetime(created_at), rowid`,
+       LEFT JOIN message_speech_attachments speech
+         ON speech.session_id = messages.session_id
+        AND speech.message_role = messages.role
+        AND speech.message_created_at = messages.created_at
+       WHERE messages.session_id = ?1
+       ORDER BY datetime(messages.created_at), messages.rowid`,
     );
   }
 
@@ -475,6 +604,49 @@ export class MessageStore {
       `SELECT COUNT(1) as count
        FROM messages
        WHERE session_id = ?1`,
+    );
+  }
+
+  private prepareUpsertMessageSpeechAttachment() {
+    return this.db.prepare(
+      `INSERT INTO message_speech_attachments (
+         session_id,
+         message_role,
+         message_created_at,
+         public_path,
+         relative_path,
+         mime_type,
+         voice,
+         model,
+         summary,
+         created_at
+       )
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+       ON CONFLICT(session_id, message_role, message_created_at) DO UPDATE SET
+         public_path = excluded.public_path,
+         relative_path = excluded.relative_path,
+         mime_type = excluded.mime_type,
+         voice = excluded.voice,
+         model = excluded.model,
+         summary = excluded.summary,
+         created_at = excluded.created_at`,
+    );
+  }
+
+  private prepareGetMessageSpeechAttachment() {
+    return this.db.prepare(
+      `SELECT
+         public_path as publicPath,
+         relative_path as relativePath,
+         mime_type as mimeType,
+         voice,
+         model,
+         summary,
+         created_at as createdAt
+       FROM message_speech_attachments
+       WHERE session_id = ?1
+         AND message_role = ?2
+         AND message_created_at = ?3`,
     );
   }
 }
