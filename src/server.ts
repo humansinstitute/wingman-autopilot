@@ -1,10 +1,9 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { type Dirent } from "node:fs";
 import { cp, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, extname, isAbsolute, join, normalize, relative, resolve as resolvePath, sep } from "node:path";
+import { dirname, isAbsolute, join, normalize, relative, resolve as resolvePath, sep } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { createRequire } from "node:module";
 
 import "./logging/server-logger";
 
@@ -150,7 +149,8 @@ import {
   ensureWithinBase,
   createPathUtils,
 } from "./server/path-utils";
-import { createStaticAssetService, compressResponse } from "./server/static-assets";
+import { createProjectStaticAssetService } from "./server/static-assets";
+import { createStaticRouteHandler } from "./server/static-routes";
 import { maybeRefreshSessionCookie } from "./server/session-refresh";
 import { shouldUseSecureCookies } from "./server/cookie-security";
 import {
@@ -690,43 +690,6 @@ const userDataRoot = join(documentsDirectory, "Wingman");
 const userIdentityRoot = join(userDataRoot, "users");
 const systemDocsRoot = homeDirectory;
 const systemDocsRootBoundary = systemDocsRoot.endsWith(sep) ? systemDocsRoot : `${systemDocsRoot}${sep}`;
-const require = createRequire(import.meta.url);
-const resolvePackageRoot = (specifier: string) => {
-  try {
-    const packageJsonPath = require.resolve(`${specifier}/package.json`);
-    return normalize(join(packageJsonPath, ".."));
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.warn(`[static] failed to resolve package root for ${specifier}: ${message}`);
-    return undefined;
-  }
-};
-const resolvedAceBuildsRoot = resolvePackageRoot("ace-builds");
-const aceBuildsRoot = resolvedAceBuildsRoot ?? normalize(join(projectRoot, "node_modules", "ace-builds"));
-const aceBuildsRootBoundary = aceBuildsRoot.endsWith(sep) ? aceBuildsRoot : `${aceBuildsRoot}${sep}`;
-const vendorPackages: Record<string, { root: string; boundary: string; entry: string }> = {};
-const registerVendorPackage = (name: string, relative: string, entry = "index.js") => {
-  const root = resolvePackageRoot(name);
-  if (!root) return;
-  const resolved = normalize(join(root, relative));
-  vendorPackages[name] = {
-    root: resolved,
-    boundary: resolved.endsWith(sep) ? resolved : `${resolved}${sep}`,
-    entry,
-  };
-};
-registerVendorPackage("@noble/hashes", "esm");
-registerVendorPackage("@noble/ciphers", "esm");
-registerVendorPackage("@scure/base", join("lib", "esm"));
-registerVendorPackage("@noble/curves", "esm");
-registerVendorPackage("mermaid", "dist", "mermaid.esm.min.mjs");
-registerVendorPackage("nostr-tools", join("lib", "esm"));
-registerVendorPackage("dexie", "dist", "dexie.mjs");
-registerVendorPackage("alpinejs", "dist", "module.esm.js");
-registerVendorPackage("@xterm/xterm", "", join("lib", "xterm.mjs"));
-registerVendorPackage("@xterm/addon-fit", "", join("lib", "addon-fit.mjs"));
-const publicRoot = normalize(join(projectRoot, "public"));
-const publicRootBoundary = publicRoot.endsWith(sep) ? publicRoot : `${publicRoot}${sep}`;
 await mkdir(documentsDirectory, { recursive: true }).catch(() => undefined);
 await mkdir(userDataRoot, { recursive: true }).catch(() => undefined);
 await mkdir(userIdentityRoot, { recursive: true }).catch(() => undefined);
@@ -1606,36 +1569,9 @@ const listDirectories = async (
 
 type HttpMethod = "GET" | "POST" | "PUT" | "DELETE";
 
-const assetService = createStaticAssetService({
-  publicRoot,
-  publicRootBoundary,
-  aceRoot: aceBuildsRoot,
-  aceRootBoundary: aceBuildsRootBoundary,
-  vendorPackages,
+const staticRoutes = createStaticRouteHandler({
+  assetService: createProjectStaticAssetService(projectRoot),
 });
-
-// Asset version — increment to bust browser caches after deploys.
-const ASSET_VERSION = "49";
-
-const serveIndex = async () => {
-  const url = new URL("./ui/index.html", import.meta.url);
-  let html = await Bun.file(url).text();
-  // Append cache-busting version to main asset URLs
-  html = html.replace(
-    /href="\/styles\.css"/,
-    `href="/styles.css?v=${ASSET_VERSION}"`,
-  );
-  html = html.replace(
-    /src="\/app\.js"/,
-    `src="/app.js?v=${ASSET_VERSION}"`,
-  );
-  return new Response(html, {
-    headers: {
-      "content-type": "text/html; charset=utf-8",
-      "cache-control": "no-cache",
-    },
-  });
-};
 
 await rehydrateWarmSessions(
   warmRestartMarker,
@@ -2759,46 +2695,12 @@ const server = Bun.serve<TerminalWebSocketData>({
         return Response.redirect(homeUrl.toString(), 302);
       }
 
-      const isSpaRoutePath =
-        pathname === "/home" ||
-        pathname === "/apps" ||
-        pathname.startsWith("/apps/") ||
-        pathname === "/projects" ||
-        pathname.startsWith("/projects/") ||
-        pathname === "/todos" ||
-        pathname.startsWith("/todos/") ||
-        pathname === "/docs" ||
-        pathname.startsWith("/docs/") ||
-        pathname === "/files" ||
-        pathname.startsWith("/files/") ||
-        pathname === "/live" ||
-        pathname.startsWith("/live/") ||
-        pathname === "/chat" ||
-        pathname.startsWith("/chat/") ||
-        pathname === "/settings" ||
-        pathname.startsWith("/settings/") ||
-        pathname === "/privacy" ||
-        pathname === "/nightwatch" ||
-        pathname.startsWith("/nightwatch/") ||
-        pathname === "/scheduler" ||
-        pathname.startsWith("/scheduler/") ||
-        pathname === "/triggers" ||
-        pathname.startsWith("/triggers/") ||
-        pathname === "/pipelines" ||
-        pathname.startsWith("/pipelines/") ||
-        pathname === "/terminal" ||
-        pathname.startsWith("/terminal/");
-
-      if (isSpaRoutePath && !assetService.isUiAssetPath(pathname)) {
-        return compressResponse(request, await serveIndex());
-      }
-
       // Serve UI module assets before API routing so paths like
       // /api/admin-users.js resolve to src/ui/api/ instead of the
       // JSON API handler.
-      const earlyUiAsset = assetService.resolveUiAsset(pathname);
-      if (earlyUiAsset) {
-        return compressResponse(request, earlyUiAsset);
+      const earlyStaticResponse = await staticRoutes.serveBeforeApi(request, pathname);
+      if (earlyStaticResponse) {
+        return earlyStaticResponse;
       }
 
       if (pathname.startsWith("/api/")) {
@@ -2815,28 +2717,7 @@ const server = Bun.serve<TerminalWebSocketData>({
         return tempImage;
       }
 
-      const aceAsset = assetService.serveAceBuildsAsset(pathname);
-      if (aceAsset) {
-        return compressResponse(request, aceAsset);
-      }
-
-      // Vendor modules handle their own gzip caching internally
-      const vendorAsset = await assetService.serveVendorModule(pathname);
-      if (vendorAsset) {
-        return vendorAsset;
-      }
-
-      const assetResponse = assetService.resolveUiAsset(pathname);
-      if (assetResponse) {
-        return compressResponse(request, assetResponse);
-      }
-
-      const publicAsset = assetService.servePublicAsset(pathname);
-      if (publicAsset) {
-        return compressResponse(request, publicAsset);
-      }
-
-      return new Response("Not Found", { status: 404 });
+      return staticRoutes.serveAfterApi(request, pathname);
     });
 
     if (!response) {

@@ -1,4 +1,5 @@
 import { extname, join, normalize, sep } from "node:path";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "bun";
 
@@ -81,6 +82,65 @@ export interface StaticAssetServiceOptions {
   vendorPackages: Record<string, VendorPackageDescriptor>;
 }
 
+export interface StaticAssetService {
+  resolveUiAsset: (pathname: string) => Response | undefined;
+  servePublicAsset: (pathname: string) => Response | undefined;
+  serveAceBuildsAsset: (pathname: string) => Response | undefined;
+  serveVendorModule: (pathname: string) => Promise<Response | undefined>;
+  isUiAssetPath: (pathname: string) => boolean;
+}
+
+const require = createRequire(import.meta.url);
+
+const resolvePackageRoot = (specifier: string) => {
+  try {
+    const packageJsonPath = require.resolve(`${specifier}/package.json`);
+    return normalize(join(packageJsonPath, ".."));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[static] failed to resolve package root for ${specifier}: ${message}`);
+    return undefined;
+  }
+};
+
+const withBoundary = (path: string) => path.endsWith(sep) ? path : `${path}${sep}`;
+
+export const createProjectStaticAssetService = (projectRoot: string): StaticAssetService => {
+  const resolvedAceBuildsRoot = resolvePackageRoot("ace-builds");
+  const aceBuildsRoot = resolvedAceBuildsRoot ?? normalize(join(projectRoot, "node_modules", "ace-builds"));
+  const vendorPackages: Record<string, VendorPackageDescriptor> = {};
+  const registerVendorPackage = (name: string, relative: string, entry = "index.js") => {
+    const root = resolvePackageRoot(name);
+    if (!root) return;
+    const resolved = normalize(join(root, relative));
+    vendorPackages[name] = {
+      root: resolved,
+      boundary: withBoundary(resolved),
+      entry,
+    };
+  };
+
+  registerVendorPackage("@noble/hashes", "esm");
+  registerVendorPackage("@noble/ciphers", "esm");
+  registerVendorPackage("@scure/base", join("lib", "esm"));
+  registerVendorPackage("@noble/curves", "esm");
+  registerVendorPackage("mermaid", "dist", "mermaid.esm.min.mjs");
+  registerVendorPackage("nostr-tools", join("lib", "esm"));
+  registerVendorPackage("dexie", "dist", "dexie.mjs");
+  registerVendorPackage("alpinejs", "dist", "module.esm.js");
+  registerVendorPackage("@xterm/xterm", "", join("lib", "xterm.mjs"));
+  registerVendorPackage("@xterm/addon-fit", "", join("lib", "addon-fit.mjs"));
+
+  const publicRoot = normalize(join(projectRoot, "public"));
+  return createStaticAssetService({
+    publicRoot,
+    publicRootBoundary: withBoundary(publicRoot),
+    aceRoot: aceBuildsRoot,
+    aceRootBoundary: withBoundary(aceBuildsRoot),
+    vendorPackages,
+  });
+};
+
 const resolveUiAsset = (pathname: string): Response | undefined => {
   const asset = uiAssetMap[pathname];
   if (!asset) return undefined;
@@ -94,7 +154,7 @@ const resolveUiAsset = (pathname: string): Response | undefined => {
   });
 };
 
-export const createStaticAssetService = (options: StaticAssetServiceOptions) => {
+export const createStaticAssetService = (options: StaticAssetServiceOptions): StaticAssetService => {
   const { publicRoot, publicRootBoundary, aceRoot, aceRootBoundary, vendorPackages } = options;
   const uiAssetPaths = new Set(Object.keys(uiAssetMap));
   const vendorPackageNames = Object.keys(vendorPackages);
