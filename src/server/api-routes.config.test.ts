@@ -228,6 +228,7 @@ describe("createApiRouteHandler config defaults", () => {
     const handler = createHandler({
       authContext,
       settings: {
+        speech_provider: "local",
         speech_api_key: "sk-test-1234567890",
         speech_model: "tts-1",
         speech_format: "mp3",
@@ -252,6 +253,7 @@ describe("createApiRouteHandler config defaults", () => {
     const getResponse = await handler(new Request(getUrl), getUrl, "GET", authContext);
     const body = await getResponse.json() as { settings: Record<string, string> };
     expect(body.settings.speech_api_key).toBe("sk-t..7890");
+    expect(body.settings.speech_provider).toBe("local");
     expect(body.settings.speech_model).toBe("tts-1");
     expect(body.settings.speech_format).toBe("mp3");
     expect(body.settings.speech_summary_model).toBe("openai/gpt-4o-mini");

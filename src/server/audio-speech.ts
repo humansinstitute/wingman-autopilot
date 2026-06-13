@@ -6,7 +6,8 @@ const DEFAULT_SPEECH_FORMAT = "mp3";
 const DEFAULT_SPEECH_BASE_URL = "https://api.openai.com/v1";
 
 const speechConfigSchema = z.object({
-  apiKey: z.string().min(1),
+  provider: z.enum(["openrouter", "local"]).default("openrouter"),
+  apiKey: z.string().optional(),
   baseUrl: z.string().url(),
   model: z.string().min(1),
   voice: z.string().min(1),
@@ -57,13 +58,14 @@ function extractProviderErrorMessage(rawBody: string): string {
 }
 
 export function resolveAudioSpeechConfig(overrides: Partial<AudioSpeechConfig> | null = null): AudioSpeechConfig | null {
+  const provider = overrides?.provider === "local" ? "local" : "openrouter";
   const apiKey =
     overrides?.apiKey?.trim() ||
     Bun.env.WINGMAN_SPEECH_API_KEY?.trim() ||
     Bun.env.OPENAI_API_KEY?.trim() ||
     Bun.env.CODEX_API_KEY?.trim() ||
     "";
-  if (!apiKey) {
+  if (!apiKey && provider !== "local") {
     return null;
   }
 
@@ -91,7 +93,8 @@ export function resolveAudioSpeechConfig(overrides: Partial<AudioSpeechConfig> |
     DEFAULT_SPEECH_FORMAT;
 
   const parsed = speechConfigSchema.safeParse({
-    apiKey,
+    provider,
+    apiKey: apiKey || undefined,
     baseUrl,
     model,
     voice,
@@ -141,12 +144,15 @@ export async function generateSpeechAudio(input: GenerateSpeechInput): Promise<{
 
   const voice = typeof input.voice === "string" && input.voice.trim() ? input.voice.trim() : config.voice;
   const baseUrl = config.baseUrl.endsWith("/") ? config.baseUrl : `${config.baseUrl}/`;
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+  };
+  if (config.apiKey) {
+    headers.Authorization = `Bearer ${config.apiKey}`;
+  }
   const response = await fetch(new URL("audio/speech", baseUrl), {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${config.apiKey}`,
-      "content-type": "application/json",
-    },
+    headers,
     body: JSON.stringify({
       model: config.model,
       input: text,

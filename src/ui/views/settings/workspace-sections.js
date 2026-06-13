@@ -66,6 +66,14 @@ const OPENROUTER_SPEECH_DEFAULTS = {
   summaryModel: 'openai/gpt-4o-mini',
 };
 
+const LOCAL_SPEECH_DEFAULTS = {
+  baseUrl: 'http://127.0.0.1:8880/v1',
+  model: 'kokoro',
+  voice: 'am_onyx',
+  format: 'mp3',
+  summaryModel: OPENROUTER_SPEECH_DEFAULTS.summaryModel,
+};
+
 function normalizeHostname(value) {
   const trimmed = typeof value === 'string' ? value.trim() : '';
   if (!trimmed) return '';
@@ -271,7 +279,28 @@ export function createSpeechSettingsSection() {
 
   const description = document.createElement('p');
   description.className = 'wm-settings__port-note';
-  description.textContent = 'Optional server speech settings for generated audio. OpenRouter Kokoro is prefilled; add your API key and save.';
+  description.textContent = 'Optional server speech settings for generated audio. Choose OpenRouter or a local OpenAI-compatible Kokoro server.';
+
+  const providerRow = document.createElement('div');
+  providerRow.className = 'wm-settings__key-row';
+  providerRow.style.cssText = 'display:flex;gap:8px;align-items:center;margin-top:8px;';
+  const providerLabel = createRowLabel('Provider', 140, 'speech-provider-input');
+  const providerSelect = document.createElement('select');
+  providerSelect.id = 'speech-provider-input';
+  providerSelect.className = 'wm-input';
+  providerSelect.dataset.testid = 'settings-speech-provider';
+  providerSelect.setAttribute('aria-label', 'Speech provider');
+  providerSelect.style.cssText = 'flex:1;font-size:0.85em;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg-secondary);color:var(--text);';
+  [
+    ['openrouter', 'OpenRouter'],
+    ['local', 'Local Kokoro'],
+  ].forEach(([value, label]) => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = label;
+    providerSelect.append(option);
+  });
+  providerRow.append(providerLabel, providerSelect);
 
   const apiKeyRow = document.createElement('div');
   apiKeyRow.className = 'wm-settings__key-row';
@@ -337,12 +366,33 @@ export function createSpeechSettingsSection() {
   const status = createStatusText();
   actionsRow.append(saveBtn, clearBtn, status);
 
+  const getProviderDefaults = () => (
+    providerSelect.value === 'local' ? LOCAL_SPEECH_DEFAULTS : OPENROUTER_SPEECH_DEFAULTS
+  );
+
+  const applyProviderDefaults = ({ overwrite = false } = {}) => {
+    const defaults = getProviderDefaults();
+    if (overwrite || !baseUrlInput.value.trim()) baseUrlInput.value = defaults.baseUrl;
+    if (overwrite || !modelInput.value.trim()) modelInput.value = defaults.model;
+    if (overwrite || !voiceInput.value.trim()) voiceInput.value = defaults.voice;
+    if (overwrite || !formatInput.value.trim()) formatInput.value = defaults.format;
+    if (overwrite || !summaryModelInput.value.trim()) summaryModelInput.value = defaults.summaryModel;
+    apiKeyInput.disabled = providerSelect.value === 'local';
+    apiKeyInput.placeholder = providerSelect.value === 'local' ? 'not required for local' : 'sk-...';
+  };
+
+  providerSelect.addEventListener('change', () => {
+    applyProviderDefaults({ overwrite: true });
+  });
+
   loadUserSettings().then((settings) => {
+    providerSelect.value = settings.speech_provider === 'local' ? 'local' : 'openrouter';
     const keyMasked = settings.speech_api_key;
     if (keyMasked) {
       apiKeyInput.placeholder = keyMasked;
       setStatus(status, 'Speech provider configured', 'var(--success, #4caf50)');
     }
+    applyProviderDefaults({ overwrite: true });
     if (typeof settings.speech_base_url === 'string') {
       baseUrlInput.value = settings.speech_base_url;
     }
@@ -358,6 +408,7 @@ export function createSpeechSettingsSection() {
     if (typeof settings.speech_summary_model === 'string') {
       summaryModelInput.value = settings.speech_summary_model;
     }
+    applyProviderDefaults({ overwrite: false });
   });
 
   saveBtn.addEventListener('click', async () => {
@@ -365,13 +416,16 @@ export function createSpeechSettingsSection() {
     saveBtn.textContent = 'Saving...';
     try {
       const apiKey = apiKeyInput.value.trim();
+      const provider = providerSelect.value === 'local' ? 'local' : 'openrouter';
       const baseUrl = baseUrlInput.value.trim();
       const model = modelInput.value.trim();
       const voice = voiceInput.value.trim();
       const format = formatInput.value.trim();
       const summaryModel = summaryModelInput.value.trim();
       const saves = [];
-      if (apiKey) saves.push(saveUserSetting('speech_api_key', apiKey));
+      saves.push(saveUserSetting('speech_provider', provider));
+      if (provider === 'openrouter' && apiKey) saves.push(saveUserSetting('speech_api_key', apiKey));
+      if (provider === 'local') saves.push(deleteUserSetting('speech_api_key'));
       if (baseUrl) saves.push(saveUserSetting('speech_base_url', baseUrl));
       if (model) saves.push(saveUserSetting('speech_model', model));
       if (voice) saves.push(saveUserSetting('speech_voice', voice));
@@ -399,6 +453,7 @@ export function createSpeechSettingsSection() {
     try {
       await Promise.all([
         deleteUserSetting('speech_api_key'),
+        deleteUserSetting('speech_provider'),
         deleteUserSetting('speech_base_url'),
         deleteUserSetting('speech_model'),
         deleteUserSetting('speech_voice'),
@@ -407,11 +462,8 @@ export function createSpeechSettingsSection() {
       ]);
       apiKeyInput.value = '';
       apiKeyInput.placeholder = 'sk-...';
-      baseUrlInput.value = OPENROUTER_SPEECH_DEFAULTS.baseUrl;
-      modelInput.value = OPENROUTER_SPEECH_DEFAULTS.model;
-      voiceInput.value = OPENROUTER_SPEECH_DEFAULTS.voice;
-      formatInput.value = OPENROUTER_SPEECH_DEFAULTS.format;
-      summaryModelInput.value = OPENROUTER_SPEECH_DEFAULTS.summaryModel;
+      providerSelect.value = 'openrouter';
+      applyProviderDefaults({ overwrite: true });
       setStatus(status, 'Cleared');
     } catch (error) {
       setStatus(status, error.message || 'Failed to clear', 'var(--error, #f44336)');
@@ -422,9 +474,9 @@ export function createSpeechSettingsSection() {
   const helpText = document.createElement('p');
   helpText.className = 'wm-settings__port-note';
   helpText.style.cssText = 'margin-top:6px;font-size:0.8em;';
-  helpText.textContent = 'Recommended OpenRouter config: TTS model hexgrad/kokoro-82m, voice af_heart, format mp3, summary model openai/gpt-4o-mini.';
+  helpText.textContent = 'OpenRouter default: hexgrad/kokoro-82m. Local default: OpenAI-compatible Kokoro at http://127.0.0.1:8880/v1, model kokoro, voice am_onyx.';
 
-  container.append(heading, description, apiKeyRow, baseUrlRow, modelRow, voiceRow, formatRow, summaryModelRow, actionsRow, helpText);
+  container.append(heading, description, providerRow, apiKeyRow, baseUrlRow, modelRow, voiceRow, formatRow, summaryModelRow, actionsRow, helpText);
   return container;
 }
 

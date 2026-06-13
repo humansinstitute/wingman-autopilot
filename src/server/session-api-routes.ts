@@ -47,6 +47,9 @@ const DEFAULT_SETTINGS_SPEECH_MODEL = "hexgrad/kokoro-82m";
 const DEFAULT_SETTINGS_SPEECH_VOICE = "af_heart";
 const DEFAULT_SETTINGS_SPEECH_FORMAT = "mp3";
 const DEFAULT_SETTINGS_SPEECH_SUMMARY_MODEL = "openai/gpt-4o-mini";
+const DEFAULT_LOCAL_SPEECH_BASE_URL = "http://127.0.0.1:8880/v1";
+const DEFAULT_LOCAL_SPEECH_MODEL = "kokoro";
+const DEFAULT_LOCAL_SPEECH_VOICE = "am_onyx";
 
 // ---------- Types shared with server.ts ----------
 
@@ -2036,6 +2039,7 @@ function resolveSpeechSettings(
   ctx: SessionApiContext,
   npub: string | null,
 ): {
+  provider?: "openrouter" | "local";
   apiKey?: string;
   baseUrl?: string;
   model?: string;
@@ -2046,14 +2050,18 @@ function resolveSpeechSettings(
     return null;
   }
   const settings = ctx.userSettingsStore.getAll(npub);
+  const provider = settings.speech_provider === "local" ? "local" : "openrouter";
   const speechApiKey = settings.speech_api_key?.trim() || "";
-  const apiKey = speechApiKey || settings.openai_api_key?.trim() || "";
-  const useOpenRouterDefaults = Boolean(speechApiKey);
-  const baseUrl = settings.speech_base_url?.trim() || (useOpenRouterDefaults ? DEFAULT_SETTINGS_SPEECH_BASE_URL : "");
-  const model = settings.speech_model?.trim() || (useOpenRouterDefaults ? DEFAULT_SETTINGS_SPEECH_MODEL : "");
-  const voice = settings.speech_voice?.trim() || (useOpenRouterDefaults ? DEFAULT_SETTINGS_SPEECH_VOICE : "");
-  const format = settings.speech_format?.trim() || (useOpenRouterDefaults ? DEFAULT_SETTINGS_SPEECH_FORMAT : "");
+  const apiKey = provider === "local" ? "" : speechApiKey || settings.openai_api_key?.trim() || "";
+  const baseUrl = settings.speech_base_url?.trim() ||
+    (provider === "local" ? DEFAULT_LOCAL_SPEECH_BASE_URL : DEFAULT_SETTINGS_SPEECH_BASE_URL);
+  const model = settings.speech_model?.trim() ||
+    (provider === "local" ? DEFAULT_LOCAL_SPEECH_MODEL : DEFAULT_SETTINGS_SPEECH_MODEL);
+  const voice = settings.speech_voice?.trim() ||
+    (provider === "local" ? DEFAULT_LOCAL_SPEECH_VOICE : DEFAULT_SETTINGS_SPEECH_VOICE);
+  const format = settings.speech_format?.trim() || DEFAULT_SETTINGS_SPEECH_FORMAT;
   return {
+    provider,
     ...(apiKey ? { apiKey } : {}),
     ...(baseUrl ? { baseUrl } : {}),
     ...(model ? { model } : {}),
