@@ -24,6 +24,20 @@ function normaliseMetadata(session) {
   return session?.metadata && typeof session.metadata === 'object' ? session.metadata : {};
 }
 
+function normaliseNpub(value) {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : '';
+}
+
+function resolveSessionOwnerNpub(session, metadata) {
+  return normaliseNpub(session?.ownerNpub) || normaliseNpub(metadata.ownerNpub) || normaliseNpub(session?.npub);
+}
+
+function wasCreatedByDifferentNpub(session, metadata) {
+  const ownerNpub = resolveSessionOwnerNpub(session, metadata);
+  const createdByNpub = normaliseNpub(metadata.createdByNpub);
+  return Boolean(ownerNpub && createdByNpub && ownerNpub !== createdByNpub);
+}
+
 export function isTaskDispatchSession(session) {
   const metadata = normaliseMetadata(session);
   const originType = normaliseOriginType(session);
@@ -51,6 +65,7 @@ export function isAgentSession(session) {
   const originType = normaliseOriginType(session);
   return (
     metadata.AGENT === true ||
+    wasCreatedByDifferentNpub(session, metadata) ||
     PROGRAMMATIC_ORIGIN_TYPES.has(originType) ||
     LEGACY_AGENT_ORIGIN_TYPES.has(originType)
   );

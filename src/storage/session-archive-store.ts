@@ -146,6 +146,10 @@ const buildAutoSessionCondition = (alias = "s"): string => {
     OR lower(COALESCE(json_extract(${prefix}metadata_json, '$.role'), '')) IN ('agent-work', 'agent-chat')
     OR lower(COALESCE(json_extract(${prefix}metadata_json, '$.bindingType'), '')) IN ('task', 'flow_run')
     OR lower(COALESCE(json_extract(${prefix}metadata_json, '$.routedBy'), '')) = 'agent-chat'
+    OR (
+      trim(COALESCE(json_extract(${prefix}metadata_json, '$.createdByNpub'), '')) != ''
+      AND trim(COALESCE(json_extract(${prefix}metadata_json, '$.createdByNpub'), '')) != trim(COALESCE(json_extract(${prefix}metadata_json, '$.ownerNpub'), ${prefix}npub, ''))
+    )
   )`;
 };
 

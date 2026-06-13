@@ -1400,6 +1400,53 @@ describe("handleSessionApi", () => {
     });
   });
 
+  test("POST /api/sessions marks non-browser API launches as agent-managed", async () => {
+    const metadataByAuth: unknown[] = [];
+    const ctx = buildCtx({
+      manager: {
+        createSession: async (
+          _agent: string,
+          _workingDirectory: string,
+          _name?: string,
+          _origin?: unknown,
+          _targetFile?: string,
+          _npub?: string,
+          metadata?: unknown,
+        ) => {
+          metadataByAuth.push(metadata);
+          return { ...baseSession, id: `session-${metadataByAuth.length}`, metadata: metadata ?? baseSession.metadata };
+        },
+      } as any,
+    });
+
+    const url = new URL("http://localhost:3021/api/sessions");
+    const makeRequest = () => new Request(url.toString(), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agent: "codex" }),
+    });
+
+    const browserResponse = await handleSessionApi(
+      makeRequest(),
+      url,
+      "POST",
+      makeAuth({ authMethod: "session", session: { id: "viewer", npub: "npub1owner" } as any, delegatedByBot: false }),
+      ctx,
+    );
+    const apiResponse = await handleSessionApi(
+      makeRequest(),
+      url,
+      "POST",
+      makeAuth({ authMethod: "nip98", delegatedByBot: false }),
+      ctx,
+    );
+
+    expect(browserResponse?.status).toBe(201);
+    expect(apiResponse?.status).toBe(201);
+    expect(metadataByAuth[0]).toMatchObject({ AGENT: false });
+    expect(metadataByAuth[1]).toMatchObject({ AGENT: true });
+  });
+
   test("GET /api/delegate-sessions/:id/messages refreshes live messages", async () => {
     const messages = [{ role: "agent", content: "READY" }];
     const ctx = buildCtx({

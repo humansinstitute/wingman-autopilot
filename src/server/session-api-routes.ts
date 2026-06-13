@@ -1674,7 +1674,7 @@ export async function handleSessionApi(
         sessionOwnerNpub ?? undefined,
         {
           ...(rawMetadata ?? {}),
-          AGENT: callerRequestedAgent || isDelegatedBotAuth(authContext),
+          AGENT: callerRequestedAgent || isProgrammaticCaller(authContext),
           ownerNpub: sessionOwnerNpub ?? undefined,
           createdByNpub: authContext.subjectNpub ?? authContext.npub ?? undefined,
           lastManagedByNpub: authContext.subjectNpub ?? authContext.npub ?? undefined,

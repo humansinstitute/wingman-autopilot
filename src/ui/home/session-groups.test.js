@@ -33,6 +33,12 @@ describe('home session groups', () => {
       metadata: { AGENT: false, billingMode: 'subscription' },
       origin: { type: 'fork', id: 'base-1' },
     },
+    {
+      id: 'api-created-1',
+      npub: 'npub1owner',
+      metadata: { AGENT: false, billingMode: 'subscription', createdByNpub: 'npub1agent' },
+      origin: null,
+    },
   ];
 
   test('classifies home session groups by origin and metadata', () => {
@@ -41,17 +47,23 @@ describe('home session groups', () => {
     expect(getHomeSessionGroup(sessions[2])).toBe('auto');
     expect(getHomeSessionGroup(sessions[3])).toBe('auto');
     expect(getHomeSessionGroup(sessions[4])).toBe('my');
+    expect(getHomeSessionGroup(sessions[5])).toBe('auto');
   });
 
   test('filters sessions for the selected home group', () => {
     expect(filterSessionsForHomeGroup(sessions, 'my').map((session) => session.id)).toEqual(['my-1', 'fork-1']);
-    expect(filterSessionsForHomeGroup(sessions, 'auto').map((session) => session.id)).toEqual(['task-1', 'chat-1', 'agent-1']);
+    expect(filterSessionsForHomeGroup(sessions, 'auto').map((session) => session.id)).toEqual([
+      'task-1',
+      'chat-1',
+      'agent-1',
+      'api-created-1',
+    ]);
   });
 
   test('counts sessions for each home group', () => {
     expect(countSessionsByHomeGroup(sessions)).toEqual({
       my: 2,
-      auto: 3,
+      auto: 4,
     });
   });
 });

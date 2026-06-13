@@ -104,13 +104,25 @@ describe("SessionArchiveStore", () => {
       metadata: { AGENT: false, billingMode: "subscription", routedBy: "agent-chat" },
       messages: [],
     });
+    store.archiveSession({
+      id: "api-created-session",
+      agent: "codex",
+      name: "API created",
+      npub: "npub1owner",
+      workingDirectory: "/tmp/api",
+      startedAt,
+      origin: null,
+      metadata: { AGENT: false, billingMode: "subscription", createdByNpub: "npub1agent" },
+      messages: [],
+    });
 
     expect(store.listArchivedSessions({ category: "my" }).map((session) => session.id)).toEqual(["ui-session"]);
     expect(store.listArchivedSessions({ category: "auto" }).map((session) => session.id).sort()).toEqual([
+      "api-created-session",
       "chat-session",
       "task-session",
     ]);
     expect(store.getArchiveCount({ category: "my" })).toBe(1);
-    expect(store.getArchiveCount({ category: "auto" })).toBe(2);
+    expect(store.getArchiveCount({ category: "auto" })).toBe(3);
   });
 });
