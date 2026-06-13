@@ -1,4 +1,5 @@
 import { generateMessageSpeechApi } from "../services/message-speech.js";
+import { fetchSessionMessagesApi } from "../services/sessions.js";
 
 const generatedSpeech = new Map();
 const autoPlayedMessages = new Set();
@@ -30,13 +31,53 @@ function getMessageText(message) {
   return String(message?.content ?? message?.message ?? "").replace(/\s+/g, " ").trim();
 }
 
+function getMessageCreatedAt(message) {
+  return String(message?.createdAt ?? message?.created_at ?? "").trim();
+}
+
 function getSpeech(message) {
   return message?.speech && typeof message.speech === "object" ? message.speech : null;
 }
 
 function getSpeechCacheKey(sessionId, message) {
   const messageId = getMessageId(message);
-  return messageId ? `${sessionId}:${messageId}` : "";
+  if (messageId) {
+    return `${sessionId}:${messageId}`;
+  }
+  const createdAt = getMessageCreatedAt(message);
+  const text = getMessageText(message);
+  return createdAt && text ? `${sessionId}:${createdAt}:${text.slice(0, 80)}` : "";
+}
+
+function isSameMessageCandidate(candidate, message) {
+  if (!candidate || !message) {
+    return false;
+  }
+  const role = String(candidate.role ?? candidate.type ?? "").toLowerCase();
+  const targetRole = String(message.role ?? message.type ?? "").toLowerCase();
+  if (role !== targetRole) {
+    return false;
+  }
+  const createdAt = getMessageCreatedAt(message);
+  if (createdAt && getMessageCreatedAt(candidate) === createdAt) {
+    return true;
+  }
+  const targetText = getMessageText(message);
+  const candidateText = getMessageText(candidate);
+  return Boolean(targetText && candidateText && candidateText === targetText);
+}
+
+async function resolveServerMessage(sessionId, message) {
+  const explicitId = getMessageId(message);
+  if (explicitId) {
+    return { ...message, messageId: explicitId };
+  }
+
+  const payload = await fetchSessionMessagesApi(sessionId, { refresh: true });
+  const messages = Array.isArray(payload?.messages) ? payload.messages : [];
+  const match = messages.find((candidate) => isSameMessageCandidate(candidate, message));
+  const matchId = getMessageId(match);
+  return matchId ? { ...match, messageId: matchId } : null;
 }
 
 function stopActiveAudio() {
@@ -97,9 +138,18 @@ async function resolveServerSpeech({ sessionId, message, button = null }) {
   }
 
   try {
+    const serverMessage = await resolveServerMessage(sessionId, message);
+    if (!serverMessage) {
+      throw new Error("Message cannot be read aloud yet");
+    }
+    const serverSpeech = getSpeech(serverMessage);
+    if (serverSpeech?.publicPath) {
+      generatedSpeech.set(cacheKey, serverSpeech);
+      return serverSpeech;
+    }
     const response = await generateMessageSpeechApi({
       sessionId,
-      messageId: getMessageId(message),
+      messageId: getMessageId(serverMessage),
       text,
       summary: true,
     });
@@ -141,7 +191,7 @@ export function attachMessageSpeechButton(bubble, { sessionId, message, showToas
   if (!bubble || bubble.dataset.speechAttached === "true") {
     return;
   }
-  if (!isAssistantRole(message) || !getMessageId(message) || !getMessageText(message)) {
+  if (!isAssistantRole(message) || !getMessageText(message)) {
     return;
   }
 

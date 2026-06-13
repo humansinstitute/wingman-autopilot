@@ -17,8 +17,16 @@ describe("live message speech controls", () => {
   });
 
   test("uses the server message id preserved beside the Dexie primary key", () => {
+    expect(speechSource).toContain('import { fetchSessionMessagesApi } from "../services/sessions.js";');
     expect(speechSource).toContain("message?.messageId");
     expect(speechSource).toContain("message?.message_id");
+    expect(speechSource).toContain("resolveServerMessage(sessionId, message)");
+    expect(speechSource).toContain("fetchSessionMessagesApi(sessionId, { refresh: true })");
+  });
+
+  test("renders play controls for stale local rows without a local message id", () => {
+    expect(speechSource).toContain("!isAssistantRole(message) || !getMessageText(message)");
+    expect(speechSource).not.toContain("!isAssistantRole(message) || !getMessageId(message) || !getMessageText(message)");
   });
 
   test("uses server-generated summary audio instead of browser speech for read aloud", () => {
