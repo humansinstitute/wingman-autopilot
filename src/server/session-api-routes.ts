@@ -21,6 +21,7 @@ import { resolveSessionOwnerNpub } from "../sessions/session-ownership";
 import { deliverSessionAgentMessage } from "./session-agent-message";
 import { normalizeBusySessionMessageFailure } from "./session-message-failures";
 import { generateSpeechAudio, resolveSpeechExtension } from "./audio-speech";
+import { generateSpeechSummary } from "./speech-summary";
 import type { PromptReadiness } from "../agents/agent-adapter";
 import {
   isAgentManagedByMetadataOrOrigin,
@@ -45,6 +46,7 @@ const DEFAULT_SETTINGS_SPEECH_BASE_URL = "https://openrouter.ai/api/v1";
 const DEFAULT_SETTINGS_SPEECH_MODEL = "hexgrad/kokoro-82m";
 const DEFAULT_SETTINGS_SPEECH_VOICE = "af_heart";
 const DEFAULT_SETTINGS_SPEECH_FORMAT = "mp3";
+const DEFAULT_SETTINGS_SPEECH_SUMMARY_MODEL = "openai/gpt-4o-mini";
 
 // ---------- Types shared with server.ts ----------
 
@@ -2016,6 +2018,20 @@ function findSpeechMessage(messages: StoredMessage[], messageId: string): Stored
   return messages.find((message) => message.id === messageId) ?? null;
 }
 
+function findPreviousUserMessage(messages: StoredMessage[], targetMessage: StoredMessage): StoredMessage | null {
+  const targetIndex = messages.findIndex((message) => message.id === targetMessage.id);
+  if (targetIndex <= 0) {
+    return null;
+  }
+  for (let index = targetIndex - 1; index >= 0; index -= 1) {
+    const role = normalizeMessageRole(messages[index].role);
+    if (role === "user") {
+      return messages[index];
+    }
+  }
+  return null;
+}
+
 function resolveSpeechSettings(
   ctx: SessionApiContext,
   npub: string | null,
@@ -2043,6 +2059,35 @@ function resolveSpeechSettings(
     ...(model ? { model } : {}),
     ...(voice ? { voice } : {}),
     ...(format ? { format } : {}),
+  };
+}
+
+function resolveSpeechSummarySettings(
+  ctx: SessionApiContext,
+  npub: string | null,
+): {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+} | null {
+  if (!npub || typeof ctx.userSettingsStore?.getAll !== "function") {
+    return null;
+  }
+  const settings = ctx.userSettingsStore.getAll(npub);
+  const apiKey =
+    settings.speech_api_key?.trim() ||
+    settings.openrouter_api_key?.trim() ||
+    settings.openai_api_key?.trim() ||
+    "";
+  if (!apiKey) {
+    return null;
+  }
+  return {
+    apiKey,
+    baseUrl: settings.speech_summary_base_url?.trim() ||
+      settings.speech_base_url?.trim() ||
+      DEFAULT_SETTINGS_SPEECH_BASE_URL,
+    model: settings.speech_summary_model?.trim() || DEFAULT_SETTINGS_SPEECH_SUMMARY_MODEL,
   };
 }
 
@@ -2081,7 +2126,8 @@ async function handleMessageSpeech(
     payload = null;
   }
 
-  const speechText = normalizeSpeechText(payload?.text) || normalizeSpeechText(message.content);
+  const shouldSummarize = payload?.summary === true || payload?.mode === "summary";
+  let speechText = normalizeSpeechText(payload?.text) || normalizeSpeechText(message.content);
   if (!speechText) {
     return Response.json({ error: "Message has no readable text" }, { status: 400 });
   }
@@ -2093,13 +2139,32 @@ async function handleMessageSpeech(
   ) ?? authContext.npub ?? null;
   const agent = liveOwnedSession?.agent ?? storedSession?.agent ?? "codex";
   const ownerSegment = deriveNpubSegment(sessionOwnerNpub);
+  const settingsNpub = authContext.npub ?? sessionOwnerNpub;
+
+  if (shouldSummarize) {
+    const summaryConfig = resolveSpeechSummarySettings(ctx, settingsNpub);
+    if (!summaryConfig) {
+      return Response.json({ error: "Speech summary generation failed: No OpenRouter API key configured" }, { status: 502 });
+    }
+    const previousUserMessage = findPreviousUserMessage(messages, message);
+    try {
+      speechText = await generateSpeechSummary({
+        userPrompt: previousUserMessage?.content ?? "",
+        agentResponse: message.content,
+        config: summaryConfig,
+      });
+    } catch (error) {
+      const messageText = error instanceof Error ? error.message : String(error);
+      return Response.json({ error: `Speech summary generation failed: ${messageText}` }, { status: 502 });
+    }
+  }
 
   let generated;
   try {
     generated = await generateSpeechAudio({
       text: speechText,
       voice: typeof payload?.voice === "string" ? payload.voice : null,
-      config: resolveSpeechSettings(ctx, authContext.npub ?? sessionOwnerNpub),
+      config: resolveSpeechSettings(ctx, settingsNpub),
     });
   } catch (error) {
     const messageText = error instanceof Error ? error.message : String(error);

@@ -63,6 +63,7 @@ const OPENROUTER_SPEECH_DEFAULTS = {
   model: 'hexgrad/kokoro-82m',
   voice: 'af_heart',
   format: 'mp3',
+  summaryModel: 'openai/gpt-4o-mini',
 };
 
 function normalizeHostname(value) {
@@ -316,6 +317,15 @@ export function createSpeechSettingsSection() {
   formatInput.value = OPENROUTER_SPEECH_DEFAULTS.format;
   formatRow.append(formatLabel, formatInput);
 
+  const summaryModelRow = document.createElement('div');
+  summaryModelRow.className = 'wm-settings__key-row';
+  summaryModelRow.style.cssText = 'display:flex;gap:8px;align-items:center;margin-top:8px;';
+  const summaryModelLabel = createRowLabel('Summary Model', 140, 'speech-summary-model-input');
+  const summaryModelInput = createInput(OPENROUTER_SPEECH_DEFAULTS.summaryModel, 'text', 'Speech summary model', 'settings-speech-summary-model');
+  summaryModelInput.id = 'speech-summary-model-input';
+  summaryModelInput.value = OPENROUTER_SPEECH_DEFAULTS.summaryModel;
+  summaryModelRow.append(summaryModelLabel, summaryModelInput);
+
   const actionsRow = document.createElement('div');
   actionsRow.style.cssText = 'display:flex;gap:8px;align-items:center;margin-top:8px;';
   const saveBtn = createActionButton('Save');
@@ -345,6 +355,9 @@ export function createSpeechSettingsSection() {
     if (typeof settings.speech_format === 'string') {
       formatInput.value = settings.speech_format;
     }
+    if (typeof settings.speech_summary_model === 'string') {
+      summaryModelInput.value = settings.speech_summary_model;
+    }
   });
 
   saveBtn.addEventListener('click', async () => {
@@ -356,12 +369,14 @@ export function createSpeechSettingsSection() {
       const model = modelInput.value.trim();
       const voice = voiceInput.value.trim();
       const format = formatInput.value.trim();
+      const summaryModel = summaryModelInput.value.trim();
       const saves = [];
       if (apiKey) saves.push(saveUserSetting('speech_api_key', apiKey));
       if (baseUrl) saves.push(saveUserSetting('speech_base_url', baseUrl));
       if (model) saves.push(saveUserSetting('speech_model', model));
       if (voice) saves.push(saveUserSetting('speech_voice', voice));
       if (format) saves.push(saveUserSetting('speech_format', format));
+      if (summaryModel) saves.push(saveUserSetting('speech_summary_model', summaryModel));
       if (saves.length === 0) {
         setStatus(status, 'Enter at least one value to save', 'var(--error, #f44336)');
       } else {
@@ -388,6 +403,7 @@ export function createSpeechSettingsSection() {
         deleteUserSetting('speech_model'),
         deleteUserSetting('speech_voice'),
         deleteUserSetting('speech_format'),
+        deleteUserSetting('speech_summary_model'),
       ]);
       apiKeyInput.value = '';
       apiKeyInput.placeholder = 'sk-...';
@@ -395,6 +411,7 @@ export function createSpeechSettingsSection() {
       modelInput.value = OPENROUTER_SPEECH_DEFAULTS.model;
       voiceInput.value = OPENROUTER_SPEECH_DEFAULTS.voice;
       formatInput.value = OPENROUTER_SPEECH_DEFAULTS.format;
+      summaryModelInput.value = OPENROUTER_SPEECH_DEFAULTS.summaryModel;
       setStatus(status, 'Cleared');
     } catch (error) {
       setStatus(status, error.message || 'Failed to clear', 'var(--error, #f44336)');
@@ -405,9 +422,9 @@ export function createSpeechSettingsSection() {
   const helpText = document.createElement('p');
   helpText.className = 'wm-settings__port-note';
   helpText.style.cssText = 'margin-top:6px;font-size:0.8em;';
-  helpText.textContent = 'Recommended OpenRouter config: base URL https://openrouter.ai/api/v1, model hexgrad/kokoro-82m, voice af_heart, format mp3.';
+  helpText.textContent = 'Recommended OpenRouter config: TTS model hexgrad/kokoro-82m, voice af_heart, format mp3, summary model openai/gpt-4o-mini.';
 
-  container.append(heading, description, apiKeyRow, baseUrlRow, modelRow, voiceRow, formatRow, actionsRow, helpText);
+  container.append(heading, description, apiKeyRow, baseUrlRow, modelRow, voiceRow, formatRow, summaryModelRow, actionsRow, helpText);
   return container;
 }
 

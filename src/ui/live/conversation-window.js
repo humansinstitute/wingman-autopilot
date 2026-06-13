@@ -1,6 +1,6 @@
 import { attachCopyButton } from "../utils/clipboard.js";
 import { renderChatMessageHtml } from "../rendering/chat-message-content.js";
-import { createMessageSpeechCard } from "./message-speech.js";
+import { attachMessageSpeechButton } from "./message-speech.js";
 
 export const LIVE_MESSAGE_WINDOW_DEFAULT = 80;
 export const LIVE_MESSAGE_PAGE_SIZE = 80;
@@ -132,15 +132,12 @@ function createMessageBubble(message, options = {}) {
     cleanAgentText: Boolean(options.agentOutputFormattingEnabled && shouldFormatAgentMessage(message)),
   });
   bubble.append(body);
-  const speechCard = createMessageSpeechCard({
+  attachCopyButton(bubble);
+  attachMessageSpeechButton(bubble, {
     sessionId: options.sessionId,
     message,
     showToast: options.showToast,
   });
-  if (speechCard) {
-    bubble.append(speechCard);
-  }
-  attachCopyButton(bubble);
   return bubble;
 }
 

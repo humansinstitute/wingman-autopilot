@@ -338,6 +338,92 @@ describe("handleSessionApi", () => {
     });
   });
 
+  test("POST /api/sessions/:id/messages/:messageId/speech summarizes before TTS in summary mode", async () => {
+    const attachmentRoot = await mkdtemp(join(tmpdir(), "wingman-speech-summary-test-"));
+    tempPaths.push(attachmentRoot);
+    const providerCalls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+      providerCalls.push({ url, body });
+      if (url.endsWith("/chat/completions")) {
+        return Response.json({
+          choices: [{ message: { content: "I explained how to test and use speech summaries." } }],
+        });
+      }
+      return new Response(new Uint8Array([1, 2, 3]), {
+        status: 200,
+        headers: { "content-type": "audio/mpeg" },
+      });
+    }) as typeof fetch;
+
+    const ctx = buildCtx({
+      attachmentRoot,
+      messageStore: {
+        recordSession: () => {},
+        getSession: () => ({ id: "session-1", agent: "codex", npub: "npub1owner", metadata: null }),
+        listSessions: () => [],
+        listSessionMessages: () => [
+          {
+            id: "message-user",
+            sessionId: "session-1",
+            role: "user",
+            content: "How do we test this?",
+            createdAt: "2026-06-13T02:00:00.000Z",
+          },
+          {
+            id: "message-agent",
+            sessionId: "session-1",
+            role: "assistant",
+            content: "Open Settings, save the key, then click Play on the assistant message.",
+            createdAt: "2026-06-13T02:01:00.000Z",
+          },
+        ],
+        getMessageSpeechAttachment: () => null,
+        saveMessageSpeechAttachment: (attachment: unknown) => attachment,
+      } as any,
+      userSettingsStore: {
+        getAll: () => ({
+          speech_api_key: "sk-or-test",
+          speech_summary_model: "openai/gpt-4o-mini",
+        }),
+      },
+    });
+
+    const url = new URL("http://localhost:3021/api/sessions/session-1/messages/message-agent/speech");
+    const request = new Request(url.toString(), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ summary: true }),
+    });
+
+    const response = await handleSessionApi(request, url, "POST", makeAuth({ delegatedByBot: false }), ctx);
+    const body = await response!.json() as { speech: Record<string, unknown> };
+
+    expect(response!.status).toBe(201);
+    expect(providerCalls.map((call) => call.url)).toEqual([
+      "https://openrouter.ai/api/v1/chat/completions",
+      "https://openrouter.ai/api/v1/audio/speech",
+    ]);
+    expect(providerCalls[0].body).toMatchObject({
+      model: "openai/gpt-4o-mini",
+      temperature: 0.2,
+      max_tokens: 120,
+    });
+    expect(JSON.stringify(providerCalls[0].body)).toContain("How do we test this?");
+    expect(providerCalls[1].body).toMatchObject({
+      model: "hexgrad/kokoro-82m",
+      input: "I explained how to test and use speech summaries.",
+      voice: "af_heart",
+      response_format: "mp3",
+    });
+    expect(body.speech).toMatchObject({
+      summary: "I explained how to test and use speech summaries.",
+      model: "hexgrad/kokoro-82m",
+      voice: "af_heart",
+    });
+  });
+
   test("POST /api/sessions/:id/resume-native creates a new session from native metadata", async () => {
     const sourceSession: SessionSnapshot = {
       ...baseSession,

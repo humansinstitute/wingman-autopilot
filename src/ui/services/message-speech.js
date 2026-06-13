@@ -8,13 +8,13 @@ function createApiError(response, data, fallbackMessage) {
   return error;
 }
 
-export async function generateMessageSpeechApi({ sessionId, messageId, text, signal }) {
+export async function generateMessageSpeechApi({ sessionId, messageId, text, summary = false, signal }) {
   const response = await fetch(
     `/api/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/speech`,
     {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, summary, mode: summary ? "summary" : "full" }),
       signal,
     },
   );

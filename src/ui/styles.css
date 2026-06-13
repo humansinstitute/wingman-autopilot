@@ -3504,7 +3504,7 @@ body[data-live-header-collapsed="true"]:has(#app[data-route="live"]) .wm-live-dr
 .wm-message {
   border-radius: 0.75rem;
   padding: 1rem 1.25rem;
-  padding-right: 3rem;
+  padding-right: 5.5rem;
   background: var(--bg-tertiary);
   border: 1px solid rgba(16, 185, 129, 0.18);
   color: var(--text-primary);
@@ -3558,10 +3558,17 @@ body[data-live-header-collapsed="true"]:has(#app[data-route="live"]) .wm-live-dr
   align-self: flex-start;
 }
 
-.wm-message-copy {
+.wm-message-actions {
   position: absolute;
   bottom: 0.65rem;
   right: 0.85rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.wm-message-copy,
+.wm-message-speech-play {
   width: 30px;
   height: 30px;
   display: inline-flex;
@@ -3576,12 +3583,14 @@ body[data-live-header-collapsed="true"]:has(#app[data-route="live"]) .wm-live-dr
   transition: background 150ms ease, transform 150ms ease, border-color 150ms ease;
 }
 
-.wm-message-copy:hover {
+.wm-message-copy:hover,
+.wm-message-speech-play:hover {
   background: rgba(16, 185, 129, 0.22);
   transform: translateY(-1px);
 }
 
-.wm-message-copy:focus-visible {
+.wm-message-copy:focus-visible,
+.wm-message-speech-play:focus-visible {
   outline: 2px solid var(--accent-primary);
   outline-offset: 2px;
 }
@@ -3592,50 +3601,12 @@ body[data-live-header-collapsed="true"]:has(#app[data-route="live"]) .wm-live-dr
   color: #ffffff;
 }
 
-.wm-message-speech-card {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  width: fit-content;
-  max-width: 100%;
-  margin-top: 0.85rem;
-  padding: 0.4rem 0.5rem;
-  border: 1px solid rgba(59, 130, 246, 0.28);
-  border-radius: 0.5rem;
-  background: rgba(15, 23, 42, 0.32);
-}
-
-.wm-message-speech-card__label {
-  color: var(--text-secondary);
-  font-size: 0.78rem;
-  font-weight: 700;
-}
-
-.wm-message-speech-card__button {
-  border: 1px solid rgba(16, 185, 129, 0.32);
-  border-radius: 0.45rem;
-  background: rgba(16, 185, 129, 0.14);
-  color: var(--accent-primary);
-  cursor: pointer;
-  font-size: 0.8rem;
-  font-weight: 700;
-  line-height: 1.2;
-  padding: 0.35rem 0.55rem;
-}
-
-.wm-message-speech-card__button:hover,
-.wm-message-speech-card__button:focus-visible {
-  background: rgba(16, 185, 129, 0.24);
-  outline: 2px solid rgba(16, 185, 129, 0.45);
-  outline-offset: 2px;
-}
-
-.wm-message-speech-card__button:disabled {
+.wm-message-speech-play:disabled {
   cursor: wait;
   opacity: 0.7;
 }
 
-.wm-message-speech-card__button[data-loading="true"] {
+.wm-message-speech-play[data-loading="true"] {
   color: var(--text-secondary);
 }
 

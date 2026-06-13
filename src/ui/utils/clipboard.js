@@ -50,10 +50,14 @@ export async function copyTextToClipboard(text) {
  */
 export function attachCopyButton(bubble) {
   if (!bubble || bubble.dataset.copyAttached === "true") return;
+  const actions = bubble.querySelector(".wm-message-actions") ?? document.createElement("div");
+  actions.className = "wm-message-actions";
+
   const button = document.createElement("button");
   button.type = "button";
   button.className = "wm-message-copy";
   button.setAttribute("aria-label", "Copy message");
+  button.dataset.testid = "message-copy";
   button.innerHTML = MESSAGE_COPY_ICON_SVG;
   button.addEventListener("click", async (event) => {
     event.preventDefault();
@@ -70,7 +74,10 @@ export function attachCopyButton(bubble) {
       }, 1600);
     }
   });
-  bubble.append(button);
+  actions.append(button);
+  if (!actions.parentNode) {
+    bubble.append(actions);
+  }
   bubble.dataset.copyAttached = "true";
 }
 

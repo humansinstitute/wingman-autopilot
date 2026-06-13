@@ -2,9 +2,12 @@ import { generateMessageSpeechApi } from "../services/message-speech.js";
 
 const generatedSpeech = new Map();
 const autoPlayedMessages = new Set();
+const autoReadingMessages = new Set();
 const autoReadTimers = new Map();
 let activeAudio = null;
 const AUTO_READ_IDLE_MS = 1400;
+const PLAY_ICON_SVG =
+  '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>';
 
 function isAssistantRole(message) {
   const role = String(message?.role ?? message?.type ?? "").toLowerCase();
@@ -60,20 +63,6 @@ function playSpeech(publicPath) {
   void audio.play();
 }
 
-function canUseBrowserSpeech() {
-  return typeof SpeechSynthesisUtterance !== "undefined" && typeof speechSynthesis !== "undefined";
-}
-
-function readWithBrowserSpeech(text) {
-  if (!canUseBrowserSpeech()) {
-    return false;
-  }
-  stopActiveAudio();
-  const utterance = new SpeechSynthesisUtterance(text);
-  speechSynthesis.speak(utterance);
-  return true;
-}
-
 async function resolveServerSpeech({ sessionId, message, button = null }) {
   const existing = getSpeech(message);
   if (existing?.publicPath) {
@@ -101,7 +90,12 @@ async function resolveServerSpeech({ sessionId, message, button = null }) {
   }
 
   try {
-    const response = await generateMessageSpeechApi({ sessionId, messageId: getMessageId(message), text });
+    const response = await generateMessageSpeechApi({
+      sessionId,
+      messageId: getMessageId(message),
+      text,
+      summary: true,
+    });
     const speech = response?.speech ?? null;
     if (!speech?.publicPath) {
       throw new Error("Speech generation returned no audio");
@@ -119,13 +113,8 @@ async function resolveServerSpeech({ sessionId, message, button = null }) {
 }
 
 async function readMessageAloud({ sessionId, message, showToast, button = null }) {
-  const text = getMessageText(message);
-  if (!text) {
+  if (!getMessageText(message)) {
     showToast?.("Message has no readable text", { type: "warning" });
-    return;
-  }
-
-  if (readWithBrowserSpeech(text)) {
     return;
   }
 
@@ -141,31 +130,35 @@ export function isSessionAlwaysReadEnabled(session) {
   return Boolean(session?.metadata?.speechAlwaysRead);
 }
 
-export function createMessageSpeechCard({ sessionId, message, showToast }) {
+export function attachMessageSpeechButton(bubble, { sessionId, message, showToast }) {
+  if (!bubble || bubble.dataset.speechAttached === "true") {
+    return;
+  }
   if (!isAssistantRole(message) || !getMessageId(message) || !getMessageText(message)) {
-    return null;
+    return;
   }
 
-  const card = document.createElement("div");
-  card.className = "wm-message-speech-card";
-  card.dataset.testid = "message-speech-card";
-
-  const label = document.createElement("span");
-  label.className = "wm-message-speech-card__label";
-  label.textContent = "Audio";
+  const actions = bubble.querySelector(".wm-message-actions") ?? document.createElement("div");
+  actions.className = "wm-message-actions";
 
   const button = document.createElement("button");
   button.type = "button";
-  button.className = "wm-message-speech-card__button";
+  button.className = "wm-message-speech-play";
   button.dataset.testid = "message-speech-play";
-  button.setAttribute("aria-label", "Read this response aloud");
-  button.textContent = "Read";
-  button.addEventListener("click", () => {
+  button.setAttribute("aria-label", "Play spoken summary");
+  button.title = "Play spoken summary";
+  button.innerHTML = PLAY_ICON_SVG;
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
     void readMessageAloud({ sessionId, message, showToast, button });
   });
 
-  card.append(label, button);
-  return card;
+  actions.prepend(button);
+  if (!actions.parentNode) {
+    bubble.append(actions);
+  }
+  bubble.dataset.speechAttached = "true";
 }
 
 export async function autoReadLatestAssistantMessage({ sessionId, session, conversation, showToast }) {
@@ -186,11 +179,16 @@ export async function autoReadLatestAssistantMessage({ sessionId, session, conve
   const latestSnapshot = { ...latest };
   const timer = setTimeout(async () => {
     autoReadTimers.delete(cacheKey);
-    if (autoPlayedMessages.has(cacheKey)) {
+    if (autoPlayedMessages.has(cacheKey) || autoReadingMessages.has(cacheKey)) {
       return;
     }
-    autoPlayedMessages.add(cacheKey);
-    await readMessageAloud({ sessionId, message: latestSnapshot, showToast });
+    autoReadingMessages.add(cacheKey);
+    try {
+      await readMessageAloud({ sessionId, message: latestSnapshot, showToast });
+      autoPlayedMessages.add(cacheKey);
+    } finally {
+      autoReadingMessages.delete(cacheKey);
+    }
   }, AUTO_READ_IDLE_MS);
   autoReadTimers.set(cacheKey, timer);
 }
