@@ -3610,6 +3610,102 @@ body[data-live-header-collapsed="true"]:has(#app[data-route="live"]) .wm-live-dr
   color: var(--text-secondary);
 }
 
+.wm-speech-playback-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(15, 23, 42, 0.42);
+  backdrop-filter: blur(6px);
+}
+
+.wm-speech-playback-modal__panel {
+  width: min(22rem, calc(100vw - 2rem));
+  min-height: 8rem;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.1rem;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 0.5rem;
+  background: var(--surface-elevated, #111827);
+  color: var(--text-primary, #f8fafc);
+  box-shadow: 0 20px 48px rgba(15, 23, 42, 0.35);
+}
+
+.wm-speech-playback-modal__status {
+  width: 2.25rem;
+  height: 2.25rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.18rem;
+  color: var(--accent-primary);
+}
+
+.wm-speech-playback-modal__status span {
+  width: 0.28rem;
+  height: 0.8rem;
+  display: block;
+  border-radius: 999px;
+  background: currentColor;
+  animation: wm-speech-level 820ms ease-in-out infinite;
+}
+
+.wm-speech-playback-modal__status span:nth-child(2) {
+  animation-delay: 110ms;
+}
+
+.wm-speech-playback-modal__status span:nth-child(3) {
+  animation-delay: 220ms;
+}
+
+.wm-speech-playback-modal__status span:nth-child(4) {
+  animation-delay: 330ms;
+}
+
+.wm-speech-playback-modal__title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.wm-speech-playback-modal__stop {
+  min-width: 4.25rem;
+  height: 2.4rem;
+  border: 1px solid rgba(248, 113, 113, 0.45);
+  border-radius: 0.45rem;
+  background: rgba(248, 113, 113, 0.14);
+  color: #fecaca;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.wm-speech-playback-modal__stop:hover,
+.wm-speech-playback-modal__stop:focus-visible {
+  background: rgba(248, 113, 113, 0.24);
+  outline: 2px solid rgba(248, 113, 113, 0.45);
+  outline-offset: 2px;
+}
+
+@keyframes wm-speech-level {
+  0%,
+  100% {
+    transform: scaleY(0.55);
+    opacity: 0.55;
+  }
+  50% {
+    transform: scaleY(1.45);
+    opacity: 1;
+  }
+}
+
 /* Alpine.js Chat Component Styles */
 .alpine-chat {
   display: flex;

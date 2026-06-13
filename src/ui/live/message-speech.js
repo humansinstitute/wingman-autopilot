@@ -9,6 +9,7 @@ const autoReadingMessages = new Set();
 const autoReadTimers = new Map();
 let activeAudio = null;
 let activeSpeechKey = "";
+let activeSpeechModal = null;
 const AUTO_READ_IDLE_MS = 1400;
 const PLAY_ICON_SVG =
   '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>';
@@ -121,12 +122,76 @@ function stopActiveAudio() {
 
 function dispatchSpeechPlaybackChange(key) {
   activeSpeechKey = key || "";
+  syncSpeechPlaybackModal(activeSpeechKey);
   if (typeof window === "undefined" || typeof window.dispatchEvent !== "function") {
     return;
   }
   window.dispatchEvent(new CustomEvent("speech-playback-change", {
     detail: { key },
   }));
+}
+
+function removeSpeechPlaybackModal() {
+  activeSpeechModal?.remove();
+  activeSpeechModal = null;
+}
+
+function syncSpeechPlaybackModal(key) {
+  if (typeof document === "undefined") {
+    return;
+  }
+  if (!key) {
+    removeSpeechPlaybackModal();
+    return;
+  }
+  if (activeSpeechModal?.isConnected) {
+    activeSpeechModal.dataset.speechKey = key;
+    return;
+  }
+
+  const overlay = document.createElement("div");
+  overlay.className = "wm-speech-playback-modal";
+  overlay.dataset.speechKey = key;
+  overlay.dataset.testid = "speech-playback-modal";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+  overlay.setAttribute("aria-labelledby", "speech-playback-title");
+
+  const panel = document.createElement("div");
+  panel.className = "wm-speech-playback-modal__panel";
+
+  const status = document.createElement("div");
+  status.className = "wm-speech-playback-modal__status";
+  status.setAttribute("aria-hidden", "true");
+  for (let index = 0; index < 4; index += 1) {
+    const bar = document.createElement("span");
+    status.append(bar);
+  }
+
+  const title = document.createElement("p");
+  title.id = "speech-playback-title";
+  title.className = "wm-speech-playback-modal__title";
+  title.textContent = "Audio playing";
+
+  const stopButton = document.createElement("button");
+  stopButton.type = "button";
+  stopButton.className = "wm-speech-playback-modal__stop";
+  stopButton.dataset.testid = "speech-playback-stop";
+  stopButton.setAttribute("aria-label", "Stop spoken summary");
+  stopButton.textContent = "Stop";
+  stopButton.addEventListener("click", () => stopSpeechPlayback());
+  overlay.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      stopSpeechPlayback();
+    }
+  });
+
+  panel.append(status, title, stopButton);
+  overlay.append(panel);
+  document.body.append(overlay);
+  activeSpeechModal = overlay;
+  stopButton.focus({ preventScroll: true });
 }
 
 function setSpeechButtonPlaying(button, playing) {
@@ -165,7 +230,12 @@ function playSpeech(publicPath, key = "") {
       dispatchSpeechPlaybackChange(null);
     }
   }, { once: true });
-  void audio.play();
+  void audio.play().catch(() => {
+    if (activeAudio === audio) {
+      activeAudio = null;
+      dispatchSpeechPlaybackChange(null);
+    }
+  });
 }
 
 async function ensureServerSpeech({

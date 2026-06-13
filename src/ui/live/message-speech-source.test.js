@@ -49,6 +49,10 @@ describe("live message speech controls", () => {
   test("turns play controls into stop controls while audio is active", () => {
     expect(speechSource).toContain("const STOP_ICON_SVG");
     expect(speechSource).toContain('window.dispatchEvent(new CustomEvent("speech-playback-change"');
+    expect(speechSource).toContain("function syncSpeechPlaybackModal(key)");
+    expect(speechSource).toContain('overlay.className = "wm-speech-playback-modal"');
+    expect(speechSource).toContain('overlay.dataset.testid = "speech-playback-modal"');
+    expect(speechSource).toContain('stopButton.dataset.testid = "speech-playback-stop"');
     expect(speechSource).toContain("export function stopSpeechPlayback()");
     expect(speechSource).toContain("export function getActiveSpeechPlaybackKey()");
     expect(speechSource).toContain("export function updateSpeechButtonPlaybackState(button, key)");
@@ -66,6 +70,8 @@ describe("live message speech controls", () => {
   test("styles message actions as bottom-right icon controls", () => {
     expect(styles).toContain(".wm-message-actions");
     expect(styles).toContain(".wm-message-copy,\n.wm-message-speech-play");
+    expect(styles).toContain(".wm-speech-playback-modal");
+    expect(styles).toContain(".wm-speech-playback-modal__stop");
     expect(styles).toContain("bottom: 0.65rem;");
     expect(styles).toContain("right: 0.85rem;");
   });
