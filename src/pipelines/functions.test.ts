@@ -591,7 +591,7 @@ describe("memory pipeline functions", () => {
       ],
     });
     expect(result).not.toHaveProperty("validChildPipelines");
-    expect(result.notes).toContain("Classify only as answer_now, think_then_answer, or create_task.");
+    expect(result.notes).toContain("Classify as answer_now or create_task.");
     expect(JSON.stringify(result)).not.toContain("commandPrefix");
     expect(JSON.stringify(result)).not.toContain("group_ids");
     expect(JSON.stringify(result)).not.toContain("l1_id");
@@ -785,7 +785,7 @@ describe("memory pipeline functions", () => {
       },
     ]);
     expect(result).not.toHaveProperty("validChildPipelines");
-    expect(result.notes).toContain("Use create_task only for durable output such as code, docs, files, WApp changes, migrations, or operational artifacts.");
+    expect(result.notes).toContain("Use create_task for durable output or any answer that requires inspecting sessions, logs, pipelines, files, projects, Tower/Yoke state, or Autopilot runtime state before reporting back.");
   });
 
   test("dispatch.prepareChatTaskPipelineInput loads task pipeline candidates after create_task", async () => {
@@ -1045,6 +1045,44 @@ describe("memory pipeline functions", () => {
     expect(result.agentResponse).toMatchObject({
       shouldRespond: true,
       responseDraft: "The main tradeoff is speed versus durability.",
+    });
+  });
+
+  test("shared chat dispatch promotes promissory think_then_answer to task routing", async () => {
+    const execution = await runChatDispatchSpec({
+      latestMessage: "Please can you review all the Autopilot sessions from today and give me an update on where we're at with our projects?",
+      agentDecision: {
+        intent: "think_then_answer",
+        dispatchTask: false,
+        taskDraft: null,
+        chatResponse: { body: "I'll review today's Autopilot sessions and then give you a concise project status update in this thread." },
+        confidence: 0.93,
+      },
+      taskPipelineDecision: {
+        recommendedPipelineId: "do-and-review",
+        workdir: "/repo",
+        chatResponse: { body: "Starting the session review task." },
+        confidence: 0.91,
+      },
+    });
+
+    const decision = currentAfterStep(execution, "normalise-decision").decision as JsonObject;
+    const result = currentAfterStep(execution, "prepare-chat-response");
+    expect(execution.run.status).toBe("ok");
+    expect(decision).toMatchObject({
+      requestedDispatchTask: true,
+      taskRoutingPending: true,
+      intent: "create_task",
+      originalIntent: "think_then_answer",
+    });
+    expect(result.createdTask).toMatchObject({
+      workPlan: {
+        taskSummary: "Review today's Autopilot sessions and project status",
+      },
+    });
+    expect(JSON.stringify(result.createdTask)).toContain("Original request: Please can you review all the Autopilot sessions from today");
+    expect(result.childPipeline).toMatchObject({
+      pipelineDefinitionId: "do-and-review",
     });
   });
 

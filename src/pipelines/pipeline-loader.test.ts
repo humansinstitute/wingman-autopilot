@@ -89,7 +89,7 @@ describe("pipeline definition version paths", () => {
       when: { path: "$.chatContext.shouldProceed", equals: true },
     });
     expect(JSON.stringify(definition?.spec.steps.find((step) => step.name === "analyse-intent"))).toContain(
-      "answer_now, think_then_answer, or create_task",
+      "Classify as answer_now or create_task",
     );
     expect(JSON.stringify(definition?.spec.steps.find((step) => step.name === "analyse-intent"))).toContain(
       "pipeline catalog is intentionally unavailable",

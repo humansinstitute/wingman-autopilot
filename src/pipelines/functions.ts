@@ -444,6 +444,53 @@ const createTaskIntents = new Set([
   "create_task",
 ]);
 
+const promissoryActionPattern = /\b(?:i(?:'ll| will| am going to)|i\u2019ll)\b[\s\S]{0,160}\b(?:review|investigate|inspect|check|read|look into|trace|research|summari[sz]e|analy[sz]e|gather|audit)\b/i;
+const operationalReviewRequestPattern = /\b(?:review|investigate|inspect|check|summari[sz]e|analy[sz]e|audit)\b[\s\S]{0,120}\b(?:sessions?|logs?|runs?|pipelines?|projects?|status|where we'?re at)\b/i;
+
+function shouldPromoteThinkThenAnswerToTask(responseDraft: string | null, originalPrompt: string | null): boolean {
+  const response = responseDraft ?? "";
+  const prompt = originalPrompt ?? "";
+  return promissoryActionPattern.test(response) || operationalReviewRequestPattern.test(prompt);
+}
+
+function buildPromotedChatTaskDraft(originalPrompt: string | null): {
+  title: string;
+  instructions: string;
+  acceptanceCriteria: string[];
+  executionPlan: string[];
+  managerChecklist: string[];
+} {
+  const prompt = originalPrompt ?? "Investigate the originating chat request and report back.";
+  const title = /\bautopilot\b/i.test(prompt) && /\bsessions?\b/i.test(prompt)
+    ? "Review today's Autopilot sessions and project status"
+    : "Investigate chat request and report back";
+  return {
+    title,
+    instructions: [
+      "Investigate the originating Flight Deck chat request and provide the requested answer back in that same thread.",
+      "",
+      `Original request: ${prompt}`,
+      "",
+      "Treat this as task-backed work because the first-stage chat classifier only produced a future-action acknowledgement rather than a complete answer.",
+    ].join("\n"),
+    acceptanceCriteria: [
+      "The relevant current session, pipeline, task, or project state has been inspected directly rather than inferred from the initial chat prompt.",
+      "The final update answers the originating chat request in the original thread.",
+      "The task includes concise evidence of what was checked and any important limitations or follow-up work.",
+    ],
+    executionPlan: [
+      "Read the originating chat thread and identify the requested scope.",
+      "Inspect the relevant Autopilot session, pipeline, task, and project state for the requested date or topic.",
+      "Summarize findings and post the update to the originating Flight Deck thread.",
+    ],
+    managerChecklist: [
+      "Verify the worker did not stop at an acknowledgement.",
+      "Confirm the final reply was posted to the originating chat thread.",
+      "Confirm evidence and limitations are recorded on the task before review.",
+    ],
+  };
+}
+
 function compactText(value: unknown, maxLength: number): string | null {
   const text = getText(value);
   if (!text) return null;
@@ -1154,10 +1201,10 @@ export const builtinPipelineFunctions: FunctionRegistry = {
       notes: [
         "Use latestThread as the authoritative current conversation.",
         "Use referencedRecords only as supporting Flight Deck context.",
-        "Classify only as answer_now, think_then_answer, or create_task.",
-        "Use create_task only for durable output such as code, docs, files, WApp changes, migrations, or operational artifacts.",
-        "Use answer_now for direct explanations, summaries, opinions, recommendations, status answers, and simple conversational replies.",
-        "Use think_then_answer when more reasoning, research, or context loading is needed but the final output is still only a chat answer.",
+        "Classify as answer_now or create_task.",
+        "Use answer_now only when chatResponse.body is the complete final reply.",
+        "Use create_task for durable output or any answer that requires inspecting sessions, logs, pipelines, files, projects, Tower/Yoke state, or Autopilot runtime state before reporting back.",
+        "Do not use think_then_answer for future-action acknowledgements.",
         "Do not choose a child pipeline in this stage; task pipeline candidates are loaded only after create_task.",
       ],
     };
@@ -1637,7 +1684,6 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const recognisedIntent = intent && (chatOnlyIntents.has(intent) || createTaskIntents.has(intent))
       ? intent
       : (raw.dispatchTask === true ? "create_task" : "answer_now");
-    const dispatchTask = recognisedIntent === "create_task";
     const originThread = getThreadMessages(chatContext).slice(-8).map(compactThreadMessage);
     const latestOriginMessage = originThread[originThread.length - 1] ?? {};
     const originalPrompt = getText(latestOriginMessage.body)
@@ -1646,15 +1692,26 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const referencedRecords = Array.isArray(chatContext.referencedRecords)
       ? chatContext.referencedRecords.slice(0, 12).map(compactReferencedRecord)
       : [];
-    const pipelineDefinitionId = dispatchTask && requestedPipelineId && !isDiscussionPipelineIdentifier(requestedPipelineId)
-      ? requestedPipelineId
-      : null;
     const taskDraft = objectValue(raw.taskDraft);
     const scopeId = getText(raw.scopeId ?? taskDraft.scopeId);
     const workdir = getText(raw.workdir ?? taskDraft.workdir ?? agent.workingDirectory);
     const assignerNpub = getText(raw.assignerNpub ?? taskDraft.assignerNpub ?? chat.senderNpub ?? payload.sender_npub ?? record.updaterNpub);
     const reviewerNpub = getText(raw.reviewerNpub ?? taskDraft.reviewerNpub ?? assignerNpub);
-    const title = getText(taskDraft.title ?? raw.title) ?? "Chat-requested Wingman task";
+    const chatResponseBody = getText(objectValue(raw.chatResponse).body)
+      ?? getText(raw.responseDraft)
+      ?? getText(raw.replyDraft)
+      ?? getText(raw.answer);
+    const promoteThinkThenAnswer = recognisedIntent === "think_then_answer"
+      && shouldPromoteThinkThenAnswerToTask(chatResponseBody, originalPrompt);
+    const promotedDraft = promoteThinkThenAnswer
+      ? buildPromotedChatTaskDraft(originalPrompt)
+      : null;
+    const effectiveIntent = promoteThinkThenAnswer ? "create_task" : recognisedIntent;
+    const dispatchTask = effectiveIntent === "create_task";
+    const pipelineDefinitionId = dispatchTask && requestedPipelineId && !isDiscussionPipelineIdentifier(requestedPipelineId)
+      ? requestedPipelineId
+      : null;
+    const title = getText(taskDraft.title ?? raw.title) ?? promotedDraft?.title ?? "Chat-requested Wingman task";
     const instructions = getText(
       taskDraft.instructions
         ?? taskDraft.concreteInstructions
@@ -1662,16 +1719,15 @@ export const builtinPipelineFunctions: FunctionRegistry = {
         ?? raw.concreteInstructions
         ?? raw.taskInstructions
         ?? raw.messageSummary,
-    );
+    ) ?? promotedDraft?.instructions;
     const acceptanceCriteria = getStringArray(taskDraft.acceptanceCriteria ?? raw.acceptanceCriteria);
     const executionPlan = getStringArray(taskDraft.executionPlan ?? raw.executionPlan);
     const managerChecklist = getStringArray(taskDraft.managerChecklist ?? raw.managerChecklist);
+    const effectiveAcceptanceCriteria = acceptanceCriteria.length > 0 ? acceptanceCriteria : (promotedDraft?.acceptanceCriteria ?? []);
+    const effectiveExecutionPlan = executionPlan.length > 0 ? executionPlan : (promotedDraft?.executionPlan ?? []);
+    const effectiveManagerChecklist = managerChecklist.length > 0 ? managerChecklist : (promotedDraft?.managerChecklist ?? []);
     const clarifyingQuestion = getText(raw.clarifyingQuestion);
     const selectedDispatchPipeline = isDispatchPipelineIdentifier(pipelineDefinitionId);
-    const chatResponseBody = getText(objectValue(raw.chatResponse).body)
-      ?? getText(raw.responseDraft)
-      ?? getText(raw.replyDraft)
-      ?? getText(raw.answer);
     const missing = dispatchTask && pipelineDefinitionId
       ? [
           !pipelineDefinitionId ? "pipeline" : "",
@@ -1694,7 +1750,8 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     return {
       dispatchTask: shouldDispatchTask,
       requestedDispatchTask: dispatchTask,
-      intent: recognisedIntent,
+      intent: effectiveIntent,
+      originalIntent: promoteThinkThenAnswer ? recognisedIntent : undefined,
       pipelineDefinitionId: shouldDispatchTask ? pipelineDefinitionId : null,
       scopeId: shouldDispatchTask ? scopeId : null,
       workdir: shouldDispatchTask ? workdir : null,
@@ -1705,9 +1762,9 @@ export const builtinPipelineFunctions: FunctionRegistry = {
       taskDraft: {
         title,
         instructions: instructions ?? "",
-        acceptanceCriteria,
-        executionPlan,
-        managerChecklist,
+        acceptanceCriteria: effectiveAcceptanceCriteria,
+        executionPlan: effectiveExecutionPlan,
+        managerChecklist: effectiveManagerChecklist,
         assignerNpub,
         reviewerNpub,
       },
@@ -1716,9 +1773,9 @@ export const builtinPipelineFunctions: FunctionRegistry = {
         pipelineDefinitionId: shouldDispatchTask ? pipelineDefinitionId : null,
         taskSummary: title,
         instructions: instructions ?? "",
-        acceptanceCriteria,
-        executionPlan,
-        managerChecklist,
+        acceptanceCriteria: effectiveAcceptanceCriteria,
+        executionPlan: effectiveExecutionPlan,
+        managerChecklist: effectiveManagerChecklist,
         scopeId: shouldDispatchTask ? scopeId : null,
         workdir: shouldDispatchTask ? workdir : null,
         assignerNpub,
