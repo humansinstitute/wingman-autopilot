@@ -7,6 +7,8 @@ import { beforeEach, describe, expect, mock, test } from 'bun:test';
 const yokeCommandCalls: string[][] = [];
 const pgMessageFetchCalls: Array<Record<string, unknown>> = [];
 const pgMessageCreateCalls: Array<Record<string, unknown>> = [];
+const pgStorageUploadCalls: Array<Record<string, unknown>> = [];
+const pgAudioNoteCreateCalls: Array<Record<string, unknown>> = [];
 const pgReactionCreateCalls: Array<Record<string, unknown>> = [];
 const pgTaskCreateCalls: Array<Record<string, unknown>> = [];
 const pgTaskFetchCalls: Array<Record<string, unknown>> = [];
@@ -99,6 +101,21 @@ mock.module('../yoke-runtime', () => ({
   runAgentWorkspaceYokeCommand: runAgentWorkspaceYokeCommandMock,
 }));
 
+mock.module('../../server/audio-speech', () => ({
+  generateSpeechAudio: mock(async () => ({
+    audio: new Uint8Array([1, 2, 3]),
+    mimeType: 'audio/mpeg',
+    model: 'hexgrad/kokoro-82m',
+    voice: 'af_heart',
+    format: 'mp3',
+  })),
+  resolveSpeechExtension: (format: string) => format === 'wav' ? '.wav' : '.mp3',
+}));
+
+mock.module('../../server/speech-summary', () => ({
+  generateSpeechSummary: mock(async () => 'Short spoken summary.'),
+}));
+
 mock.module('../tower-client', () => ({
   fetchFlightDeckPgChannelMessages: mock(async (input: Record<string, unknown>) => {
     pgMessageFetchCalls.push(input);
@@ -126,6 +143,25 @@ mock.module('../tower-client', () => ({
         channel_id: input.channelId,
         thread_id: input.threadId,
         body: input.body,
+      },
+    };
+  }),
+  uploadFlightDeckPgStorageObject: mock(async (input: Record<string, unknown>) => {
+    pgStorageUploadCalls.push(input);
+    return {
+      object_id: 'storage-tts-1',
+      content_type: input.contentType,
+      size_bytes: input.content instanceof Uint8Array ? input.content.byteLength : 0,
+    };
+  }),
+  createFlightDeckPgAudioNote: mock(async (input: Record<string, unknown>) => {
+    pgAudioNoteCreateCalls.push(input);
+    return {
+      audio_note: {
+        id: 'audio-note-tts-1',
+        storage_object_id: input.storageObjectId,
+        target_type: input.targetType,
+        target_id: input.targetId,
       },
     };
   }),
@@ -269,6 +305,8 @@ describe('dispatch pipeline Flight Deck publisher', () => {
     yokeCommandCalls.length = 0;
     pgMessageFetchCalls.length = 0;
     pgMessageCreateCalls.length = 0;
+    pgStorageUploadCalls.length = 0;
+    pgAudioNoteCreateCalls.length = 0;
     pgReactionCreateCalls.length = 0;
     pgTaskCreateCalls.length = 0;
     pgTaskFetchCalls.length = 0;
@@ -278,6 +316,9 @@ describe('dispatch pipeline Flight Deck publisher', () => {
     failChatContextCount = 0;
     failReactionCount = 0;
     failTaskCreateCount = 0;
+    Bun.env.WINGMAN_CHAT_REPLY_TTS = 'false';
+    delete Bun.env.OPENROUTER_API_KEY;
+    delete Bun.env.WINGMAN_SPEECH_API_KEY;
     runAgentWorkspaceYokeCommandMock.mockClear();
   });
 
@@ -750,6 +791,57 @@ describe('dispatch pipeline Flight Deck publisher', () => {
       published: true,
       status: 'ok',
       operation: 'chat.reply-current',
+    });
+  });
+
+  test('chat reply publishing attaches generated TTS audio to Flight Deck PG message when configured', async () => {
+    Bun.env.WINGMAN_CHAT_REPLY_TTS = 'true';
+    Bun.env.OPENROUTER_API_KEY = 'test-openrouter-key';
+    const publish = createDispatchFlightDeckPublisher(buildChatPublisherContext({
+      subscription: {
+        subscriptionId: 'sub-pg-1',
+        workspaceOwnerNpub: 'npub1workspace',
+        sourceAppNpub: 'npub1source',
+        backendBaseUrl: 'https://tower.example.com',
+        workspaceId: 'workspace-pg-1',
+        botNpub: 'npub1bot',
+        wsKeyNpub: null,
+      },
+      runtime: {
+        mode: 'flightdeck_pg',
+        yokeStateDir: null,
+        commandPrefix: null,
+        commands: {},
+        error: null,
+      },
+    }));
+
+    const result = await publish({
+      agentResponse: {
+        shouldRespond: true,
+        responseDraft: 'PG reply body',
+      },
+    });
+
+    expect(pgMessageCreateCalls).toHaveLength(1);
+    expect(pgStorageUploadCalls).toHaveLength(1);
+    expect(pgAudioNoteCreateCalls).toHaveLength(1);
+    expect(pgAudioNoteCreateCalls[0]).toMatchObject({
+      channelId: 'channel-1',
+      threadId: 'thread-1',
+      storageObjectId: 'storage-tts-1',
+      targetType: 'message',
+      targetId: 'pg-reply-1',
+      transcriptText: 'Short spoken summary.',
+      transcriptStatus: 'done',
+    });
+    expect(result).toMatchObject({
+      published: true,
+      speech: {
+        status: 'ok',
+        storageObjectId: 'storage-tts-1',
+        audioNoteId: 'audio-note-tts-1',
+      },
     });
   });
 

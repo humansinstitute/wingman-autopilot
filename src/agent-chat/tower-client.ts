@@ -121,6 +121,25 @@ export interface FlightDeckPgMessagesResult {
   next_cursor: string | null;
 }
 
+export interface FlightDeckPgStoragePrepareResult {
+  identity?: Record<string, unknown>;
+  object_id: string;
+  file_name?: string | null;
+  content_type?: string | null;
+  size_bytes?: number | null;
+  upload_url?: string | null;
+  complete_url?: string | null;
+  content_url?: string | null;
+  download_url?: string | null;
+  completed_at?: string | null;
+}
+
+export interface FlightDeckPgAudioNoteResult {
+  identity?: Record<string, unknown>;
+  audio_note?: Record<string, unknown>;
+  storage_link?: Record<string, unknown> | null;
+}
+
 export interface FlightDeckPgWriteResult {
   identity?: Record<string, unknown>;
   message?: FlightDeckPgMessage;
@@ -509,6 +528,168 @@ export async function createFlightDeckPgChannelMessage(params: {
     throw Object.assign(new Error(error.message), error);
   }
   return await response.json() as FlightDeckPgWriteResult;
+}
+
+export async function uploadFlightDeckPgStorageObject(params: {
+  backendBaseUrl: string;
+  workspaceId: string;
+  appNpub: string;
+  botIdentity: RuntimeBotIdentity;
+  fileName: string;
+  contentType: string;
+  content: Uint8Array;
+  signal?: AbortSignal;
+}): Promise<FlightDeckPgStoragePrepareResult> {
+  const preparePath = `/api/v4/flightdeck-pg/workspaces/${encodeURIComponent(params.workspaceId)}/storage/prepare`;
+  const prepareUrl = buildFlightDeckPgUrl(params.backendBaseUrl, preparePath);
+  const prepareBody = {
+    file_name: params.fileName,
+    content_type: params.contentType,
+    size_bytes: params.content.byteLength,
+  };
+  const prepareAuthorization = await signFlightDeckPgBotRequest({
+    botIdentity: params.botIdentity,
+    url: prepareUrl,
+    method: 'POST',
+    body: prepareBody,
+  });
+  const prepareResponse = await fetch(prepareUrl, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      Authorization: prepareAuthorization,
+      'Content-Type': 'application/json',
+      'x-flightdeck-pg-app-npub': params.appNpub,
+    },
+    body: JSON.stringify(prepareBody),
+    signal: params.signal,
+  });
+  if (!prepareResponse.ok) {
+    const error = await parseTowerError(prepareResponse, 'flightdeck_pg_storage_prepare');
+    throw Object.assign(new Error(error.message), error);
+  }
+  const prepared = await prepareResponse.json() as FlightDeckPgStoragePrepareResult;
+  if (!prepared.object_id) {
+    throw new Error('Flight Deck PG storage prepare did not return object_id');
+  }
+
+  const uploadPath = `/api/v4/storage/${encodeURIComponent(prepared.object_id)}`;
+  const uploadUrl = buildFlightDeckPgUrl(params.backendBaseUrl, uploadPath);
+  const uploadBody = { base64_data: Buffer.from(params.content).toString('base64') };
+  const uploadAuthorization = await signFlightDeckPgBotRequest({
+    botIdentity: params.botIdentity,
+    url: uploadUrl,
+    method: 'PUT',
+    body: uploadBody,
+  });
+  const uploadResponse = await fetch(uploadUrl, {
+    method: 'PUT',
+    headers: {
+      Accept: 'application/json',
+      Authorization: uploadAuthorization,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(uploadBody),
+    signal: params.signal,
+  });
+  if (!uploadResponse.ok) {
+    const error = await parseTowerError(uploadResponse, 'flightdeck_pg_storage_upload');
+    throw Object.assign(new Error(error.message), error);
+  }
+
+  const completePath = `/api/v4/storage/${encodeURIComponent(prepared.object_id)}/complete`;
+  const completeUrl = buildFlightDeckPgUrl(params.backendBaseUrl, completePath);
+  const completeBody = {
+    size_bytes: params.content.byteLength,
+    sha256_hex: createHash('sha256').update(params.content).digest('hex'),
+  };
+  const completeAuthorization = await signFlightDeckPgBotRequest({
+    botIdentity: params.botIdentity,
+    url: completeUrl,
+    method: 'POST',
+    body: completeBody,
+  });
+  const completeResponse = await fetch(completeUrl, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      Authorization: completeAuthorization,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(completeBody),
+    signal: params.signal,
+  });
+  if (!completeResponse.ok) {
+    const error = await parseTowerError(completeResponse, 'flightdeck_pg_storage_complete');
+    throw Object.assign(new Error(error.message), error);
+  }
+  const completed = await completeResponse.json() as Record<string, unknown>;
+  return {
+    ...prepared,
+    ...completed,
+    object_id: prepared.object_id,
+  } as FlightDeckPgStoragePrepareResult;
+}
+
+export async function createFlightDeckPgAudioNote(params: {
+  backendBaseUrl: string;
+  workspaceId: string;
+  channelId: string;
+  appNpub: string;
+  botIdentity: RuntimeBotIdentity;
+  storageObjectId: string;
+  mimeType: string;
+  title?: string | null;
+  targetType?: 'message' | 'task_comment' | 'task' | 'doc' | 'file' | 'audio_note' | null;
+  targetId?: string | null;
+  threadId?: string | null;
+  durationSeconds?: number | null;
+  sizeBytes?: number | null;
+  transcriptPreview?: string | null;
+  transcriptText?: string | null;
+  transcriptStatus?: string | null;
+  summary?: string | null;
+  metadata?: Record<string, unknown> | null;
+  signal?: AbortSignal;
+}): Promise<FlightDeckPgAudioNoteResult> {
+  const path = `/api/v4/flightdeck-pg/workspaces/${encodeURIComponent(params.workspaceId)}/channels/${encodeURIComponent(params.channelId)}/audio-notes`;
+  const url = buildFlightDeckPgUrl(params.backendBaseUrl, path);
+  const body = {
+    storage_object_id: params.storageObjectId,
+    mime_type: params.mimeType,
+    ...(params.title ? { title: params.title } : {}),
+    ...(params.targetType && params.targetId ? { target_type: params.targetType, target_id: params.targetId } : {}),
+    ...(params.threadId ? { thread_id: params.threadId } : {}),
+    ...(params.durationSeconds !== undefined ? { duration_seconds: params.durationSeconds } : {}),
+    ...(params.sizeBytes !== undefined ? { size_bytes: params.sizeBytes } : {}),
+    ...(params.transcriptPreview ? { transcript_preview: params.transcriptPreview } : {}),
+    ...(params.transcriptText ? { transcript_text: params.transcriptText } : {}),
+    ...(params.transcriptStatus ? { transcript_status: params.transcriptStatus } : {}),
+    ...(params.summary ? { summary: params.summary } : {}),
+    ...(params.metadata ? { metadata: params.metadata } : {}),
+  };
+  const authorization = await signFlightDeckPgBotRequest({
+    botIdentity: params.botIdentity,
+    url,
+    method: 'POST',
+    body,
+  });
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      Authorization: authorization,
+      'Content-Type': 'application/json',
+      'x-flightdeck-pg-app-npub': params.appNpub,
+    },
+    body: JSON.stringify(body),
+    signal: params.signal,
+  });
+  if (!response.ok) {
+    const error = await parseTowerError(response, 'flightdeck_pg_audio_note_create');
+    throw Object.assign(new Error(error.message), error);
+  }
+  return await response.json() as FlightDeckPgAudioNoteResult;
 }
 
 export async function createFlightDeckPgReaction(params: {

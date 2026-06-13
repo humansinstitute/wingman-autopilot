@@ -1,16 +1,23 @@
 import { randomUUID } from 'node:crypto';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import type { DeclarativeFunction, DeclarativePipeline, DeclarativeStep } from '../../pipelines/declarative';
 import type { JsonObject } from '../../pipelines/pipeline-store';
+import { generateSpeechAudio, resolveSpeechExtension } from '../../server/audio-speech';
+import { generateSpeechSummary } from '../../server/speech-summary';
 import type { AgentDefinitionRecord, RuntimeBotIdentity } from '../types';
 import {
   acquireFlightDeckPgEditLease,
+  createFlightDeckPgAudioNote,
   createFlightDeckPgChannelMessage,
   createFlightDeckPgChannelTask,
   createFlightDeckPgReaction,
   createFlightDeckPgTaskComment,
   fetchFlightDeckPgChannelMessages,
   fetchFlightDeckPgTask,
+  uploadFlightDeckPgStorageObject,
   updateFlightDeckPgTaskState,
   type FlightDeckPgMessage,
 } from '../tower-client';
@@ -48,6 +55,13 @@ const KNOWN_TASK_STATES = new Set([
   'cancelled',
 ]);
 
+const CHAT_REPLY_TTS_DEFAULT_BASE_URL = 'https://openrouter.ai/api/v1';
+const CHAT_REPLY_TTS_DEFAULT_MODEL = 'hexgrad/kokoro-82m';
+const CHAT_REPLY_TTS_DEFAULT_VOICE = 'af_heart';
+const CHAT_REPLY_TTS_DEFAULT_FORMAT = 'mp3';
+const CHAT_REPLY_TTS_DEFAULT_SUMMARY_MODEL = 'openai/gpt-4o-mini';
+const CHAT_REPLY_TTS_MAX_TEXT_LENGTH = 8000;
+
 export function pipelineNeedsFlightDeckPublisher(pipeline: DeclarativePipeline): boolean {
   return pipeline.steps.some(stepNeedsFlightDeckPublisher);
 }
@@ -68,6 +82,106 @@ function canUseFlightDeckRuntime(context: DispatchPipelineFlightDeckPublisherCon
     return true;
   }
   return Boolean(context.agent?.workingDirectory && context.runtime.yokeStateDir);
+}
+
+function envText(name: string): string {
+  return String(Bun.env[name] || '').trim();
+}
+
+function chatReplyTtsEnabled(): boolean {
+  const raw = envText('WINGMAN_CHAT_REPLY_TTS').toLowerCase();
+  return !['0', 'false', 'no', 'off'].includes(raw);
+}
+
+function normaliseSpeechTranscript(value: string): string {
+  return value.replace(/\s+/g, ' ').trim().slice(0, CHAT_REPLY_TTS_MAX_TEXT_LENGTH);
+}
+
+function speechPreview(value: string): string {
+  return normaliseSpeechTranscript(value).split(/\s+/).slice(0, 18).join(' ');
+}
+
+async function generateChatReplySpeech(input: {
+  replyBody: string;
+  userPrompt?: string | null;
+}): Promise<{
+  audio: Uint8Array;
+  mimeType: string;
+  model: string;
+  voice: string;
+  format: string;
+  transcript: string;
+  summary: string;
+} | null> {
+  if (!chatReplyTtsEnabled()) return null;
+  const apiKey = envText('WINGMAN_SPEECH_API_KEY')
+    || envText('OPENROUTER_API_KEY')
+    || envText('OPENAI_API_KEY')
+    || envText('CODEX_API_KEY');
+  if (!apiKey) return null;
+
+  const baseUrl = envText('WINGMAN_SPEECH_BASE_URL')
+    || envText('OPENROUTER_BASE_URL')
+    || CHAT_REPLY_TTS_DEFAULT_BASE_URL;
+  const model = envText('WINGMAN_SPEECH_MODEL') || CHAT_REPLY_TTS_DEFAULT_MODEL;
+  const voice = envText('WINGMAN_SPEECH_VOICE') || CHAT_REPLY_TTS_DEFAULT_VOICE;
+  const format = envText('WINGMAN_SPEECH_FORMAT') || CHAT_REPLY_TTS_DEFAULT_FORMAT;
+  const shouldSummarize = envText('WINGMAN_CHAT_REPLY_TTS_MODE').toLowerCase() !== 'full';
+
+  let transcript = normaliseSpeechTranscript(input.replyBody);
+  if (!transcript) return null;
+  if (shouldSummarize) {
+    try {
+      transcript = await generateSpeechSummary({
+        userPrompt: input.userPrompt ?? '',
+        agentResponse: input.replyBody,
+        config: {
+          apiKey,
+          baseUrl: envText('WINGMAN_SPEECH_SUMMARY_BASE_URL') || baseUrl,
+          model: envText('WINGMAN_SPEECH_SUMMARY_MODEL') || CHAT_REPLY_TTS_DEFAULT_SUMMARY_MODEL,
+        },
+      });
+    } catch (error) {
+      console.warn('[dispatch-publisher] chat reply TTS summary failed; using full reply text', error);
+    }
+  }
+
+  const generated = await generateSpeechAudio({
+    text: transcript,
+    config: {
+      provider: 'openrouter',
+      apiKey,
+      baseUrl,
+      model,
+      voice,
+      format,
+    },
+  });
+  return {
+    ...generated,
+    transcript,
+    summary: transcript,
+  };
+}
+
+async function writeTempSpeechFile(speech: { audio: Uint8Array; format: string }): Promise<{
+  filePath: string;
+  cleanup: () => Promise<void>;
+}> {
+  const directory = await mkdtemp(join(tmpdir(), 'wingman-chat-reply-tts-'));
+  const filePath = join(directory, `reply${resolveSpeechExtension(speech.format)}`);
+  await writeFile(filePath, speech.audio);
+  return {
+    filePath,
+    cleanup: async () => {
+      await rm(directory, { recursive: true, force: true });
+    },
+  };
+}
+
+function getPublishedPgMessageId(result: unknown): string | null {
+  const message = objectValue(objectValue(result)?.message);
+  return getText(message.id) ?? getText(objectValue(result)?.message_id) ?? null;
 }
 
 function getFlightDeckPgPublishContext(context: DispatchPipelineFlightDeckPublisherContext): {
@@ -1601,6 +1715,67 @@ async function publishChatReply(
         subscription_id: context.eventInput.subscription.subscriptionId,
       },
     });
+    let speechResult: JsonObject | null = null;
+    try {
+      const messageId = getPublishedPgMessageId(result);
+      const speech = messageId
+        ? await generateChatReplySpeech({
+          replyBody: normalizedBody,
+          userPrompt: getText(objectValue(context.eventInput.payload)?.body),
+        })
+        : null;
+      if (messageId && speech) {
+        const storage = await uploadFlightDeckPgStorageObject({
+          backendBaseUrl: pg.backendBaseUrl,
+          workspaceId: pg.workspaceId,
+          appNpub: pg.appNpub,
+          botIdentity: pg.botIdentity,
+          fileName: `chat-reply-tts-${messageId}${resolveSpeechExtension(speech.format)}`,
+          contentType: speech.mimeType,
+          content: speech.audio,
+        });
+        const audioNote = await createFlightDeckPgAudioNote({
+          backendBaseUrl: pg.backendBaseUrl,
+          workspaceId: pg.workspaceId,
+          channelId,
+          appNpub: pg.appNpub,
+          botIdentity: pg.botIdentity,
+          storageObjectId: storage.object_id,
+          mimeType: speech.mimeType,
+          title: 'TTS reply summary',
+          targetType: 'message',
+          targetId: messageId,
+          threadId,
+          sizeBytes: speech.audio.byteLength,
+          transcriptPreview: speechPreview(speech.transcript),
+          transcriptText: speech.transcript,
+          transcriptStatus: 'done',
+          summary: speech.summary,
+          metadata: {
+            autopilot_dispatch_tts: true,
+            model: speech.model,
+            voice: speech.voice,
+            format: speech.format,
+          },
+        });
+        speechResult = {
+          status: 'ok',
+          storageObjectId: storage.object_id,
+          audioNoteId: getText(objectValue(audioNote.audio_note)?.id),
+        };
+      } else {
+        speechResult = {
+          status: 'skipped',
+          reason: messageId ? 'speech_not_configured' : 'message_id_missing',
+        };
+      }
+    } catch (error) {
+      console.warn('[dispatch-publisher] chat reply TTS attachment failed', error);
+      speechResult = {
+        status: 'failed',
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
     return {
       published: true,
       status: 'ok',
@@ -1608,6 +1783,7 @@ async function publishChatReply(
       channelId,
       threadId,
       result,
+      speech: speechResult,
       agentResponse: {
         ...response,
         responseDraft: normalizedBody,
@@ -1615,19 +1791,61 @@ async function publishChatReply(
     };
   }
 
-  const result = await runYokeJson(context, [
-    'chat',
-    'reply-current',
-    '--body',
-    normalizedBody,
-    '--skip-refresh',
-    '--channel',
-    channelId,
-    '--thread',
-    threadId,
-    '--format',
-    'json',
-  ]);
+  let tempSpeech: Awaited<ReturnType<typeof writeTempSpeechFile>> | null = null;
+  let yokeSpeechResult: JsonObject | null = null;
+  try {
+    const speech = await generateChatReplySpeech({
+      replyBody: normalizedBody,
+      userPrompt: getText(objectValue(context.eventInput.payload)?.body),
+    });
+    if (speech) {
+      tempSpeech = await writeTempSpeechFile(speech);
+      yokeSpeechResult = {
+        status: 'ok',
+        model: speech.model,
+        voice: speech.voice,
+        format: speech.format,
+        transcript: speech.transcript,
+      };
+    } else {
+      yokeSpeechResult = { status: 'skipped', reason: 'speech_not_configured' };
+    }
+  } catch (error) {
+    console.warn('[dispatch-publisher] chat reply TTS generation failed', error);
+    yokeSpeechResult = {
+      status: 'failed',
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  let result: JsonObject;
+  try {
+    result = await runYokeJson(context, [
+      'chat',
+      'reply-current',
+      '--body',
+      normalizedBody,
+      ...(tempSpeech ? [
+        '--tts-file',
+        tempSpeech.filePath,
+        '--tts-title',
+        'TTS reply summary',
+        '--tts-transcript',
+        getText(yokeSpeechResult?.transcript) ?? normalizedBody,
+      ] : []),
+      '--skip-refresh',
+      '--channel',
+      channelId,
+      '--thread',
+      threadId,
+      '--format',
+      'json',
+    ]);
+  } finally {
+    if (tempSpeech) {
+      await tempSpeech.cleanup();
+    }
+  }
   return {
     published: true,
     status: 'ok',
@@ -1635,6 +1853,7 @@ async function publishChatReply(
     channelId,
     threadId,
     result,
+    speech: yokeSpeechResult,
     agentResponse: {
       ...response,
       responseDraft: normalizedBody,
