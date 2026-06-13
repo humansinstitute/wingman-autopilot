@@ -10,13 +10,23 @@ describe("Alpine chat speech controls", () => {
     expect(source).toContain("autoReadLatestAssistantMessage");
     expect(source).toContain("ensureLatestAssistantSpeech");
     expect(source).toContain("getLatestAssistantSpeechKey");
+    expect(source).toContain("getMessageSpeechKey");
     expect(source).toContain("hasMessageSpeech");
+    expect(source).toContain("stopSpeechPlayback");
     expect(source).toContain("canReadMessage(message)");
     expect(source).toContain("isReadableAgentMessage(message) && hasMessageSpeech(message)");
     expect(source).toContain('class="wm-message-actions"');
     expect(source).toContain('class="wm-message-speech-play"');
     expect(source).toContain('data-testid="message-speech-play"');
     expect(source).toContain("$store.chat.playMessageSpeech(message, $el)");
+  });
+
+  test("renders Alpine speech playback as a play or stop control", () => {
+    expect(source).toContain("speechPlaybackKey");
+    expect(source).toContain('window.addEventListener("speech-playback-change"');
+    expect(source).toContain("isMessageSpeechPlaying(message)");
+    expect(source).toContain("getMessageSpeechLabel(message)");
+    expect(source).toContain(":data-playing=\"$store.chat.isMessageSpeechPlaying(message) ? 'true' : 'false'\"");
   });
 
   test("keeps Alpine speech generation and auto-read wired to session details settings", () => {

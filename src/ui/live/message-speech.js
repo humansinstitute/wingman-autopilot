@@ -8,9 +8,12 @@ const autoPlayedMessages = new Set();
 const autoReadingMessages = new Set();
 const autoReadTimers = new Map();
 let activeAudio = null;
+let activeSpeechKey = "";
 const AUTO_READ_IDLE_MS = 1400;
 const PLAY_ICON_SVG =
   '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>';
+const STOP_ICON_SVG =
+  '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24"><path fill="currentColor" d="M6 6h12v12H6z"/></svg>';
 
 function isAssistantRole(message) {
   const role = String(message?.role ?? message?.type ?? "").toLowerCase();
@@ -53,6 +56,10 @@ function getSpeechCacheKey(sessionId, message) {
   const createdAt = getMessageCreatedAt(message);
   const text = getMessageText(message);
   return createdAt && text ? `${sessionId}:${createdAt}:${text.slice(0, 80)}` : "";
+}
+
+export function getMessageSpeechKey(sessionId, message) {
+  return getSpeechCacheKey(sessionId, message);
 }
 
 export function getLatestAssistantSpeechKey(sessionId, conversation) {
@@ -98,28 +105,64 @@ function stopActiveAudio() {
   if (!activeAudio) {
     return;
   }
+  const stoppedAudio = activeAudio;
   try {
-    activeAudio.pause();
-    activeAudio.currentTime = 0;
+    stoppedAudio.pause();
+    stoppedAudio.currentTime = 0;
   } catch {
     // Ignore browser audio state errors.
   }
   activeAudio = null;
+  dispatchSpeechPlaybackChange(null);
   if (typeof speechSynthesis !== "undefined") {
     speechSynthesis.cancel();
   }
 }
 
-function playSpeech(publicPath) {
+function dispatchSpeechPlaybackChange(key) {
+  activeSpeechKey = key || "";
+  if (typeof window === "undefined" || typeof window.dispatchEvent !== "function") {
+    return;
+  }
+  window.dispatchEvent(new CustomEvent("speech-playback-change", {
+    detail: { key },
+  }));
+}
+
+function setSpeechButtonPlaying(button, playing) {
+  if (!button) {
+    return;
+  }
+  button.dataset.playing = playing ? "true" : "false";
+  button.setAttribute("aria-label", playing ? "Stop spoken summary" : "Play spoken summary");
+  button.title = playing ? "Stop spoken summary" : "Play spoken summary";
+  button.innerHTML = playing ? STOP_ICON_SVG : PLAY_ICON_SVG;
+}
+
+export function updateSpeechButtonPlaybackState(button, key) {
+  setSpeechButtonPlaying(button, Boolean(key && button?.dataset.speechKey === key));
+}
+
+export function getActiveSpeechPlaybackKey() {
+  return activeSpeechKey;
+}
+
+export function stopSpeechPlayback() {
+  stopActiveAudio();
+}
+
+function playSpeech(publicPath, key = "") {
   if (!publicPath) {
     return;
   }
   stopActiveAudio();
   const audio = new Audio(publicPath);
   activeAudio = audio;
+  dispatchSpeechPlaybackChange(key);
   audio.addEventListener("ended", () => {
     if (activeAudio === audio) {
       activeAudio = null;
+      dispatchSpeechPlaybackChange(null);
     }
   }, { once: true });
   void audio.play();
@@ -217,7 +260,8 @@ export async function readMessageAloud({ sessionId, message, showToast, button =
       button,
       generateIfMissing: false,
     });
-    playSpeech(speech.publicPath);
+    const key = getSpeechCacheKey(sessionId, message);
+    playSpeech(speech.publicPath, key);
   } catch (error) {
     showToast?.(error instanceof Error ? error.message : "Speech is not available in this browser", { type: "error" });
   }
@@ -246,12 +290,24 @@ export function attachMessageSpeechButton(bubble, { sessionId, message, showToas
   button.type = "button";
   button.className = "wm-message-speech-play";
   button.dataset.testid = "message-speech-play";
-  button.setAttribute("aria-label", "Play spoken summary");
-  button.title = "Play spoken summary";
-  button.innerHTML = PLAY_ICON_SVG;
+  button.dataset.speechKey = getSpeechCacheKey(sessionId, message);
+  setSpeechButtonPlaying(button, false);
+  const playbackListener = (event) => {
+    if (!button.isConnected) {
+      window.removeEventListener("speech-playback-change", playbackListener);
+      return;
+    }
+    updateSpeechButtonPlaybackState(button, event.detail?.key ?? null);
+  };
+  window.addEventListener("speech-playback-change", playbackListener);
+  updateSpeechButtonPlaybackState(button, getActiveSpeechPlaybackKey());
   button.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();
+    if (button.dataset.playing === "true") {
+      stopSpeechPlayback();
+      return;
+    }
     void readMessageAloud({ sessionId, message, showToast, button });
   });
 
@@ -314,7 +370,7 @@ export async function autoReadLatestAssistantMessage({ sessionId, session, conve
         generateIfMissing: true,
       });
       if (generated) {
-        playSpeech(speech.publicPath);
+        playSpeech(speech.publicPath, cacheKey);
       }
       autoPlayedMessages.add(cacheKey);
     } catch (error) {

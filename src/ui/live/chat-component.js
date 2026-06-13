@@ -25,10 +25,12 @@ import {
   autoReadLatestAssistantMessage,
   ensureLatestAssistantSpeech,
   getLatestAssistantSpeechKey,
+  getMessageSpeechKey,
   hasMessageSpeech,
   isSessionAlwaysReadEnabled,
   isSessionSpeechGenerationEnabled,
   readMessageAloud,
+  stopSpeechPlayback,
 } from "./message-speech.js";
 
 let featureEnabledResolver = () => false;
@@ -108,9 +110,13 @@ export function registerChatComponent() {
     _statusSubscription: null,
     _speechBaselineReady: false,
     _lastSpeechCandidateKey: "",
+    speechPlaybackKey: "",
 
-    /** Alpine auto-calls init() on store registration — nothing to do yet. */
-    init() {},
+    init() {
+      window.addEventListener("speech-playback-change", (event) => {
+        this.speechPlaybackKey = event.detail?.key ?? "";
+      });
+    },
 
     /**
      * Load (or switch to) a session's chat.
@@ -303,6 +309,10 @@ export function registerChatComponent() {
 
     async playMessageSpeech(message, button) {
       if (!this.sessionId) return;
+      if (this.isMessageSpeechPlaying(message)) {
+        stopSpeechPlayback();
+        return;
+      }
       await readMessageAloud({
         sessionId: this.sessionId,
         message,
@@ -312,6 +322,19 @@ export function registerChatComponent() {
           console[level]("[chat] speech playback", messageText);
         },
       });
+    },
+
+    getMessageSpeechKey(message) {
+      return this.sessionId ? getMessageSpeechKey(this.sessionId, message) : "";
+    },
+
+    isMessageSpeechPlaying(message) {
+      const key = this.getMessageSpeechKey(message);
+      return Boolean(key && key === this.speechPlaybackKey);
+    },
+
+    getMessageSpeechLabel(message) {
+      return this.isMessageSpeechPlaying(message) ? "Stop spoken summary" : "Play spoken summary";
     },
 
     _scheduleSpeechWork() {
@@ -507,10 +530,16 @@ export function getChatTemplate(sessionId) {
             <button type="button"
                     class="wm-message-speech-play"
                     data-testid="message-speech-play"
-                    aria-label="Play spoken summary"
-                    title="Play spoken summary"
+                    :aria-label="$store.chat.getMessageSpeechLabel(message)"
+                    :title="$store.chat.getMessageSpeechLabel(message)"
+                    :data-playing="$store.chat.isMessageSpeechPlaying(message) ? 'true' : 'false'"
                     @click.stop="$store.chat.playMessageSpeech(message, $el)">
-              <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>
+              <template x-if="!$store.chat.isMessageSpeechPlaying(message)">
+                <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>
+              </template>
+              <template x-if="$store.chat.isMessageSpeechPlaying(message)">
+                <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24"><path fill="currentColor" d="M6 6h12v12H6z"/></svg>
+              </template>
             </button>
           </template>
           <button type="button" class="wm-message-copy" data-testid="message-copy" aria-label="Copy message"

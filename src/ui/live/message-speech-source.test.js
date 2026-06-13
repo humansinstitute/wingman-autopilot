@@ -43,7 +43,18 @@ describe("live message speech controls", () => {
     expect(speechSource).toContain("export async function ensureLatestAssistantSpeech");
     expect(speechSource).toContain("generateIfMissing: false");
     expect(speechSource).toContain("if (generated) {");
-    expect(speechSource).toContain("playSpeech(speech.publicPath)");
+    expect(speechSource).toContain("playSpeech(speech.publicPath, cacheKey)");
+  });
+
+  test("turns play controls into stop controls while audio is active", () => {
+    expect(speechSource).toContain("const STOP_ICON_SVG");
+    expect(speechSource).toContain('window.dispatchEvent(new CustomEvent("speech-playback-change"');
+    expect(speechSource).toContain("export function stopSpeechPlayback()");
+    expect(speechSource).toContain("export function getActiveSpeechPlaybackKey()");
+    expect(speechSource).toContain("export function updateSpeechButtonPlaybackState(button, key)");
+    expect(speechSource).toContain("updateSpeechButtonPlaybackState(button, getActiveSpeechPlaybackKey())");
+    expect(speechSource).toContain('button.dataset.playing === "true"');
+    expect(speechSource).toContain("stopSpeechPlayback();");
   });
 
   test("uses server-generated summary audio instead of browser speech for read aloud", () => {
