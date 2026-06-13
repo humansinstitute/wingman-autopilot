@@ -55,6 +55,7 @@ export const MessageStore = {
     const role = normalized.role;
     const content = normalized.content;
     const createdAt = normalized.createdAt;
+    const messageId = normalized.messageId ?? null;
     const now = new Date().toISOString();
 
     const matchingTimestampMessages = createdAt
@@ -70,6 +71,7 @@ export const MessageStore = {
     if (matchingMessage) {
       await db.messages.update(matchingMessage.id, {
         content,
+        messageId: messageId ?? matchingMessage.messageId ?? null,
         speech: normalized.speech ?? null,
         updatedAt: now,
       });
@@ -87,6 +89,7 @@ export const MessageStore = {
       if (content.length > oldContent.length && content.startsWith(oldContent.slice(0, 50))) {
         await db.messages.update(existing.id, {
           content,
+          messageId: messageId ?? existing.messageId ?? null,
           speech: normalized.speech ?? null,
           updatedAt: now,
         });
@@ -99,6 +102,7 @@ export const MessageStore = {
       sessionId,
       role,
       content,
+      messageId,
       speech: normalized.speech ?? null,
       createdAt,
       updatedAt: now,
@@ -157,6 +161,7 @@ export const MessageStore = {
         if (
           old.content === inc.content &&
           old.role === inc.role &&
+          (old.messageId ?? null) === (inc.messageId ?? null) &&
           JSON.stringify(old.speech ?? null) === JSON.stringify(inc.speech ?? null)
         ) {
           continue;
@@ -176,6 +181,7 @@ export const MessageStore = {
           db.messages.update(old.id, {
             content: inc.content,
             role: inc.role,
+            messageId: inc.messageId ?? old.messageId ?? null,
             speech: inc.speech ?? null,
             updatedAt: now,
           }),
@@ -194,6 +200,7 @@ export const MessageStore = {
           sessionId,
           role: inc.role,
           content: inc.content,
+          messageId: inc.messageId ?? null,
           speech: inc.speech ?? null,
           createdAt: inc.createdAt,
           updatedAt: now,

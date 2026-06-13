@@ -8,18 +8,28 @@ function readMessageField(message, ...keys) {
   return "";
 }
 
+function readMessageIdentity(message) {
+  const explicitId = readMessageField(message, "messageId", "message_id");
+  if (explicitId) {
+    return explicitId;
+  }
+  const id = message?.id;
+  return typeof id === "string" && id.length > 0 ? id : "";
+}
+
 export function normalizeConversationMessage(message, fallbackCreatedAt = new Date().toISOString()) {
   const role = readMessageField(message, "role", "type") || "assistant";
   const content = readMessageField(message, "content", "message");
   const createdAt = readMessageField(message, "createdAt", "created_at") || fallbackCreatedAt;
+  const messageId = readMessageIdentity(message);
   const normalized = {
     role,
     content,
     createdAt,
   };
 
-  if (message && Object.prototype.hasOwnProperty.call(message, "id")) {
-    normalized.id = message.id;
+  if (messageId) {
+    normalized.messageId = messageId;
   }
   if (message?.speech && typeof message.speech === "object") {
     normalized.speech = message.speech;
@@ -46,7 +56,7 @@ export function areConversationMessagesEqual(previousMessages, nextMessages) {
     const incoming = next[index] ?? {};
 
     if (
-      readMessageField(current, "id") !== readMessageField(incoming, "id") ||
+      readMessageIdentity(current) !== readMessageIdentity(incoming) ||
       readMessageField(current, "role", "type") !== readMessageField(incoming, "role", "type") ||
       readMessageField(current, "content", "message") !== readMessageField(incoming, "content", "message") ||
       readMessageField(current, "createdAt", "created_at") !== readMessageField(incoming, "createdAt", "created_at") ||

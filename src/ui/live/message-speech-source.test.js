@@ -16,6 +16,11 @@ describe("live message speech controls", () => {
     expect(speechSource).toContain('button.className = "wm-message-speech-play"');
   });
 
+  test("uses the server message id preserved beside the Dexie primary key", () => {
+    expect(speechSource).toContain("message?.messageId");
+    expect(speechSource).toContain("message?.message_id");
+  });
+
   test("uses server-generated summary audio instead of browser speech for read aloud", () => {
     expect(speechSource).toContain("summary: true");
     expect(speechSource).not.toContain("new SpeechSynthesisUtterance");

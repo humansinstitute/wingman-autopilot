@@ -10,12 +10,12 @@ describe("conversation-sync", () => {
     const createdAt = "2026-04-06T10:00:00.000Z";
 
     expect(normalizeConversationMessage({
-      id: 7,
+      id: "server-message-7",
       type: "user",
       message: "hello",
       created_at: createdAt,
     })).toEqual({
-      id: 7,
+      messageId: "server-message-7",
       role: "user",
       content: "hello",
       createdAt,
@@ -54,7 +54,7 @@ describe("conversation-sync", () => {
       createdAt: "2026-04-06T13:00:00.000Z",
       speech,
     })).toEqual({
-      id: "message-1",
+      messageId: "message-1",
       role: "assistant",
       content: "Ready",
       createdAt: "2026-04-06T13:00:00.000Z",
@@ -65,5 +65,18 @@ describe("conversation-sync", () => {
       [{ role: "assistant", content: "Ready", createdAt: "2026-04-06T13:00:00.000Z" }],
       [{ role: "assistant", content: "Ready", createdAt: "2026-04-06T13:00:00.000Z", speech }],
     )).toBe(false);
+  });
+
+  test("does not treat Dexie numeric ids as server message ids", () => {
+    expect(normalizeConversationMessage({
+      id: 7,
+      role: "assistant",
+      content: "Ready",
+      createdAt: "2026-04-06T14:00:00.000Z",
+    })).toEqual({
+      role: "assistant",
+      content: "Ready",
+      createdAt: "2026-04-06T14:00:00.000Z",
+    });
   });
 });

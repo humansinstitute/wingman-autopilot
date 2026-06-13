@@ -15,7 +15,14 @@ function isAssistantRole(message) {
 }
 
 function getMessageId(message) {
-  const id = typeof message?.id === "string" ? message.id.trim() : "";
+  const id =
+    typeof message?.messageId === "string"
+      ? message.messageId.trim()
+      : typeof message?.message_id === "string"
+        ? message.message_id.trim()
+        : typeof message?.id === "string"
+          ? message.id.trim()
+          : "";
   return id || "";
 }
 
