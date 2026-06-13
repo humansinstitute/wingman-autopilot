@@ -628,6 +628,103 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
     expect(pipelineStore.listRuns().filter((run) => run.definitionId === route.pipelineDefinitionId)).toHaveLength(1);
   });
 
+  test('allows mirrored task dispatch dedupe identifiers from separate subscriptions', async () => {
+    const pipelineStore = new PipelineStore(makeTempDb('agent-work-cross-subscription-dedupe-runs'));
+    const primaryRouteStore = new DispatchRouteStore(makeTempDb('agent-work-cross-subscription-primary-routes'));
+    const secondaryRouteStore = new DispatchRouteStore(makeTempDb('agent-work-cross-subscription-secondary-routes'));
+    const primary = makeSubscription();
+    const secondary = {
+      ...makeSubscription(),
+      subscriptionId: 'sub-2',
+      backendBaseUrl: 'https://tower-secondary.example.com',
+    };
+    const routeInput = {
+      routeId: 'mirrored-route',
+      managedByNpub: primary.managedByNpub!,
+      workspaceOwnerNpub: primary.workspaceOwnerNpub,
+      botNpub: primary.botNpub,
+      sourceAppNpub: primary.sourceAppNpub,
+      triggerKind: 'task' as const,
+      capability: 'task_dispatch' as const,
+      pipelineDefinitionId: 'task-pipeline',
+      dedupeWindowSeconds: 300,
+    };
+    const primaryRoute = primaryRouteStore.save({
+      ...routeInput,
+      subscriptionId: primary.subscriptionId,
+    });
+    const secondaryRoute = secondaryRouteStore.save({
+      ...routeInput,
+      subscriptionId: secondary.subscriptionId,
+    });
+    const createRuntime = (routeStore: DispatchRouteStore) => new DispatchPipelineRuntime({
+      routeStore,
+      pipelineStore,
+      getSessionApiContext: () => ({} as never),
+      callbackOrigin: 'http://localhost',
+      loadDefinition: async () => ({
+        id: 'task-pipeline',
+        slug: 'task-pipeline',
+        name: 'Task Pipeline',
+        scope: 'user',
+        ownerAlias: 'manager',
+        path: '/tmp/task-pipeline.json',
+        spec: { name: 'Task Pipeline', input: {}, steps: [] },
+      }),
+      loadFunctions: async () => ({ registry: {}, records: [] }),
+    });
+    const dispatchInput = {
+      triggerKind: 'task' as const,
+      capability: 'task_dispatch' as const,
+      recordId: 'record-task-mirror-1',
+      record: {},
+      payload: {
+        task_id: 'task-mirror-1',
+        state: 'ready',
+        assigned_to: primary.botNpub,
+      },
+      recordFamily: 'task',
+      recordState: 'active',
+      recordVersion: 7,
+      updaterNpub: 'npub1user',
+      bindingType: 'task' as const,
+      bindingId: 'record-task-mirror-1',
+      groupNpubs: ['npub1group'],
+    };
+
+    const first = await createRuntime(primaryRouteStore).dispatch({
+      ...dispatchInput,
+      subscription: primary,
+    });
+    const second = await createRuntime(secondaryRouteStore).dispatch({
+      ...dispatchInput,
+      subscription: secondary,
+    });
+
+    expect(first.historyEntries[0]?.action).toBe('task_pipeline_dispatch');
+    expect(second.historyEntries[0]?.action).toBe('task_pipeline_dispatch');
+    expect(first.historyEntries[0]?.dedupeKey).not.toBe(second.historyEntries[0]?.dedupeKey);
+    expect(first.historyEntries[0]?.dedupeKey).toBe([
+      primary.subscriptionId,
+      primary.workspaceOwnerNpub,
+      primary.sourceAppNpub,
+      'record-task-mirror-1',
+      7,
+      'record-task-mirror-1',
+      primaryRoute.routeId,
+    ].join(':'));
+    expect(second.historyEntries[0]?.dedupeKey).toBe([
+      secondary.subscriptionId,
+      secondary.workspaceOwnerNpub,
+      secondary.sourceAppNpub,
+      'record-task-mirror-1',
+      7,
+      'record-task-mirror-1',
+      secondaryRoute.routeId,
+    ].join(':'));
+    expect(pipelineStore.listRuns().filter((run) => run.definitionId === 'task-pipeline')).toHaveLength(2);
+  });
+
   test('suppresses concurrent duplicate dispatch admission before the first run is persisted', async () => {
     const routeStore = new DispatchRouteStore(makeTempDb('agent-work-inflight-dedupe-routes'));
     const pipelineStore = new PipelineStore(makeTempDb('agent-work-inflight-dedupe-runs'));
@@ -859,6 +956,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
           record_id: 'record-task-profile-1',
           record_state: 'active',
           version: 1,
+          signature_npub: 'npub1user',
         },
       ],
       decryptRecordPayload: async () => ({
@@ -944,7 +1042,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
       agentStore,
       profilePolicyStore,
       dispatchPipelineRuntime,
-      fetchRecordHistory: async () => [{ record_id: 'record-task-quiet-1', record_state: 'active', version: 1 }],
+      fetchRecordHistory: async () => [{ record_id: 'record-task-quiet-1', record_state: 'active', version: 1, signature_npub: 'npub1user' }],
       decryptRecordPayload: async () => ({
         task_id: 'task-quiet-1',
         title: 'Quiet task',
@@ -1203,6 +1301,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
           record_id: 'record-task-pipeline-1',
           record_state: 'active',
           version: 3,
+          signature_npub: 'npub1user',
         },
       ],
       decryptRecordPayload: async () => ({
@@ -1288,6 +1387,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
           record_id: 'record-task-pipeline-not-ready-1',
           record_state: 'active',
           version: 1,
+          signature_npub: 'npub1user',
         },
       ],
       decryptRecordPayload: async () => ({
@@ -1478,7 +1578,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
           throw new Error('legacy task dispatch should not run when a route is disabled');
         },
       } as unknown as AgentWorkSessionRuntime,
-      fetchRecordHistory: async () => [{ record_id: 'record-task-disabled-1', record_state: 'active', version: 1 }],
+      fetchRecordHistory: async () => [{ record_id: 'record-task-disabled-1', record_state: 'active', version: 1, signature_npub: 'npub1user' }],
       decryptRecordPayload: async () => ({
         task_id: 'task-disabled-1',
         title: 'Disabled task',
@@ -2487,6 +2587,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
           record_id: 'record-task-1',
           record_state: 'active',
           version: 2,
+          signature_npub: 'npub1user',
         },
       ],
       decryptRecordPayload: async () => ({
@@ -2644,6 +2745,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
           record_id: 'record-kickoff-1',
           record_state: 'active',
           version: 1,
+          signature_npub: 'npub1user',
         },
       ],
       decryptRecordPayload: async () => ({
@@ -2718,6 +2820,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
           record_id: 'record-review-1',
           record_state: 'active',
           version: 1,
+          signature_npub: 'npub1user',
         },
       ],
       decryptRecordPayload: async () => ({
@@ -2792,6 +2895,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
           record_id: 'record-task-skip-1',
           record_state: 'active',
           version: 1,
+          signature_npub: 'npub1user',
         },
       ],
       decryptRecordPayload: async () => ({
@@ -2865,6 +2969,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
           record_id: 'record-task-not-ready-1',
           record_state: 'active',
           version: 1,
+          signature_npub: 'npub1user',
         },
       ],
       decryptRecordPayload: async () => ({
