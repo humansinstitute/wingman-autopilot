@@ -37,6 +37,7 @@
  * @param {string} deps.TRIGGERS_ROUTE                    - route path constant
  * @param {string} deps.SCHEDULER_ROUTE                   - route path constant
  * @param {string} deps.PIPELINES_ROUTE                   - route path constant
+ * @param {string} deps.TERMINAL_ROUTE                    - route path constant
  * @param {string} deps.SETTINGS_ROUTE                    - route path constant
  * @param {string} deps.PRIVACY_ROUTE                     - route path constant
  * @param {Element[]} deps.navLinks                       - nav anchor elements with data-route
@@ -79,6 +80,7 @@ export function createNavigation(deps) {
     TRIGGERS_ROUTE,
     SCHEDULER_ROUTE,
     PIPELINES_ROUTE,
+    TERMINAL_ROUTE,
     SETTINGS_ROUTE,
     PRIVACY_ROUTE,
     navLinks,
@@ -224,6 +226,28 @@ export function createNavigation(deps) {
     render();
   }
 
+  function navigateToTerminal({ skipMenuClose = false } = {}) {
+    if (!state.identity.authenticated) {
+      openIdentityLoginDialog();
+      return;
+    }
+    if (!state.identity.isAdmin) {
+      showToast?.("Terminal is admin-only", { variant: "info" });
+      return;
+    }
+    if (!skipMenuClose) {
+      closeMenu();
+    }
+    closeIdentityLoginDialog();
+    deactivateLiveSessionRefresh();
+    setCurrentRoute("terminal");
+    setLastLoggedSessionId(null);
+    if (window.location.pathname !== TERMINAL_ROUTE) {
+      window.history.pushState({ route: "terminal" }, "", TERMINAL_ROUTE);
+    }
+    render();
+  }
+
   function navigateToFiles({ skipMenuClose = false } = {}) {
     if (!state.identity.authenticated) {
       openIdentityLoginDialog();
@@ -303,6 +327,9 @@ export function createNavigation(deps) {
         } else if (targetRoute === "pipelines") {
           navigateToPipelines({ skipMenuClose: true });
           return;
+        } else if (targetRoute === "terminal") {
+          navigateToTerminal({ skipMenuClose: true });
+          return;
         } else if (targetRoute === "files") {
           navigateToFiles({ skipMenuClose: true });
           return;
@@ -381,6 +408,7 @@ export function createNavigation(deps) {
     navigateToNightWatch,
     navigateToScheduler,
     navigateToPipelines,
+    navigateToTerminal,
     navigateToFiles,
     navigateToSettings,
     setupNavListeners,

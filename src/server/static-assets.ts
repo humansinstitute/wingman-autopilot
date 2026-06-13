@@ -268,9 +268,11 @@ export const createStaticAssetService = (options: StaticAssetServiceOptions) => 
     const type =
       extension === ".js" || extension === ".mjs"
         ? "application/javascript; charset=utf-8"
-        : extension === ".json" || extension === ".map"
-          ? "application/json; charset=utf-8"
-          : file.type || undefined;
+        : extension === ".css"
+          ? "text/css; charset=utf-8"
+          : extension === ".json" || extension === ".map"
+            ? "application/json; charset=utf-8"
+            : file.type || undefined;
 
     const headers: Record<string, string> = {
       ...(type ? { "content-type": type } : {}),

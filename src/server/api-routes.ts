@@ -34,6 +34,7 @@ import { handlePipelineApi, type PipelineApiContext } from "../pipelines/pipelin
 import type { WorkspaceDelegationStore } from "../storage/workspace-delegation-store";
 import { getEffectiveOwnerNpub } from "../auth/effective-owner";
 import { handleSigningApi, type SigningApiContext } from "../signing/signing-api";
+import { handleTerminalApi, type TerminalRoutesContext } from "./terminal-routes";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "HEAD";
 
@@ -102,6 +103,7 @@ export interface ApiRoutesContext {
   delegationRoutesContext: DelegationRoutesContext;
   pipelineApiContext?: PipelineApiContext;
   signingApiContext?: SigningApiContext;
+  terminalRoutesContext?: TerminalRoutesContext;
   workspaceDelegationStore: WorkspaceDelegationStore;
 
   // Stores accessed directly by handleApi
@@ -257,12 +259,24 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
     }
 
     if (pathname.startsWith("/api/pipelines") && ctx.pipelineApiContext) {
+      const pipelineApiContext = ctx.pipelineApiContext;
       const pipelineAuthContext = ctx.resolveNip98AuthContext(request, url, authContext);
       const pipelineResponse = await runWithRequestContext(
         pipelineAuthContext,
-        () => handlePipelineApi(request, url, method, pipelineAuthContext, ctx.pipelineApiContext),
+        () => handlePipelineApi(request, url, method, pipelineAuthContext, pipelineApiContext),
       );
       if (pipelineResponse) return pipelineResponse;
+    }
+
+    if (pathname.startsWith("/api/terminal/")) {
+      if (!ctx.terminalRoutesContext) {
+        return Response.json({ error: "terminal-unavailable" }, { status: 503 });
+      }
+      const response = await handleTerminalApi(request, url, method, authContext, ctx.terminalRoutesContext);
+      if (response) {
+        return response;
+      }
+      return Response.json({ error: "Not found" }, { status: 404 });
     }
 
     if (pathname.startsWith("/api/npub-projects")) {

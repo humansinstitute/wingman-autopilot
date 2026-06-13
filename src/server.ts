@@ -182,6 +182,11 @@ import {
 import { performSystemCleanup } from "./server/system-cleanup.js";
 import { type SystemRoutesContext } from "./server/system-routes";
 import { createApiRouteHandler } from "./server/api-routes";
+import {
+  handleTerminalWebSocketUpgrade,
+  createTerminalWebSocketHandler,
+  type TerminalWebSocketData,
+} from "./server/terminal-websocket";
 import { ensureAgentApiBinary } from "./server/bootstrap/agentapi";
 import { SchedulerStore } from "./scheduler/scheduler-store";
 import { SchedulerEngine } from "./scheduler/scheduler-engine";
@@ -201,6 +206,9 @@ import {
   writeWarmRestartMarker,
 } from "./server/bootstrap/warm-restart";
 import type { WarmRestartMarker } from "./server/bootstrap/warm-restart";
+import { resolveTerminalConfig } from "./terminal/terminal-config";
+import { TerminalSessionManager } from "./terminal/terminal-session-manager";
+import { TerminalTicketStore } from "./terminal/terminal-ticket-store";
 import { reconcileAppsWithPM2 } from "./server/bootstrap/pm2-reconcile";
 import { cleanupOrphanedAgentProcesses } from "./server/bootstrap/pm2-agent-cleanup";
 import { ensureWingmanCoreRegistration } from "./server/bootstrap/wingman-core-registry";
@@ -715,6 +723,8 @@ registerVendorPackage("mermaid", "dist", "mermaid.esm.min.mjs");
 registerVendorPackage("nostr-tools", join("lib", "esm"));
 registerVendorPackage("dexie", "dist", "dexie.mjs");
 registerVendorPackage("alpinejs", "dist", "module.esm.js");
+registerVendorPackage("@xterm/xterm", "", join("lib", "xterm.mjs"));
+registerVendorPackage("@xterm/addon-fit", "", join("lib", "addon-fit.mjs"));
 const publicRoot = normalize(join(projectRoot, "public"));
 const publicRootBoundary = publicRoot.endsWith(sep) ? publicRoot : `${publicRoot}${sep}`;
 await mkdir(documentsDirectory, { recursive: true }).catch(() => undefined);
@@ -2169,6 +2179,7 @@ const requireAdminAccess = (): AccessRule => {
 registerAccessRule(AccessActions.SystemManage, requireAdminAccess());
 registerAccessRule(AccessActions.AdminUsers, requireAdminAccess());
 registerAccessRule(AccessActions.FeatureFlagsManage, requireAdminAccess());
+registerAccessRule(AccessActions.TerminalAccess, requireAdminAccess());
 
 const accessDeniedJson = (decision: AccessDecision): Response => {
   const headers = new Headers({
@@ -2331,6 +2342,14 @@ const billingApiContext: BillingApiContext = {
 // Used to provide request IP resolution to the API route handler without a
 // forward-reference issue (the server const is defined after handleApi).
 const serverRef: { current: { requestIP: (req: Request) => { address: string } | null } | null } = { current: null };
+const terminalConfig = resolveTerminalConfig({ defaultCwd: projectRootPath });
+const terminalTickets = new TerminalTicketStore({ ttlMs: terminalConfig.ticketTtlMs });
+const terminalSessions = new TerminalSessionManager(terminalConfig);
+const terminalWebSocketContext = {
+  tickets: terminalTickets,
+  sessions: terminalSessions,
+  isAdminNpub: isConfiguredAdminNpub,
+};
 
 const handleApi = createApiRouteHandler({
   getRequestIP: (req) => serverRef.current?.requestIP(req) ?? null,
@@ -2495,6 +2514,13 @@ const handleApi = createApiRouteHandler({
     getSession: (sid: string) => manager.getSession(sid),
     getInstanceIdentity: () => loadWingmanInstanceIdentity(),
   },
+  terminalRoutesContext: {
+    config: terminalConfig,
+    tickets: terminalTickets,
+    sessions: terminalSessions,
+    ensureApiAccess,
+    AccessActions,
+  },
   workspaceDelegationStore,
 
   // Stores accessed directly
@@ -2639,11 +2665,11 @@ const handleApi = createApiRouteHandler({
   },
 });
 
-const server = Bun.serve({
+const server = Bun.serve<TerminalWebSocketData>({
   port: config.port,
   // Disable idle timeout for SSE connections (default is 10 seconds)
   idleTimeout: 255, // Max value in seconds (about 4 minutes)
-  async fetch(request: Request): Promise<Response> {
+  async fetch(request: Request, requestServer): Promise<Response | undefined> {
     const url = new URL(request.url);
     const method = request.method as HttpMethod;
     const authContext = resolveRequestAuthContext(request);
@@ -2657,6 +2683,17 @@ const server = Bun.serve({
       const httpsRedirect = redirectInsecurePublicRequest(request, url, config.baseUrl);
       if (httpsRedirect) {
         return httpsRedirect;
+      }
+
+      const terminalUpgradeResponse = await handleTerminalWebSocketUpgrade(
+        request,
+        url,
+        authContext,
+        requestServer,
+        terminalWebSocketContext,
+      );
+      if (terminalUpgradeResponse !== null) {
+        return terminalUpgradeResponse;
       }
 
       const webhookResponse = await handleWebhookRequest(request, url, authContext);
@@ -2687,6 +2724,7 @@ const server = Bun.serve({
       const isWingmanPath = pathname.startsWith("/api/") ||
         pathname.startsWith("/home") ||
         pathname.startsWith("/live") ||
+        pathname.startsWith("/terminal") ||
         pathname.startsWith("/settings") ||
         pathname.startsWith("/uploads/") ||
         pathname.startsWith("/projects") ||
@@ -2747,7 +2785,9 @@ const server = Bun.serve({
         pathname === "/triggers" ||
         pathname.startsWith("/triggers/") ||
         pathname === "/pipelines" ||
-        pathname.startsWith("/pipelines/");
+        pathname.startsWith("/pipelines/") ||
+        pathname === "/terminal" ||
+        pathname.startsWith("/terminal/");
 
       if (isSpaRoutePath && !assetService.isUiAssetPath(pathname)) {
         return compressResponse(request, await serveIndex());
@@ -2799,6 +2839,9 @@ const server = Bun.serve({
       return new Response("Not Found", { status: 404 });
     });
 
+    if (!response) {
+      return undefined;
+    }
     return maybeRefreshSessionCookie(response, authContext, {
       secureCookie: shouldUseSecureCookies(request),
     });
@@ -2810,6 +2853,7 @@ const server = Bun.serve({
       { status: 500 },
     );
   },
+  websocket: createTerminalWebSocketHandler(terminalWebSocketContext),
 });
 
 // Wire up the request-IP resolver now that the server object exists.

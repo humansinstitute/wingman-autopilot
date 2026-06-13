@@ -10,6 +10,7 @@ export const AccessActions = {
   AdminUsers: "admin:users",
   FeatureFlagsManage: "feature-flags:manage",
   SystemManage: "system:manage",
+  TerminalAccess: "terminal:access",
   TodosManage: "todos:manage",
   DeploymentsManage: "deployments:manage",
 } as const;

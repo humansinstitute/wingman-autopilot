@@ -134,6 +134,7 @@ import { initHomeView } from "./views/home-view.js";
 import { initFilesView } from "./views/files-view.js";
 import { initFilesApi } from "./files/api.js";
 import { initLiveView } from "./views/live-view.js";
+import { initTerminalView } from "./views/terminal-view.js";
 import { initDirectoryBrowser } from "./modals/directory-browser.js";
 import { abbreviateNpub, normaliseNpubValue, isFiniteNumber, initIdentityDom } from "./identity/dom.js";
 import { initIdentityStateManager } from "./identity/state-manager.js";
@@ -178,6 +179,8 @@ let renderSettings = () => document.createElement("div");
 let renderHome = () => document.createElement("div");
 let renderApps = () => document.createElement("div");
 let renderFiles = () => document.createElement("div");
+let renderTerminal = () => document.createElement("div");
+let disconnectTerminal = () => {};
 let renderLive = () => document.createElement("div");
 let renderSessionTabs = () => document.createElement("div");
 let renderTabs = () => document.createElement("div");
@@ -476,6 +479,7 @@ const NIGHTWATCH_ROUTE = "/nightwatch";
 const SCHEDULER_ROUTE = "/scheduler";
 const TRIGGERS_ROUTE = "/triggers";
 const PIPELINES_ROUTE = "/pipelines";
+const TERMINAL_ROUTE = "/terminal";
 const HOME_ROUTE = "/home";
 const PRIVACY_ROUTE = "/privacy";
 
@@ -505,6 +509,9 @@ const getRouteFromPath = (pathname) => {
   }
   if (pathname === PIPELINES_ROUTE || pathname.startsWith(`${PIPELINES_ROUTE}/`)) {
     return "pipelines";
+  }
+  if (pathname === TERMINAL_ROUTE || pathname.startsWith(`${TERMINAL_ROUTE}/`)) {
+    return "terminal";
   }
   if (pathname === LIVE_ROUTE_PREFIX || pathname.startsWith(`${LIVE_ROUTE_PREFIX}/`)) {
     return "live";
@@ -1285,6 +1292,8 @@ const updateDocumentTitle = () => {
     title = "Triggers - Wingman";
   } else if (currentRoute === "pipelines") {
     title = "Pipelines - Wingman";
+  } else if (currentRoute === "terminal") {
+    title = "Terminal - Wingman";
   } else if (currentRoute === "home") {
     title = "Home - Wingman";
   }
@@ -1755,35 +1764,49 @@ const appRenderer = createAppRenderer({
   restoreFocusFromSnapshot: (...args) => restoreFocusFromSnapshot(...args),
   renderRouteView: (route) => {
     if (route === "live") {
+      disconnectTerminal();
       return renderLive();
     }
     if (route === "apps") {
+      disconnectTerminal();
       return renderApps();
     }
     if (route === "projects") {
+      disconnectTerminal();
       return renderProjects();
     }
     if (route === "nightwatch") {
+      disconnectTerminal();
       return renderNightWatchPage();
     }
     if (route === "scheduler") {
+      disconnectTerminal();
       return renderSchedulerPage();
     }
     if (route === "pipelines") {
+      disconnectTerminal();
       return renderPipelinesPage();
     }
+    if (route === "terminal") {
+      return renderTerminal();
+    }
     if (route === "files") {
+      disconnectTerminal();
       return renderFiles();
     }
     if (route === "settings") {
+      disconnectTerminal();
       return renderSettings();
     }
     if (route === "chat") {
+      disconnectTerminal();
       return renderChat();
     }
     if (route === "privacy") {
+      disconnectTerminal();
       return renderPrivacyPolicy();
     }
+    disconnectTerminal();
     return renderHome();
   },
   renderFileEditorOverlay: (...args) => renderFileEditorOverlay(...args),
@@ -2163,6 +2186,13 @@ const filesViewModule = initFilesView({
 });
 renderFiles = filesViewModule.renderFiles;
 
+const terminalViewModule = initTerminalView({
+  state,
+  render,
+});
+renderTerminal = terminalViewModule.renderTerminal;
+disconnectTerminal = terminalViewModule.disconnectTerminal;
+
 const liveViewModule = initLiveView({
   sessionsStore,
   appsStore,
@@ -2449,6 +2479,7 @@ const {
   navigateToProjects,
   navigateToNightWatch,
   navigateToScheduler,
+  navigateToTerminal,
   navigateToSettings,
   setupNavListeners,
 } = createNavigation({
@@ -2481,6 +2512,7 @@ const {
   TRIGGERS_ROUTE,
   SCHEDULER_ROUTE,
   PIPELINES_ROUTE,
+  TERMINAL_ROUTE,
   SETTINGS_ROUTE,
   PRIVACY_ROUTE,
   navLinks,
@@ -2649,6 +2681,13 @@ window.addEventListener("popstate", () => {
     }
   } else if (currentRoute === "pipelines") {
     void ensurePipelinesPageLoaded();
+  } else if (currentRoute === "terminal") {
+    if (!state.identity.isAdmin) {
+      currentRoute = "home";
+      if (window.location.pathname !== HOME_ROUTE) {
+        window.history.replaceState({ route: "home" }, "", HOME_ROUTE);
+      }
+    }
   }
   render();
 });
