@@ -24,9 +24,14 @@ describe("live message speech controls", () => {
     expect(speechSource).toContain("fetchSessionMessagesApi(sessionId, { refresh: true })");
   });
 
-  test("hides play controls until audio exists", () => {
+  test("shows speech controls for readable assistant messages and generates on demand", () => {
     expect(speechSource).toContain("export function hasMessageSpeech(message)");
-    expect(speechSource).toContain("!isAssistantRole(message) || !getMessageText(message) || !hasMessageSpeech(message)");
+    expect(speechSource).toContain("function isReadableAssistantMessage(message)");
+    expect(speechSource).toContain("!isReadableAssistantMessage(message)");
+    expect(speechSource).toContain("generateIfMissing: true");
+    expect(speechSource).toContain('button.dataset.hasSpeech = hasMessageSpeech(message) ? "true" : "false"');
+    expect(speechSource).toContain('"Generate spoken summary"');
+    expect(speechSource).not.toContain("!isAssistantRole(message) || !getMessageText(message) || !hasMessageSpeech(message)");
     expect(speechSource).not.toContain("!isAssistantRole(message) || !getMessageId(message) || !getMessageText(message)");
   });
 
@@ -43,7 +48,6 @@ describe("live message speech controls", () => {
     expect(speechSource).toContain("return messageId ? `${sessionId}:${messageId}` : \"\";");
     expect(speechSource).toContain("return isSessionSpeechGenerationEnabled(session) && Boolean(session?.metadata?.speechAlwaysRead)");
     expect(speechSource).toContain("export async function ensureLatestAssistantSpeech");
-    expect(speechSource).toContain("generateIfMissing: false");
     expect(speechSource).toContain("if (generated) {");
     expect(speechSource).toContain("playSpeech(speech.publicPath, cacheKey)");
   });

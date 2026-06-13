@@ -45,6 +45,10 @@ function getSpeech(message) {
   return message?.speech && typeof message.speech === "object" ? message.speech : null;
 }
 
+function isReadableAssistantMessage(message) {
+  return isAssistantRole(message) && Boolean(getMessageText(message));
+}
+
 export function hasMessageSpeech(message) {
   return Boolean(getSpeech(message)?.publicPath);
 }
@@ -194,18 +198,23 @@ function syncSpeechPlaybackModal(key) {
   stopButton.focus({ preventScroll: true });
 }
 
-function setSpeechButtonPlaying(button, playing) {
+function setSpeechButtonPlaying(button, playing, hasSpeech = true) {
   if (!button) {
     return;
   }
   button.dataset.playing = playing ? "true" : "false";
-  button.setAttribute("aria-label", playing ? "Stop spoken summary" : "Play spoken summary");
-  button.title = playing ? "Stop spoken summary" : "Play spoken summary";
+  const playLabel = hasSpeech ? "Play spoken summary" : "Generate spoken summary";
+  button.setAttribute("aria-label", playing ? "Stop spoken summary" : playLabel);
+  button.title = playing ? "Stop spoken summary" : playLabel;
   button.innerHTML = playing ? STOP_ICON_SVG : PLAY_ICON_SVG;
 }
 
 export function updateSpeechButtonPlaybackState(button, key) {
-  setSpeechButtonPlaying(button, Boolean(key && button?.dataset.speechKey === key));
+  setSpeechButtonPlaying(
+    button,
+    Boolean(key && button?.dataset.speechKey === key),
+    button?.dataset.hasSpeech === "true",
+  );
 }
 
 export function getActiveSpeechPlaybackKey() {
@@ -328,8 +337,12 @@ export async function readMessageAloud({ sessionId, message, showToast, button =
       sessionId,
       message,
       button,
-      generateIfMissing: false,
+      generateIfMissing: true,
     });
+    if (button) {
+      button.dataset.hasSpeech = "true";
+      updateSpeechButtonPlaybackState(button, getActiveSpeechPlaybackKey());
+    }
     const key = getSpeechCacheKey(sessionId, message);
     playSpeech(speech.publicPath, key);
   } catch (error) {
@@ -349,7 +362,7 @@ export function attachMessageSpeechButton(bubble, { sessionId, message, showToas
   if (!bubble || bubble.dataset.speechAttached === "true") {
     return;
   }
-  if (!isAssistantRole(message) || !getMessageText(message) || !hasMessageSpeech(message)) {
+  if (!isReadableAssistantMessage(message)) {
     return;
   }
 
@@ -361,7 +374,8 @@ export function attachMessageSpeechButton(bubble, { sessionId, message, showToas
   button.className = "wm-message-speech-play";
   button.dataset.testid = "message-speech-play";
   button.dataset.speechKey = getSpeechCacheKey(sessionId, message);
-  setSpeechButtonPlaying(button, false);
+  button.dataset.hasSpeech = hasMessageSpeech(message) ? "true" : "false";
+  setSpeechButtonPlaying(button, false, button.dataset.hasSpeech === "true");
   const playbackListener = (event) => {
     if (!button.isConnected) {
       window.removeEventListener("speech-playback-change", playbackListener);

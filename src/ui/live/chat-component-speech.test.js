@@ -11,10 +11,10 @@ describe("Alpine chat speech controls", () => {
     expect(source).toContain("ensureLatestAssistantSpeech");
     expect(source).toContain("getLatestAssistantSpeechKey");
     expect(source).toContain("getMessageSpeechKey");
-    expect(source).toContain("hasMessageSpeech");
     expect(source).toContain("stopSpeechPlayback");
     expect(source).toContain("canReadMessage(message)");
-    expect(source).toContain("isReadableAgentMessage(message) && hasMessageSpeech(message)");
+    expect(source).toContain("return isReadableAgentMessage(message);");
+    expect(source).toContain('"Generate spoken summary"');
     expect(source).toContain('class="wm-message-actions"');
     expect(source).toContain('class="wm-message-speech-play"');
     expect(source).toContain('data-testid="message-speech-play"');

@@ -26,7 +26,6 @@ import {
   ensureLatestAssistantSpeech,
   getLatestAssistantSpeechKey,
   getMessageSpeechKey,
-  hasMessageSpeech,
   isSessionAlwaysReadEnabled,
   isSessionSpeechGenerationEnabled,
   readMessageAloud,
@@ -312,7 +311,7 @@ export function registerChatComponent() {
     },
 
     canReadMessage(message) {
-      return isReadableAgentMessage(message) && hasMessageSpeech(message);
+      return isReadableAgentMessage(message);
     },
 
     async playMessageSpeech(message, button) {
@@ -342,7 +341,10 @@ export function registerChatComponent() {
     },
 
     getMessageSpeechLabel(message) {
-      return this.isMessageSpeechPlaying(message) ? "Stop spoken summary" : "Play spoken summary";
+      if (this.isMessageSpeechPlaying(message)) {
+        return "Stop spoken summary";
+      }
+      return message?.speech?.publicPath ? "Play spoken summary" : "Generate spoken summary";
     },
 
     _scheduleSpeechWork() {
