@@ -1,6 +1,14 @@
+import { randomUUID } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname, join, normalize } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import type { FunctionRegistry } from "./declarative";
 import type { JsonObject } from "./pipeline-store";
+import { deriveNpubSegment } from "../identity/npub-utils";
 import { signWithWingmanKey } from "../mcp/wingman-signer";
+import { generateSpeechAudio, resolveSpeechExtension } from "../server/audio-speech";
+import { userSettingsStore } from "../storage/user-settings-store";
 
 interface MemoryEntity {
   name: string;
@@ -19,6 +27,17 @@ interface GraphMemoryMatch {
   excerpt: string;
   labels: string[];
 }
+
+const DEFAULT_SETTINGS_SPEECH_BASE_URL = "https://openrouter.ai/api/v1";
+const DEFAULT_SETTINGS_SPEECH_MODEL = "hexgrad/kokoro-82m";
+const DEFAULT_SETTINGS_SPEECH_VOICE = "af_heart";
+const DEFAULT_SETTINGS_SPEECH_FORMAT = "mp3";
+const DEFAULT_LOCAL_SPEECH_BASE_URL = "http://127.0.0.1:8880/v1";
+const DEFAULT_LOCAL_SPEECH_MODEL = "kokoro";
+const DEFAULT_LOCAL_SPEECH_VOICE = "am_onyx";
+const pipelineModuleDirectory = dirname(fileURLToPath(import.meta.url));
+const autopilotRoot = normalize(join(pipelineModuleDirectory, "../.."));
+const pipelineAttachmentRoot = join(autopilotRoot, "tmp", "uploads", "attachments");
 
 interface DailyNoteItemState {
   title: string;
@@ -182,6 +201,45 @@ function getStringArray(value: unknown): string[] {
     return trimmed ? [trimmed] : [];
   }
   return [];
+}
+
+function resolvePipelineSpeechSettings(input: JsonObject): {
+  provider?: "openrouter" | "local";
+  apiKey?: string;
+  baseUrl?: string;
+  model?: string;
+  voice?: string;
+  format?: string;
+} | null {
+  const explicit = objectValue(input.speechSettings ?? input.settings);
+  const settingsNpub = getText(input.settingsNpub ?? input.npub ?? input.ownerNpub);
+  const stored = settingsNpub ? userSettingsStore.getAll(settingsNpub) : {};
+  const provider = explicit.provider === "local" || stored.speech_provider === "local" ? "local" : "openrouter";
+  const speechApiKey = getText(explicit.apiKey ?? explicit.speech_api_key) ?? stored.speech_api_key ?? "";
+  const apiKey = provider === "local"
+    ? ""
+    : speechApiKey || stored.openrouter_api_key || stored.openai_api_key || "";
+  const baseUrl = getText(explicit.baseUrl ?? explicit.speech_base_url) ||
+    stored.speech_base_url ||
+    (provider === "local" ? DEFAULT_LOCAL_SPEECH_BASE_URL : DEFAULT_SETTINGS_SPEECH_BASE_URL);
+  const model = getText(explicit.model ?? explicit.speech_model) ||
+    stored.speech_model ||
+    (provider === "local" ? DEFAULT_LOCAL_SPEECH_MODEL : DEFAULT_SETTINGS_SPEECH_MODEL);
+  const voice = getText(input.voice) ||
+    getText(explicit.voice ?? explicit.speech_voice) ||
+    stored.speech_voice ||
+    (provider === "local" ? DEFAULT_LOCAL_SPEECH_VOICE : DEFAULT_SETTINGS_SPEECH_VOICE);
+  const format = getText(explicit.format ?? explicit.speech_format) ||
+    stored.speech_format ||
+    DEFAULT_SETTINGS_SPEECH_FORMAT;
+  return {
+    provider,
+    ...(apiKey ? { apiKey } : {}),
+    baseUrl,
+    model,
+    voice,
+    format,
+  };
 }
 
 function cleanArtifactReferenceCandidate(value: unknown): string | null {
@@ -696,6 +754,52 @@ export const builtinPipelineFunctions: FunctionRegistry = {
       mentionsPipeline: lower.includes("pipeline"),
       asksForStructure: lower.includes("declarative") || lower.includes("object"),
     };
+  },
+
+  async "audio.generateSpeech"(input) {
+    const text = getText(input.text ?? input.narration ?? input.summary);
+    if (!text) {
+      return {
+        status: "skipped",
+        reason: "text_required",
+      };
+    }
+
+    const ownerNpub = getText(input.ownerNpub ?? input.settingsNpub ?? input.npub);
+    const ownerSegment = deriveNpubSegment(ownerNpub);
+    const agent = getText(input.agent) ?? "wingman-gm";
+    const speechSummary = text.replace(/\s+/g, " ").trim().slice(0, 500);
+
+    try {
+      const generated = await generateSpeechAudio({
+        text,
+        voice: getText(input.voice),
+        config: resolvePipelineSpeechSettings(input),
+      });
+      const filename = `pipeline-speech-${Date.now()}-${randomUUID()}${resolveSpeechExtension(generated.format)}`;
+      const relativePath = normalize(join(ownerSegment, agent, "speech", filename)).replace(/\\/g, "/");
+      const directory = join(pipelineAttachmentRoot, ownerSegment, agent, "speech");
+      await mkdir(directory, { recursive: true });
+      await writeFile(join(directory, filename), generated.audio);
+
+      return {
+        status: "ok",
+        publicPath: `/uploads/files/${relativePath}`,
+        relativePath,
+        mimeType: generated.mimeType,
+        voice: generated.voice,
+        model: generated.model,
+        format: generated.format,
+        summary: speechSummary,
+        createdAt: new Date().toISOString(),
+        sizeBytes: generated.audio.byteLength,
+      };
+    } catch (error) {
+      return {
+        status: "failed",
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
   },
 
   async "agent.parseClassification"(input) {
