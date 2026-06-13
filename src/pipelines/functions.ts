@@ -802,6 +802,98 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     }
   },
 
+  async "http.postJson"(input) {
+    const url = getText(input.url);
+    if (!url) {
+      return {
+        status: "failed",
+        error: "url_required",
+      };
+    }
+    const body = objectValue(input.body);
+    const headersInput = objectValue(input.headers);
+    const headers: Record<string, string> = {
+      "content-type": "application/json",
+    };
+    for (const [key, value] of Object.entries(headersInput)) {
+      if (typeof value === "string" && key.trim()) {
+        headers[key] = value;
+      }
+    }
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+      });
+      const responseText = await response.text().catch(() => "");
+      let responseJson: unknown = null;
+      if (responseText.trim()) {
+        try {
+          responseJson = JSON.parse(responseText);
+        } catch {
+          responseJson = null;
+        }
+      }
+      return {
+        status: response.ok ? "ok" : "failed",
+        ok: response.ok,
+        statusCode: response.status,
+        response: responseJson && typeof responseJson === "object" && !Array.isArray(responseJson)
+          ? responseJson as JsonObject
+          : {},
+        responseText: responseJson ? "" : responseText.slice(0, 2000),
+      };
+    } catch (error) {
+      return {
+        status: "failed",
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+
+  async "wingmanGm.deliverWebhook"(input) {
+    const webhook = objectValue(input.webhook);
+    const url = getText(input.url ?? webhook.url);
+    const token = getText(input.token ?? webhook.token);
+    const authHeader = getText(input.authHeader ?? webhook.authHeader) ?? "x-wingman-gm-token";
+    const gmResponse = objectValue(input.gmResponse ?? input.response);
+    if (!url) {
+      return { status: "failed", error: "webhook_url_required" };
+    }
+    if (!token) {
+      return { status: "failed", error: "webhook_token_required" };
+    }
+    const speech = objectValue(input.speech);
+    const response = {
+      ...gmResponse,
+      speech: Object.keys(speech).length > 0 ? speech : gmResponse.speech ?? null,
+    };
+    const body = {
+      runId: getText(input.runId) ?? getText(input.pipelineRunId) ?? null,
+      campaignId: getText(input.campaignId),
+      turnId: getText(input.turnId),
+      status: "ok",
+      response,
+      metadata: {
+        source: "wingman-gm-pipeline",
+        deliveredAt: new Date().toISOString(),
+      },
+    };
+    const posted = await builtinPipelineFunctions["http.postJson"]!({
+      url,
+      headers: { [authHeader]: token },
+      body,
+    });
+    return {
+      ...posted,
+      delivered: posted.status === "ok",
+      campaignId: body.campaignId,
+      turnId: body.turnId,
+    };
+  },
+
   async "agent.parseClassification"(input) {
     const raw = objectValue(input.raw);
     const allowedKinds = Array.isArray(input.allowedKinds) ? input.allowedKinds.map(String) : [];
