@@ -36,6 +36,16 @@ describe("live message speech controls", () => {
     expect(speechSource).toContain("MessageStore.updateMessageSpeech(sessionId, serverMessage, serverSpeech)");
   });
 
+  test("separates generation from auto-read playback", () => {
+    expect(speechSource).toContain("export function isSessionSpeechGenerationEnabled(session)");
+    expect(speechSource).toContain("export function getLatestAssistantSpeechKey(sessionId, conversation)");
+    expect(speechSource).toContain("return isSessionSpeechGenerationEnabled(session) && Boolean(session?.metadata?.speechAlwaysRead)");
+    expect(speechSource).toContain("export async function ensureLatestAssistantSpeech");
+    expect(speechSource).toContain("generateIfMissing: false");
+    expect(speechSource).toContain("if (generated) {");
+    expect(speechSource).toContain("playSpeech(speech.publicPath)");
+  });
+
   test("uses server-generated summary audio instead of browser speech for read aloud", () => {
     expect(speechSource).toContain("summary: true");
     expect(speechSource).not.toContain("new SpeechSynthesisUtterance");

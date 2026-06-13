@@ -23,8 +23,11 @@ import {
 } from "./conversation-window.js";
 import {
   autoReadLatestAssistantMessage,
+  ensureLatestAssistantSpeech,
+  getLatestAssistantSpeechKey,
   hasMessageSpeech,
   isSessionAlwaysReadEnabled,
+  isSessionSpeechGenerationEnabled,
   readMessageAloud,
 } from "./message-speech.js";
 
@@ -103,6 +106,8 @@ export function registerChatComponent() {
     _sseUnsubscribers: [],
     _messageSubscription: null,
     _statusSubscription: null,
+    _speechBaselineReady: false,
+    _lastSpeechCandidateKey: "",
 
     /** Alpine auto-calls init() on store registration — nothing to do yet. */
     init() {},
@@ -247,13 +252,13 @@ export function registerChatComponent() {
     replaceMessages(messages) {
       this.messages = Array.isArray(messages) ? messages : [];
       this._syncMessageWindow();
-      this._scheduleAutoRead();
+      this._scheduleSpeechWork();
     },
 
     appendMessage(message) {
       this.messages = [...this.messages, message];
       this._syncMessageWindow();
-      this._scheduleAutoRead();
+      this._scheduleSpeechWork();
     },
 
     revealOlderMessages(scrollElement) {
@@ -282,6 +287,8 @@ export function registerChatComponent() {
       this.status = "disconnected";
       this.connectionState = "disconnected";
       this.streamMode = "unknown";
+      this._speechBaselineReady = false;
+      this._lastSpeechCandidateKey = "";
     },
 
     renderMessageContent(message) {
@@ -307,12 +314,34 @@ export function registerChatComponent() {
       });
     },
 
-    _scheduleAutoRead() {
-      if (!this.sessionId || !Array.isArray(this.messages) || this.messages.length === 0) {
+    _scheduleSpeechWork() {
+      if (!this.sessionId || !Array.isArray(this.messages)) {
         return;
       }
+      const latestSpeechKey = getLatestAssistantSpeechKey(this.sessionId, this.messages);
+      if (!this._speechBaselineReady) {
+        this._speechBaselineReady = true;
+        this._lastSpeechCandidateKey = latestSpeechKey;
+        return;
+      }
+      if (this.messages.length === 0 || !latestSpeechKey || latestSpeechKey === this._lastSpeechCandidateKey) {
+        return;
+      }
+      this._lastSpeechCandidateKey = latestSpeechKey;
       const session = window.Alpine?.store("sessions")?.items?.find?.((item) => item.id === this.sessionId) ?? null;
+      if (!isSessionSpeechGenerationEnabled(session)) {
+        return;
+      }
       if (!isSessionAlwaysReadEnabled(session)) {
+        void ensureLatestAssistantSpeech({
+          sessionId: this.sessionId,
+          session,
+          conversation: this.messages,
+          showToast: (messageText, options = {}) => {
+            const level = options.type === "error" ? "error" : "warn";
+            console[level]("[chat] speech generation", messageText);
+          },
+        });
         return;
       }
       void autoReadLatestAssistantMessage({

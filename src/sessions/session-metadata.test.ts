@@ -67,16 +67,18 @@ describe("normaliseSessionMetadata", () => {
     });
   });
 
-  test("preserves the per-session speech auto-read flag", () => {
+  test("preserves the per-session speech settings", () => {
     expect(
       normaliseSessionMetadata({
         AGENT: false,
         billingMode: "subscription",
+        speechGenerateAudio: true,
         speechAlwaysRead: true,
       }),
     ).toMatchObject({
       AGENT: false,
       billingMode: "subscription",
+      speechGenerateAudio: true,
       speechAlwaysRead: true,
     });
   });

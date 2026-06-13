@@ -122,6 +122,11 @@ export async function openSessionDetailsDialog({
     nameInput.dataset.testid = "session-details-name";
 
     const positionSelect = createPositionSelect(session, sessions);
+    const generateAudioInput = document.createElement("input");
+    generateAudioInput.type = "checkbox";
+    generateAudioInput.checked = Boolean(session?.metadata?.speechGenerateAudio);
+    generateAudioInput.dataset.testid = "session-details-speech-generate-audio";
+
     const alwaysReadInput = document.createElement("input");
     alwaysReadInput.type = "checkbox";
     alwaysReadInput.checked = Boolean(session?.metadata?.speechAlwaysRead);
@@ -137,8 +142,13 @@ export async function openSessionDetailsDialog({
       createField({ label: "Name", control: nameInput }),
       createField({ label: "Position", control: positionSelect }),
       createCheckboxField({
-        label: "Always read responses",
-        description: "Read new assistant responses aloud in this session.",
+        label: "Generate audio responses",
+        description: "Create spoken summary audio for new assistant responses in this session.",
+        control: generateAudioInput,
+      }),
+      createCheckboxField({
+        label: "Auto-read audio responses",
+        description: "Automatically play generated audio when a new assistant response is ready.",
         control: alwaysReadInput,
       }),
       status,
@@ -182,6 +192,7 @@ export async function openSessionDetailsDialog({
           ? {
               name: nameInput.value.trim(),
               position: Number(positionSelect.value),
+              speechGenerateAudio: generateAudioInput.checked,
               speechAlwaysRead: alwaysReadInput.checked,
             }
           : null;

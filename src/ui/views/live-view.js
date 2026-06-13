@@ -64,6 +64,10 @@ import {
 } from "../live/conversation-window.js";
 import {
   autoReadLatestAssistantMessage,
+  ensureLatestAssistantSpeech,
+  getLatestAssistantSpeechKey,
+  isSessionAlwaysReadEnabled,
+  isSessionSpeechGenerationEnabled,
 } from "../live/message-speech.js";
 import { focusComposerTextarea } from "../live/mobile-runtime.js";
 import {
@@ -131,6 +135,7 @@ export function initLiveView(deps) {
     showToast,
   });
   configureLiveChatFeatures({ isFeatureEnabled: isFeatureEnabledForViewer });
+  const speechCandidateKeys = new Map();
 
   const agentOutputFormattingEnabled = () => Boolean(
     isFeatureEnabledForViewer(AGENT_OUTPUT_FORMATTING_FLAG_KEY),
@@ -679,7 +684,21 @@ export function initLiveView(deps) {
       attachComposerScrollControls(composerEl);
     }
 
-    void autoReadLatestAssistantMessage({ sessionId, session, conversation, showToast });
+    const latestSpeechKey = getLatestAssistantSpeechKey(sessionId, conversation);
+    if (!speechCandidateKeys.has(sessionId)) {
+      speechCandidateKeys.set(sessionId, latestSpeechKey);
+    } else if (
+      latestSpeechKey &&
+      latestSpeechKey !== speechCandidateKeys.get(sessionId) &&
+      isSessionSpeechGenerationEnabled(session)
+    ) {
+      speechCandidateKeys.set(sessionId, latestSpeechKey);
+      if (isSessionAlwaysReadEnabled(session)) {
+        void autoReadLatestAssistantMessage({ sessionId, session, conversation, showToast });
+      } else {
+        void ensureLatestAssistantSpeech({ sessionId, session, conversation, showToast });
+      }
+    }
 
     return next;
   };

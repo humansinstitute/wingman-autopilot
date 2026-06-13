@@ -26,6 +26,7 @@ export interface SessionMetadata {
   chargeToNpub?: string;
   delegateRelationshipId?: string;
   pinnedFiles?: string[];
+  speechGenerateAudio?: boolean;
   speechAlwaysRead?: boolean;
 }
 
@@ -176,6 +177,7 @@ export const normaliseSessionMetadata = (
     chargeToNpub: chargeToNpub || undefined,
     delegateRelationshipId: delegateRelationshipId || undefined,
     pinnedFiles: pinnedFiles?.length ? pinnedFiles : undefined,
+    speechGenerateAudio: Boolean(metadata?.speechGenerateAudio),
     speechAlwaysRead: Boolean(metadata?.speechAlwaysRead),
   };
 };

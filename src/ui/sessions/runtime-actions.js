@@ -129,11 +129,18 @@ export function createSessionRuntimeActions(deps) {
     if (details === null) return;
     const trimmed = details.name;
     const position = details.position;
+    const speechGenerateAudio = Boolean(details.speechGenerateAudio);
     const speechAlwaysRead = Boolean(details.speechAlwaysRead);
     const existing = typeof session.name === "string" ? session.name.trim() : "";
     const existingPosition = typeof session.tabOrder === "number" ? session.tabOrder : null;
+    const existingSpeechGenerateAudio = Boolean(session.metadata?.speechGenerateAudio);
     const existingSpeechAlwaysRead = Boolean(session.metadata?.speechAlwaysRead);
-    if (existing === trimmed && existingPosition === position && existingSpeechAlwaysRead === speechAlwaysRead) {
+    if (
+      existing === trimmed &&
+      existingPosition === position &&
+      existingSpeechGenerateAudio === speechGenerateAudio &&
+      existingSpeechAlwaysRead === speechAlwaysRead
+    ) {
       return;
     }
     try {
@@ -141,10 +148,14 @@ export function createSessionRuntimeActions(deps) {
       if (existing !== trimmed || existingPosition !== position) {
         updates.push(updateSessionName(session.id, trimmed, position));
       }
-      if (existingSpeechAlwaysRead !== speechAlwaysRead && typeof updateSessionMetadataAction === "function") {
+      if (
+        (existingSpeechGenerateAudio !== speechGenerateAudio || existingSpeechAlwaysRead !== speechAlwaysRead) &&
+        typeof updateSessionMetadataAction === "function"
+      ) {
         updates.push(updateSessionMetadataAction(session.id, {
           metadata: {
             ...(session.metadata ?? {}),
+            speechGenerateAudio,
             speechAlwaysRead,
           },
         }));

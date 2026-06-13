@@ -3,6 +3,7 @@ import { fetchSessionMessagesApi } from "../services/sessions.js";
 import { MessageStore } from "./db.js";
 
 const generatedSpeech = new Map();
+const speechRequests = new Map();
 const autoPlayedMessages = new Set();
 const autoReadingMessages = new Set();
 const autoReadTimers = new Map();
@@ -52,6 +53,14 @@ function getSpeechCacheKey(sessionId, message) {
   const createdAt = getMessageCreatedAt(message);
   const text = getMessageText(message);
   return createdAt && text ? `${sessionId}:${createdAt}:${text.slice(0, 80)}` : "";
+}
+
+export function getLatestAssistantSpeechKey(sessionId, conversation) {
+  if (!sessionId || !Array.isArray(conversation)) {
+    return "";
+  }
+  const latest = [...conversation].reverse().find((message) => isAssistantRole(message) && getMessageText(message));
+  return latest ? getSpeechCacheKey(sessionId, latest) : "";
 }
 
 function isSameMessageCandidate(candidate, message) {
@@ -116,20 +125,30 @@ function playSpeech(publicPath) {
   void audio.play();
 }
 
-async function resolveServerSpeech({ sessionId, message, button = null }) {
+async function ensureServerSpeech({
+  sessionId,
+  message,
+  button = null,
+  generateIfMissing = true,
+}) {
   const existing = getSpeech(message);
   if (existing?.publicPath) {
-    return existing;
+    return { speech: existing, generated: false };
   }
 
   const cacheKey = getSpeechCacheKey(sessionId, message);
   if (!cacheKey) {
-    throw new Error("Message cannot be read aloud yet");
+    throw new Error("Message audio is not available yet");
   }
 
   const cached = generatedSpeech.get(cacheKey);
   if (cached?.publicPath) {
-    return cached;
+    return { speech: cached, generated: false };
+  }
+
+  const inFlight = speechRequests.get(cacheKey);
+  if (inFlight) {
+    return inFlight;
   }
 
   const text = getMessageText(message);
@@ -142,16 +161,19 @@ async function resolveServerSpeech({ sessionId, message, button = null }) {
     button.dataset.loading = "true";
   }
 
-  try {
+  const request = (async () => {
     const serverMessage = await resolveServerMessage(sessionId, message);
     if (!serverMessage) {
-      throw new Error("Message cannot be read aloud yet");
+      throw new Error("Message audio is not available yet");
     }
     const serverSpeech = getSpeech(serverMessage);
     if (serverSpeech?.publicPath) {
       generatedSpeech.set(cacheKey, serverSpeech);
       await MessageStore.updateMessageSpeech(sessionId, serverMessage, serverSpeech);
-      return serverSpeech;
+      return { speech: serverSpeech, generated: false };
+    }
+    if (!generateIfMissing) {
+      throw new Error("Message audio is not available yet");
     }
     const response = await generateMessageSpeechApi({
       sessionId,
@@ -165,10 +187,16 @@ async function resolveServerSpeech({ sessionId, message, button = null }) {
     }
     generatedSpeech.set(cacheKey, speech);
     await MessageStore.updateMessageSpeech(sessionId, serverMessage, speech);
-    return speech;
+    return { speech, generated: true };
+  })();
+
+  speechRequests.set(cacheKey, request);
+  try {
+    return await request;
   } catch (error) {
     throw error;
   } finally {
+    speechRequests.delete(cacheKey);
     if (button) {
       button.disabled = false;
       delete button.dataset.loading;
@@ -183,15 +211,24 @@ export async function readMessageAloud({ sessionId, message, showToast, button =
   }
 
   try {
-    const speech = await resolveServerSpeech({ sessionId, message, button });
+    const { speech } = await ensureServerSpeech({
+      sessionId,
+      message,
+      button,
+      generateIfMissing: false,
+    });
     playSpeech(speech.publicPath);
   } catch (error) {
     showToast?.(error instanceof Error ? error.message : "Speech is not available in this browser", { type: "error" });
   }
 }
 
+export function isSessionSpeechGenerationEnabled(session) {
+  return Boolean(session?.metadata?.speechGenerateAudio);
+}
+
 export function isSessionAlwaysReadEnabled(session) {
-  return Boolean(session?.metadata?.speechAlwaysRead);
+  return isSessionSpeechGenerationEnabled(session) && Boolean(session?.metadata?.speechAlwaysRead);
 }
 
 export function attachMessageSpeechButton(bubble, { sessionId, message, showToast }) {
@@ -225,6 +262,29 @@ export function attachMessageSpeechButton(bubble, { sessionId, message, showToas
   bubble.dataset.speechAttached = "true";
 }
 
+export async function ensureLatestAssistantSpeech({ sessionId, session, conversation, showToast }) {
+  if (!isSessionSpeechGenerationEnabled(session) || !Array.isArray(conversation) || conversation.length === 0) {
+    return null;
+  }
+
+  const latest = [...conversation].reverse().find((message) => isAssistantRole(message) && getMessageText(message));
+  if (!latest || hasMessageSpeech(latest)) {
+    return null;
+  }
+
+  try {
+    const { speech } = await ensureServerSpeech({
+      sessionId,
+      message: { ...latest },
+      generateIfMissing: true,
+    });
+    return speech;
+  } catch (error) {
+    showToast?.(error instanceof Error ? error.message : "Speech generation failed", { type: "error" });
+    return null;
+  }
+}
+
 export async function autoReadLatestAssistantMessage({ sessionId, session, conversation, showToast }) {
   if (!isSessionAlwaysReadEnabled(session) || !Array.isArray(conversation) || conversation.length === 0) {
     return;
@@ -248,8 +308,17 @@ export async function autoReadLatestAssistantMessage({ sessionId, session, conve
     }
     autoReadingMessages.add(cacheKey);
     try {
-      await readMessageAloud({ sessionId, message: latestSnapshot, showToast });
+      const { speech, generated } = await ensureServerSpeech({
+        sessionId,
+        message: latestSnapshot,
+        generateIfMissing: true,
+      });
+      if (generated) {
+        playSpeech(speech.publicPath);
+      }
       autoPlayedMessages.add(cacheKey);
+    } catch (error) {
+      showToast?.(error instanceof Error ? error.message : "Speech generation failed", { type: "error" });
     } finally {
       autoReadingMessages.delete(cacheKey);
     }

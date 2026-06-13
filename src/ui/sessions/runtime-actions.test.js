@@ -177,9 +177,19 @@ describe("session runtime actions", () => {
     expect(render).toHaveBeenCalledTimes(2);
   });
 
-  test("promptRenameSession saves the per-session always-read speech setting", async () => {
-    sessions = [{ id: "session-1", name: "Original", tabOrder: 1, metadata: { speechAlwaysRead: false } }];
-    const openSessionDetailsDialog = mock(async () => ({ name: "Original", position: 1, speechAlwaysRead: true }));
+  test("promptRenameSession saves the per-session speech settings", async () => {
+    sessions = [{
+      id: "session-1",
+      name: "Original",
+      tabOrder: 1,
+      metadata: { speechGenerateAudio: false, speechAlwaysRead: false },
+    }];
+    const openSessionDetailsDialog = mock(async () => ({
+      name: "Original",
+      position: 1,
+      speechGenerateAudio: true,
+      speechAlwaysRead: true,
+    }));
     const actions = createSessionRuntimeActions({
       state,
       sessionsStore: () => ({ items: sessions }),
@@ -221,6 +231,7 @@ describe("session runtime actions", () => {
     expect(renameSessionAction).not.toHaveBeenCalled();
     expect(updateSessionMetadataAction).toHaveBeenCalledWith("session-1", {
       metadata: {
+        speechGenerateAudio: true,
         speechAlwaysRead: true,
       },
     });
