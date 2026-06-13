@@ -432,6 +432,7 @@ export class DispatchPipelineRuntime {
         agent: input.agent,
         botIdentity: input.eventInput.botIdentity ?? null,
         runtime: input.flightDeckRuntime,
+        userSettingsStore: input.sessionApiContext.userSettingsStore,
       });
       registry['dispatch.hydrateChatContext'] = createDispatchChatContextHydrator({
         eventInput: input.eventInput,

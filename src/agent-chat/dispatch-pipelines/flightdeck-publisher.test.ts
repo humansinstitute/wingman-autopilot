@@ -297,6 +297,11 @@ function buildChatPublisherContext(eventInputPatch: Record<string, any> = {}) {
       error: null,
       ...(eventInputPatch.runtime ?? {}),
     },
+    userSettingsStore: {
+      getAll: () => eventInputPatch.userSettings ?? {},
+      set: () => {},
+      delete: () => {},
+    },
   } as never;
 }
 
@@ -316,9 +321,6 @@ describe('dispatch pipeline Flight Deck publisher', () => {
     failChatContextCount = 0;
     failReactionCount = 0;
     failTaskCreateCount = 0;
-    Bun.env.WINGMAN_CHAT_REPLY_TTS = 'false';
-    delete Bun.env.OPENROUTER_API_KEY;
-    delete Bun.env.WINGMAN_SPEECH_API_KEY;
     runAgentWorkspaceYokeCommandMock.mockClear();
   });
 
@@ -795,8 +797,6 @@ describe('dispatch pipeline Flight Deck publisher', () => {
   });
 
   test('chat reply publishing attaches generated TTS audio to Flight Deck PG message when configured', async () => {
-    Bun.env.WINGMAN_CHAT_REPLY_TTS = 'true';
-    Bun.env.OPENROUTER_API_KEY = 'test-openrouter-key';
     const publish = createDispatchFlightDeckPublisher(buildChatPublisherContext({
       subscription: {
         subscriptionId: 'sub-pg-1',
@@ -813,6 +813,12 @@ describe('dispatch pipeline Flight Deck publisher', () => {
         commandPrefix: null,
         commands: {},
         error: null,
+      },
+      userSettings: {
+        speech_chat_replies_enabled: 'true',
+        speech_chat_replies_mode: 'summary',
+        speech_provider: 'openrouter',
+        speech_api_key: 'test-openrouter-key',
       },
     }));
 

@@ -366,6 +366,41 @@ export function createSpeechSettingsSection() {
   summaryModelInput.value = OPENROUTER_SPEECH_DEFAULTS.summaryModel;
   summaryModelRow.append(summaryModelLabel, summaryModelInput);
 
+  const chatReplyRow = document.createElement('div');
+  chatReplyRow.className = 'wm-settings__key-row';
+  chatReplyRow.style.cssText = 'display:flex;gap:8px;align-items:center;margin-top:8px;';
+  const chatReplyLabel = createRowLabel('Chat Replies', 140, 'speech-chat-replies-enabled');
+  const chatReplyEnabledInput = document.createElement('input');
+  chatReplyEnabledInput.id = 'speech-chat-replies-enabled';
+  chatReplyEnabledInput.type = 'checkbox';
+  chatReplyEnabledInput.dataset.testid = 'settings-speech-chat-replies-enabled';
+  chatReplyEnabledInput.setAttribute('aria-label', 'Generate audio for chat pipeline replies');
+  const chatReplyEnabledText = document.createElement('span');
+  chatReplyEnabledText.className = 'wm-settings__port-note';
+  chatReplyEnabledText.textContent = 'Generate audio card for Flight Deck chat pipeline replies';
+  chatReplyRow.append(chatReplyLabel, chatReplyEnabledInput, chatReplyEnabledText);
+
+  const chatReplyModeRow = document.createElement('div');
+  chatReplyModeRow.className = 'wm-settings__key-row';
+  chatReplyModeRow.style.cssText = 'display:flex;gap:8px;align-items:center;margin-top:8px;';
+  const chatReplyModeLabel = createRowLabel('Reply Audio', 140, 'speech-chat-replies-mode');
+  const chatReplyModeSelect = document.createElement('select');
+  chatReplyModeSelect.id = 'speech-chat-replies-mode';
+  chatReplyModeSelect.className = 'wm-input';
+  chatReplyModeSelect.dataset.testid = 'settings-speech-chat-replies-mode';
+  chatReplyModeSelect.setAttribute('aria-label', 'Chat reply audio mode');
+  chatReplyModeSelect.style.cssText = 'flex:1;font-size:0.85em;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg-secondary);color:var(--text);';
+  [
+    ['summary', 'Spoken summary'],
+    ['full', 'Full reply'],
+  ].forEach(([value, label]) => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = label;
+    chatReplyModeSelect.append(option);
+  });
+  chatReplyModeRow.append(chatReplyModeLabel, chatReplyModeSelect);
+
   const actionsRow = document.createElement('div');
   actionsRow.style.cssText = 'display:flex;gap:8px;align-items:center;margin-top:8px;';
   const saveBtn = createActionButton('Save');
@@ -423,6 +458,8 @@ export function createSpeechSettingsSection() {
     if (typeof settings.speech_summary_model === 'string') {
       summaryModelInput.value = settings.speech_summary_model;
     }
+    chatReplyEnabledInput.checked = settings.speech_chat_replies_enabled === 'true';
+    chatReplyModeSelect.value = settings.speech_chat_replies_mode === 'full' ? 'full' : 'summary';
     applyProviderDefaults({ overwrite: false });
   });
 
@@ -438,8 +475,11 @@ export function createSpeechSettingsSection() {
       const format = formatInput.value.trim();
       const summaryBaseUrl = summaryBaseUrlInput.value.trim();
       const summaryModel = summaryModelInput.value.trim();
+      const chatReplyMode = chatReplyModeSelect.value === 'full' ? 'full' : 'summary';
       const saves = [];
       saves.push(saveUserSetting('speech_provider', provider));
+      saves.push(saveUserSetting('speech_chat_replies_enabled', chatReplyEnabledInput.checked ? 'true' : 'false'));
+      saves.push(saveUserSetting('speech_chat_replies_mode', chatReplyMode));
       if (provider === 'openrouter' && apiKey) saves.push(saveUserSetting('speech_api_key', apiKey));
       if (provider === 'local') saves.push(deleteUserSetting('speech_api_key'));
       if (baseUrl) saves.push(saveUserSetting('speech_base_url', baseUrl));
@@ -477,10 +517,14 @@ export function createSpeechSettingsSection() {
         deleteUserSetting('speech_format'),
         deleteUserSetting('speech_summary_base_url'),
         deleteUserSetting('speech_summary_model'),
+        deleteUserSetting('speech_chat_replies_enabled'),
+        deleteUserSetting('speech_chat_replies_mode'),
       ]);
       apiKeyInput.value = '';
       apiKeyInput.placeholder = 'sk-...';
       providerSelect.value = 'openrouter';
+      chatReplyEnabledInput.checked = false;
+      chatReplyModeSelect.value = 'summary';
       applyProviderDefaults({ overwrite: true });
       setStatus(status, 'Cleared');
     } catch (error) {
@@ -494,7 +538,7 @@ export function createSpeechSettingsSection() {
   helpText.style.cssText = 'margin-top:6px;font-size:0.8em;';
   helpText.textContent = 'OpenRouter default: hexgrad/kokoro-82m with OpenRouter summaries. Local default: Kokoro at http://127.0.0.1:8880/v1 plus Ollama summaries at http://127.0.0.1:11434/v1, model gemma4:e4b.';
 
-  container.append(heading, description, providerRow, apiKeyRow, baseUrlRow, modelRow, voiceRow, formatRow, summaryBaseUrlRow, summaryModelRow, actionsRow, helpText);
+  container.append(heading, description, providerRow, apiKeyRow, baseUrlRow, modelRow, voiceRow, formatRow, summaryBaseUrlRow, summaryModelRow, chatReplyRow, chatReplyModeRow, actionsRow, helpText);
   return container;
 }
 

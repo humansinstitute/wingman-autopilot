@@ -15,6 +15,9 @@ describe("speech settings section", () => {
     expect(source).toContain("providerSelect.dataset.testid = 'settings-speech-provider'");
     expect(source).toContain("settings-speech-summary-base-url");
     expect(source).toContain("saveUserSetting('speech_summary_base_url', summaryBaseUrl)");
+    expect(source).toContain("settings-speech-chat-replies-enabled");
+    expect(source).toContain("saveUserSetting('speech_chat_replies_enabled'");
+    expect(source).toContain("saveUserSetting('speech_chat_replies_mode'");
     expect(source).toContain("saves.push(saveUserSetting('speech_provider', provider))");
     expect(source).toContain("if (provider === 'local') saves.push(deleteUserSetting('speech_api_key'))");
   });
