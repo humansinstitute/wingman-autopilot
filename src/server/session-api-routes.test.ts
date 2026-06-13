@@ -290,7 +290,6 @@ describe("handleSessionApi", () => {
         headers: { "content-type": "audio/mpeg" },
       });
     }) as typeof fetch;
-
     const ctx = buildCtx({
       attachmentRoot,
       messageStore: {
@@ -342,6 +341,7 @@ describe("handleSessionApi", () => {
     const attachmentRoot = await mkdtemp(join(tmpdir(), "wingman-speech-summary-test-"));
     tempPaths.push(attachmentRoot);
     const providerCalls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const settingsLookups: string[] = [];
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
@@ -383,10 +383,15 @@ describe("handleSessionApi", () => {
         saveMessageSpeechAttachment: (attachment: unknown) => attachment,
       } as any,
       userSettingsStore: {
-        getAll: () => ({
-          speech_api_key: "sk-or-test",
-          speech_summary_model: "openai/gpt-4o-mini",
-        }),
+        getAll: (npub: string) => {
+          settingsLookups.push(npub);
+          return npub === "npub1owner"
+            ? {
+                speech_api_key: "sk-or-test",
+                speech_summary_model: "openai/gpt-4o-mini",
+              }
+            : {};
+        },
       },
     });
 
@@ -397,10 +402,11 @@ describe("handleSessionApi", () => {
       body: JSON.stringify({ summary: true }),
     });
 
-    const response = await handleSessionApi(request, url, "POST", makeAuth({ delegatedByBot: false }), ctx);
+    const response = await handleSessionApi(request, url, "POST", makeAuth({ npub: "npub1bot", delegatedByBot: false }), ctx);
     const body = await response!.json() as { speech: Record<string, unknown> };
 
     expect(response!.status).toBe(201);
+    expect(settingsLookups).toEqual(["npub1owner", "npub1owner"]);
     expect(providerCalls.map((call) => call.url)).toEqual([
       "https://openrouter.ai/api/v1/chat/completions",
       "https://openrouter.ai/api/v1/audio/speech",

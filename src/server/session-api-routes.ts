@@ -2139,7 +2139,7 @@ async function handleMessageSpeech(
   ) ?? authContext.npub ?? null;
   const agent = liveOwnedSession?.agent ?? storedSession?.agent ?? "codex";
   const ownerSegment = deriveNpubSegment(sessionOwnerNpub);
-  const settingsNpub = authContext.npub ?? sessionOwnerNpub;
+  const settingsNpub = sessionOwnerNpub ?? authContext.npub;
 
   if (shouldSummarize) {
     const summaryConfig = resolveSpeechSummarySettings(ctx, settingsNpub);
