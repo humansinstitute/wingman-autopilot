@@ -587,6 +587,52 @@ describe("handleSessionApi", () => {
     });
   });
 
+  test("GET /api/archive applies category filters and returns group counts", async () => {
+    const archivedSession = {
+      id: "auto-session",
+      agent: "codex",
+      name: "Auto session",
+      npub: "npub1owner",
+      workingDirectory: "/tmp/project",
+      startedAt: new Date().toISOString(),
+      archivedAt: new Date().toISOString(),
+      messageCount: 0,
+      origin: { type: "agent-work", id: "task-1" },
+      metadata: { AGENT: true, billingMode: "subscription" as const, role: "agent-work" },
+    };
+    const listCalls: unknown[] = [];
+    const countCalls: unknown[] = [];
+    const ctx = buildCtx({
+      sessionArchiveStore: {
+        getArchivedSession: () => null,
+        listArchivedSessions: (options: unknown) => {
+          listCalls.push(options);
+          return [archivedSession];
+        },
+        getArchiveCount: (options: unknown) => {
+          countCalls.push(options);
+          return options && typeof options === "object" && (options as { category?: string }).category === "my" ? 0 : 1;
+        },
+      } as any,
+    });
+    const url = new URL("http://localhost:3021/api/archive?category=auto&limit=25&offset=5");
+    const request = new Request(url.toString(), { method: "GET" });
+
+    const response = await handleSessionApi(request, url, "GET", makeAuth({ delegatedByBot: false }), ctx);
+    expect(response).not.toBeNull();
+    expect(response!.status).toBe(200);
+    await expect(response!.json()).resolves.toMatchObject({
+      sessions: [{ id: "auto-session" }],
+      total: 1,
+      groupCounts: { my: 0, auto: 1 },
+      limit: 25,
+      offset: 5,
+    });
+    expect(listCalls[0]).toMatchObject({ category: "auto", limit: 25, offset: 5 });
+    expect(countCalls).toContainEqual({ filter: "", since: "", category: "auto" });
+    expect(countCalls).toContainEqual({ filter: "", since: "", category: "my" });
+  });
+
   test("GET /api/sessions/:id returns stored session details when live session is missing", async () => {
     const storedSession: StoredSessionRecord = {
       id: "session-1",

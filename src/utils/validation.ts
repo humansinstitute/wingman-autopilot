@@ -57,6 +57,10 @@ export const ArchiveListOptionsSchema = z.object({
     (val) => (val === null || val === '' ? undefined : val),
     z.string().datetime().optional(),
   ).transform(val => val?.trim() || ""),
+  category: z.preprocess(
+    (val) => (val === null || val === '' ? undefined : val),
+    z.enum(['my', 'auto']).optional(),
+  ).transform(val => val ?? ""),
 });
 
 export const AuthContextSchema = z.object({

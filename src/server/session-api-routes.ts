@@ -15,7 +15,12 @@ import { normaliseNpub, deriveNpubSegment } from "../identity/npub-utils";
 import { generateIdentityAlias } from "../identity/identity-alias";
 import { validateInput, ArchiveListOptionsSchema } from "../utils/validation";
 import type { messageStore as MessageStoreInstance, StoredMessage, StoredSessionRecord } from "../storage/message-store";
-import type { ArchivedSession, sessionArchiveStore as SessionArchiveStoreInstance } from "../storage/session-archive-store";
+import type {
+  ArchiveListOptions,
+  ArchiveSessionCategory,
+  ArchivedSession,
+  sessionArchiveStore as SessionArchiveStoreInstance,
+} from "../storage/session-archive-store";
 import type { ForkToWorktreeInput } from "../sessions/fork-to-worktree";
 import { resolveSessionOwnerNpub } from "../sessions/session-ownership";
 import { deliverSessionAgentMessage } from "./session-agent-message";
@@ -782,6 +787,44 @@ const archivedSessionBelongsToOwner = (
   return ctx.sessionBelongsToViewer(archivedSession.npub, archivedSession.metadata ?? null, ownerNpub, false);
 };
 
+const resolveArchiveCategory = (category: unknown): ArchiveSessionCategory | undefined =>
+  category === "my" || category === "auto" ? category : undefined;
+
+const buildArchiveFilterOptions = (
+  validatedOptions: { filter?: unknown; since?: unknown },
+): Pick<ArchiveListOptions, "filter" | "since"> => ({
+  filter: typeof validatedOptions.filter === "string" ? validatedOptions.filter : undefined,
+  since: typeof validatedOptions.since === "string" ? validatedOptions.since : undefined,
+});
+
+const countArchivedSessionsByCategory = (
+  ctx: SessionApiContext,
+  options: Pick<ArchiveListOptions, "filter" | "since">,
+) => ({
+  my: ctx.sessionArchiveStore.getArchiveCount({ ...options, category: "my" }),
+  auto: ctx.sessionArchiveStore.getArchiveCount({ ...options, category: "auto" }),
+});
+
+const listOwnedArchivedSessions = (
+  ctx: SessionApiContext,
+  ownerNpub: string,
+  options: Pick<ArchiveListOptions, "filter" | "since" | "category">,
+): ArchivedSession[] => {
+  const archiveCount = ctx.sessionArchiveStore.getArchiveCount(options);
+  return ctx.sessionArchiveStore
+    .listArchivedSessions({ limit: archiveCount, offset: 0, ...options })
+    .filter((session) => archivedSessionBelongsToOwner(session, ownerNpub, ctx));
+};
+
+const countOwnedArchivedSessionsByCategory = (
+  ctx: SessionApiContext,
+  ownerNpub: string,
+  options: Pick<ArchiveListOptions, "filter" | "since">,
+) => ({
+  my: listOwnedArchivedSessions(ctx, ownerNpub, { ...options, category: "my" }).length,
+  auto: listOwnedArchivedSessions(ctx, ownerNpub, { ...options, category: "auto" }).length,
+});
+
 /**
  * Main handler for /api/sessions/* and /api/archive/* routes.
  * Returns null if the route doesn't match, otherwise returns a Response.
@@ -817,18 +860,18 @@ export async function handleSessionApi(
           offset: url.searchParams.get("offset"),
           filter: url.searchParams.get("filter"),
           since: url.searchParams.get("since"),
+          category: url.searchParams.get("category"),
         });
-        const allArchivedSessions = ctx.sessionArchiveStore.listArchivedSessions({
-          limit: ctx.sessionArchiveStore.getArchiveCount({
-            filter: typeof validatedOptions.filter === "string" ? validatedOptions.filter : undefined,
-            since: typeof validatedOptions.since === "string" ? validatedOptions.since : undefined,
-          }),
-          offset: 0,
-          filter: typeof validatedOptions.filter === "string" ? validatedOptions.filter : undefined,
-          since: typeof validatedOptions.since === "string" ? validatedOptions.since : undefined,
+        const archiveFilterOptions = buildArchiveFilterOptions(validatedOptions);
+        const category = resolveArchiveCategory(validatedOptions.category);
+        const ownerArchivedSessions = listOwnedArchivedSessions(ctx, ownerArchiveRoute.ownerNpub, {
+          ...archiveFilterOptions,
+          category,
         });
-        const ownerArchivedSessions = allArchivedSessions.filter((session) =>
-          archivedSessionBelongsToOwner(session, ownerArchiveRoute.ownerNpub, ctx),
+        const ownerGroupCounts = countOwnedArchivedSessionsByCategory(
+          ctx,
+          ownerArchiveRoute.ownerNpub,
+          archiveFilterOptions,
         );
         const offset = typeof validatedOptions.offset === "number" ? validatedOptions.offset : 0;
         const limit = typeof validatedOptions.limit === "number" ? validatedOptions.limit : 50;
@@ -837,6 +880,7 @@ export async function handleSessionApi(
           ownerNpub: ownerArchiveRoute.ownerNpub,
           sessions: archivedSessions,
           total: ownerArchivedSessions.length,
+          groupCounts: ownerGroupCounts,
           limit,
           offset,
         });
@@ -908,14 +952,25 @@ export async function handleSessionApi(
         offset: url.searchParams.get("offset"),
         filter: url.searchParams.get("filter"),
         since: url.searchParams.get("since"),
+        category: url.searchParams.get("category"),
       });
 
-      const sessions = ctx.sessionArchiveStore.listArchivedSessions(validatedOptions as { limit?: number; offset?: number; filter?: string; since?: string });
-      const total = ctx.sessionArchiveStore.getArchiveCount({
-        filter: typeof validatedOptions.filter === "string" ? validatedOptions.filter : undefined,
-        since: typeof validatedOptions.since === "string" ? validatedOptions.since : undefined,
+      const archiveFilterOptions = buildArchiveFilterOptions(validatedOptions);
+      const category = resolveArchiveCategory(validatedOptions.category);
+      const limit = typeof validatedOptions.limit === "number" ? validatedOptions.limit : undefined;
+      const offset = typeof validatedOptions.offset === "number" ? validatedOptions.offset : undefined;
+      const sessions = ctx.sessionArchiveStore.listArchivedSessions({
+        limit,
+        offset,
+        ...archiveFilterOptions,
+        category,
       });
-      return Response.json({ sessions, total, limit: validatedOptions.limit, offset: validatedOptions.offset });
+      const total = ctx.sessionArchiveStore.getArchiveCount({
+        ...archiveFilterOptions,
+        category,
+      });
+      const groupCounts = countArchivedSessionsByCategory(ctx, archiveFilterOptions);
+      return Response.json({ sessions, total, groupCounts, limit, offset });
     } catch (error) {
       return Response.json({ error: "Invalid request parameters" }, { status: 400 });
     }

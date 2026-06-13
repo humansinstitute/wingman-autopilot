@@ -5,6 +5,11 @@
 
 import { renderChatMessageHtml } from "../rendering/chat-message-content.js";
 import { canResumeNativeAgentSession } from "./native-session-resume.js";
+import {
+  countSessionsByHomeGroup,
+  HOME_SESSION_GROUPS,
+} from "./session-groups.js";
+import { createSessionGroupTabs } from "./session-group-tabs.js";
 
 const ARCHIVE_STORAGE_KEY = "wingman-archive-collapsed";
 
@@ -47,6 +52,7 @@ const fetchArchive = async (options = {}) => {
   if (options.limit) params.set("limit", String(options.limit));
   if (options.offset) params.set("offset", String(options.offset));
   if (options.filter && options.filter.trim()) params.set("filter", options.filter.trim());
+  if (options.group && options.group !== "all") params.set("category", options.group);
 
   const url = `/api/archive${params.toString() ? `?${params}` : ""}`;
   const response = await fetch(url, { credentials: "include" });
@@ -87,6 +93,8 @@ export function createArchiveComponent({
     loading: false,
     error: null,
     filter: "",
+    group: HOME_SESSION_GROUPS[0]?.id ?? "my",
+    groupCounts: { my: 0, auto: 0 },
     offset: 0,
     limit: 10,
   };
@@ -155,6 +163,9 @@ export function createArchiveComponent({
 
   filterRow.append(filterInput);
 
+  const groupTabsContainer = document.createElement("div");
+  groupTabsContainer.className = "wm-home-archive-session-groups";
+
   // Sessions list container
   const listContainer = document.createElement("div");
   listContainer.className = "wm-home-archive-list";
@@ -174,7 +185,7 @@ export function createArchiveComponent({
 
   loadMoreRow.append(loadMoreButton);
 
-  content.append(filterRow, listContainer, loadMoreRow);
+  content.append(filterRow, groupTabsContainer, listContainer, loadMoreRow);
   card.append(header, content);
 
   // Collapse state
@@ -221,6 +232,18 @@ export function createArchiveComponent({
 
   const renderList = () => {
     listContainer.innerHTML = "";
+    groupTabsContainer.innerHTML = "";
+
+    const activeGroup = HOME_SESSION_GROUPS.some((group) => group.id === archiveState.group)
+      ? archiveState.group
+      : HOME_SESSION_GROUPS[0].id;
+    groupTabsContainer.append(
+      createSessionGroupTabs(activeGroup, archiveState.groupCounts, (nextGroup) => {
+        archiveState.group = nextGroup;
+        archiveState.offset = 0;
+        void loadArchive();
+      }),
+    );
 
     if (archiveState.loading && archiveState.sessions.length === 0) {
       const loading = document.createElement("div");
@@ -375,6 +398,7 @@ export function createArchiveComponent({
         limit: archiveState.limit,
         offset: archiveState.offset,
         filter: archiveState.filter || undefined,
+        group: archiveState.group,
       });
 
       if (append) {
@@ -383,6 +407,9 @@ export function createArchiveComponent({
         archiveState.sessions = data.sessions;
       }
       archiveState.total = data.total;
+      archiveState.groupCounts = data.groupCounts && typeof data.groupCounts === "object"
+        ? data.groupCounts
+        : countSessionsByHomeGroup(archiveState.sessions);
       badge.textContent = String(data.total);
     } catch (error) {
       archiveState.error = error instanceof Error ? error.message : "Failed to load archive";

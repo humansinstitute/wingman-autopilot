@@ -12,10 +12,8 @@ const PROGRAMMATIC_ORIGIN_TYPES = new Set([
 ]);
 
 export const HOME_SESSION_GROUPS = Object.freeze([
-  { id: 'my', label: 'My Sessions', emptyLabel: 'No human-started sessions.' },
-  { id: 'task-dispatch', label: 'Task Dispatch', emptyLabel: 'No task dispatch sessions.' },
-  { id: 'chat-dispatch', label: 'Chat Dispatch', emptyLabel: 'No chat dispatch sessions.' },
-  { id: 'agent-sessions', label: 'Agent Sessions', emptyLabel: 'No agent-created sessions.' },
+  { id: 'my', label: 'My Sessions', emptyLabel: 'No UI-started sessions.' },
+  { id: 'auto', label: 'Auto Sessions', emptyLabel: 'No dispatch or agent-started sessions.' },
 ]);
 
 function normaliseOriginType(session) {
@@ -59,16 +57,9 @@ export function isAgentSession(session) {
 }
 
 export function getHomeSessionGroup(session) {
-  if (isTaskDispatchSession(session)) {
-    return 'task-dispatch';
-  }
-  if (isChatDispatchSession(session)) {
-    return 'chat-dispatch';
-  }
-  if (isAgentSession(session)) {
-    return 'agent-sessions';
-  }
-  return 'my';
+  return isTaskDispatchSession(session) || isChatDispatchSession(session) || isAgentSession(session)
+    ? 'auto'
+    : 'my';
 }
 
 export function filterSessionsForHomeGroup(sessions, groupId) {
@@ -81,9 +72,7 @@ export function filterSessionsForHomeGroup(sessions, groupId) {
 export function countSessionsByHomeGroup(sessions) {
   const counts = {
     my: 0,
-    'task-dispatch': 0,
-    'chat-dispatch': 0,
-    'agent-sessions': 0,
+    auto: 0,
   };
 
   if (!Array.isArray(sessions)) {

@@ -67,4 +67,50 @@ describe("SessionArchiveStore", () => {
     const updated = store.updateArchivedSessionMetadata("session-1", { tags: "flight-deck, NIP98" });
     expect(updated?.metadata.tags).toEqual(["flight-deck", "nip98"]);
   });
+
+  test("filters archived sessions by UI and automated categories", () => {
+    const store = createStore();
+    const startedAt = new Date().toISOString();
+    store.archiveSession({
+      id: "ui-session",
+      agent: "codex",
+      name: "UI session",
+      npub: "npub1user",
+      workingDirectory: "/tmp/ui",
+      startedAt,
+      origin: null,
+      metadata: { AGENT: false, billingMode: "subscription" },
+      messages: [],
+    });
+    store.archiveSession({
+      id: "task-session",
+      agent: "codex",
+      name: "Task dispatch",
+      npub: "npub1user",
+      workingDirectory: "/tmp/task",
+      startedAt,
+      origin: { type: "agent-work", id: "task-1" },
+      metadata: { AGENT: true, billingMode: "subscription", role: "agent-work", bindingType: "task" },
+      messages: [],
+    });
+    store.archiveSession({
+      id: "chat-session",
+      agent: "codex",
+      name: "Chat dispatch",
+      npub: "npub1user",
+      workingDirectory: "/tmp/chat",
+      startedAt,
+      origin: { type: "agent-chat", id: "thread-1" },
+      metadata: { AGENT: false, billingMode: "subscription", routedBy: "agent-chat" },
+      messages: [],
+    });
+
+    expect(store.listArchivedSessions({ category: "my" }).map((session) => session.id)).toEqual(["ui-session"]);
+    expect(store.listArchivedSessions({ category: "auto" }).map((session) => session.id).sort()).toEqual([
+      "chat-session",
+      "task-session",
+    ]);
+    expect(store.getArchiveCount({ category: "my" })).toBe(1);
+    expect(store.getArchiveCount({ category: "auto" })).toBe(2);
+  });
 });

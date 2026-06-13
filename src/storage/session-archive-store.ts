@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
-import { Database } from "bun:sqlite";
+import { Database, type SQLQueryBindings } from "bun:sqlite";
 
 import type { SessionOrigin } from "../agents/process-manager";
 import {
@@ -53,7 +53,10 @@ export interface ArchiveListOptions {
   offset?: number;
   filter?: string;
   since?: string;
+  category?: ArchiveSessionCategory;
 }
+
+export type ArchiveSessionCategory = "my" | "auto";
 
 const DEFAULT_DB_PATH = new URL("../../data/session-archive.db", import.meta.url).pathname;
 
@@ -120,6 +123,42 @@ const wildcardToSqlLike = (pattern: string): string => {
     .replace(/_/g, "\\_")
     .replace(/\*/g, "%")
     .replace(/\?/g, "_");
+};
+
+const AUTO_ORIGIN_TYPES = [
+  "scheduler",
+  "nostr",
+  "mg-task",
+  "file-watcher",
+  "agent-session",
+  "cli",
+  "delegate-bot",
+  "agent-work",
+  "agent-chat",
+];
+
+const buildAutoSessionCondition = (alias = "s"): string => {
+  const prefix = alias ? `${alias}.` : "";
+  const originTypes = AUTO_ORIGIN_TYPES.map((type) => `'${type}'`).join(", ");
+  return `(
+    COALESCE(${prefix}agent_flag, 0) = 1
+    OR lower(COALESCE(json_extract(${prefix}origin, '$.type'), '')) IN (${originTypes})
+    OR lower(COALESCE(json_extract(${prefix}metadata_json, '$.role'), '')) IN ('agent-work', 'agent-chat')
+    OR lower(COALESCE(json_extract(${prefix}metadata_json, '$.bindingType'), '')) IN ('task', 'flow_run')
+    OR lower(COALESCE(json_extract(${prefix}metadata_json, '$.routedBy'), '')) = 'agent-chat'
+  )`;
+};
+
+const appendArchiveCategoryWhere = (
+  whereParts: string[],
+  category: ArchiveListOptions["category"],
+  alias = "s",
+): void => {
+  if (category !== "my" && category !== "auto") {
+    return;
+  }
+  const autoCondition = buildAutoSessionCondition(alias);
+  whereParts.push(category === "auto" ? autoCondition : `NOT ${autoCondition}`);
 };
 
 export class SessionArchiveStore {
@@ -224,6 +263,7 @@ export class SessionArchiveStore {
     const since = typeof options.since === "string" && !Number.isNaN(Date.parse(options.since))
       ? options.since
       : "";
+    const category = options.category === "my" || options.category === "auto" ? options.category : undefined;
 
     const baseQuery = `
       SELECT
@@ -243,7 +283,7 @@ export class SessionArchiveStore {
     `;
 
     const whereParts: string[] = [];
-    const params: unknown[] = [];
+    const params: SQLQueryBindings[] = [];
 
     if (filter) {
       const likePattern = wildcardToSqlLike(filter);
@@ -260,6 +300,7 @@ export class SessionArchiveStore {
       const index = params.length;
       whereParts.push(`(s.archived_at >= ?${index} OR s.started_at >= ?${index})`);
     }
+    appendArchiveCategoryWhere(whereParts, category, "s");
 
     const whereClause = whereParts.length > 0 ? `WHERE ${whereParts.join(" AND ")}` : "";
     params.push(limit, offset);
@@ -364,29 +405,31 @@ export class SessionArchiveStore {
     return result.changes > 0;
   }
 
-  getArchiveCount(options: Pick<ArchiveListOptions, "filter" | "since"> = {}): number {
+  getArchiveCount(options: Pick<ArchiveListOptions, "filter" | "since" | "category"> = {}): number {
     const filter = options.filter?.trim() ?? "";
     const since = typeof options.since === "string" && !Number.isNaN(Date.parse(options.since))
       ? options.since
       : "";
+    const category = options.category === "my" || options.category === "auto" ? options.category : undefined;
     const whereParts: string[] = [];
-    const params: unknown[] = [];
+    const params: SQLQueryBindings[] = [];
     if (filter) {
       const likePattern = wildcardToSqlLike(filter);
       const safeLikePattern = `%${likePattern}%`;
       params.push(safeLikePattern);
       const index = params.length;
       whereParts.push(
-        `(name LIKE ?${index} ESCAPE '\\' OR working_directory LIKE ?${index} ESCAPE '\\' OR agent LIKE ?${index} ESCAPE '\\' OR metadata_json LIKE ?${index} ESCAPE '\\')`,
+        `(s.name LIKE ?${index} ESCAPE '\\' OR s.working_directory LIKE ?${index} ESCAPE '\\' OR s.agent LIKE ?${index} ESCAPE '\\' OR s.metadata_json LIKE ?${index} ESCAPE '\\')`,
       );
     }
     if (since) {
       params.push(since);
       const index = params.length;
-      whereParts.push(`(archived_at >= ?${index} OR started_at >= ?${index})`);
+      whereParts.push(`(s.archived_at >= ?${index} OR s.started_at >= ?${index})`);
     }
+    appendArchiveCategoryWhere(whereParts, category, "s");
     const whereClause = whereParts.length > 0 ? `WHERE ${whereParts.join(" AND ")}` : "";
-    const row = this.db.query(`SELECT COUNT(1) as count FROM archived_sessions ${whereClause}`).get(...params) as { count: number };
+    const row = this.db.query(`SELECT COUNT(1) as count FROM archived_sessions s ${whereClause}`).get(...params) as { count: number };
     return row?.count ?? 0;
   }
 }
