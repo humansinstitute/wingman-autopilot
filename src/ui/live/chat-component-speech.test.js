@@ -21,4 +21,10 @@ describe("Alpine chat speech controls", () => {
     expect(source).toContain("isSessionAlwaysReadEnabled(session)");
     expect(source).toContain("window.Alpine?.store(\"sessions\")?.items");
   });
+
+  test("syncs server messages on load so existing speech attachments show up", () => {
+    expect(source).toContain('import { fetchSessionMessagesApi } from "../services/sessions.js";');
+    expect(source).toContain("void this._syncMessagesFromServer(sessionId)");
+    expect(source).toContain("MessageStore.syncFromServerIfChanged(sessionId, payload.messages)");
+  });
 });

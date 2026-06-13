@@ -121,6 +121,29 @@ export const MessageStore = {
       .toArray();
   },
 
+  async updateMessageSpeech(sessionId, message, speech) {
+    if (!speech?.publicPath) return false;
+    const normalized = normalizeConversationMessage(message);
+    const existing = await this.getSessionMessages(sessionId);
+    const match = existing.find((entry) => {
+      if (normalized.messageId && entry.messageId === normalized.messageId) {
+        return true;
+      }
+      return (
+        entry.role === normalized.role &&
+        entry.createdAt === normalized.createdAt &&
+        entry.content === normalized.content
+      );
+    });
+    if (!match?.id) return false;
+    await db.messages.update(match.id, {
+      messageId: normalized.messageId ?? match.messageId ?? null,
+      speech,
+      updatedAt: new Date().toISOString(),
+    });
+    return true;
+  },
+
   /**
    * Get message count for a session.
    */

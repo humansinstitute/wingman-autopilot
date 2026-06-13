@@ -30,6 +30,12 @@ describe("live message speech controls", () => {
     expect(speechSource).not.toContain("!isAssistantRole(message) || !getMessageId(message) || !getMessageText(message)");
   });
 
+  test("writes generated audio back to Dexie so playback controls can appear", () => {
+    expect(speechSource).toContain('import { MessageStore } from "./db.js";');
+    expect(speechSource).toContain("MessageStore.updateMessageSpeech(sessionId, serverMessage, speech)");
+    expect(speechSource).toContain("MessageStore.updateMessageSpeech(sessionId, serverMessage, serverSpeech)");
+  });
+
   test("uses server-generated summary audio instead of browser speech for read aloud", () => {
     expect(speechSource).toContain("summary: true");
     expect(speechSource).not.toContain("new SpeechSynthesisUtterance");

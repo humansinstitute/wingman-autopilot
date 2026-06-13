@@ -1,5 +1,6 @@
 import { generateMessageSpeechApi } from "../services/message-speech.js";
 import { fetchSessionMessagesApi } from "../services/sessions.js";
+import { MessageStore } from "./db.js";
 
 const generatedSpeech = new Map();
 const autoPlayedMessages = new Set();
@@ -149,6 +150,7 @@ async function resolveServerSpeech({ sessionId, message, button = null }) {
     const serverSpeech = getSpeech(serverMessage);
     if (serverSpeech?.publicPath) {
       generatedSpeech.set(cacheKey, serverSpeech);
+      await MessageStore.updateMessageSpeech(sessionId, serverMessage, serverSpeech);
       return serverSpeech;
     }
     const response = await generateMessageSpeechApi({
@@ -162,6 +164,7 @@ async function resolveServerSpeech({ sessionId, message, button = null }) {
       throw new Error("Speech generation returned no audio");
     }
     generatedSpeech.set(cacheKey, speech);
+    await MessageStore.updateMessageSpeech(sessionId, serverMessage, speech);
     return speech;
   } catch (error) {
     throw error;

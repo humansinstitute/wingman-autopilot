@@ -11,6 +11,7 @@ import { show as scrollPillShow, isNearBottom as scrollPillIsNearBottom } from "
 import { renderChatMessageHtml } from "../rendering/chat-message-content.js";
 import { AGENT_OUTPUT_FORMATTING_FLAG_KEY } from "../rendering/agent-output-format.js";
 import { normalizeRuntimeStatus } from "./session-status-cache.js";
+import { fetchSessionMessagesApi } from "../services/sessions.js";
 import {
   LIVE_MESSAGE_WINDOW_DEFAULT,
   LIVE_MESSAGE_PAGE_SIZE,
@@ -123,6 +124,7 @@ export function registerChatComponent() {
       try {
         this._subscribeToMessages(sessionId);
         this._subscribeToSessionStatus(sessionId);
+        void this._syncMessagesFromServer(sessionId);
 
         // Subscribe to SSE status/connection events
         this._setupSSEListeners(sessionId);
@@ -214,6 +216,14 @@ export function registerChatComponent() {
             console.warn("[chat] Failed to read session status:", error);
           },
         });
+    },
+
+    async _syncMessagesFromServer(sessionId) {
+      const payload = await fetchSessionMessagesApi(sessionId, { refresh: true }).catch(() => null);
+      if (this.sessionId !== sessionId || !Array.isArray(payload?.messages)) {
+        return;
+      }
+      await MessageStore.syncFromServerIfChanged(sessionId, payload.messages);
     },
 
     /**
