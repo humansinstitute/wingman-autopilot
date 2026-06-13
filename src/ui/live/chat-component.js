@@ -165,7 +165,11 @@ export function registerChatComponent() {
       this._sseUnsubscribers.push(
         sseManager.onStatusChange((sid, status) => {
           if (sid === sessionId) {
+            const wasBusy = this.isBusy;
             this.status = status;
+            if (wasBusy && !this.isBusy) {
+              this._scheduleSpeechWork();
+            }
           }
         })
       );
@@ -218,7 +222,11 @@ export function registerChatComponent() {
             if (this.sessionId !== sessionId) {
               return;
             }
+            const wasBusy = this.isBusy;
             this.status = normalizeRuntimeStatus(session?.agentRuntimeStatus) ?? "stable";
+            if (wasBusy && !this.isBusy) {
+              this._scheduleSpeechWork();
+            }
           },
           error: (error) => {
             if (this.sessionId !== sessionId) {
@@ -339,6 +347,9 @@ export function registerChatComponent() {
 
     _scheduleSpeechWork() {
       if (!this.sessionId || !Array.isArray(this.messages)) {
+        return;
+      }
+      if (this.isBusy) {
         return;
       }
       const latestSpeechKey = getLatestAssistantSpeechKey(this.sessionId, this.messages);

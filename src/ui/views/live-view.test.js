@@ -81,6 +81,12 @@ describe("live-view composition", () => {
     expect(source).not.toContain("syncHeaderWebviewToggle");
   });
 
+  test("waits for the agent turn to finish before generating speech", () => {
+    expect(source).toContain("const isSessionReadyForSpeech = (session) =>");
+    expect(source).toContain('runtimeStatus !== "running"');
+    expect(source).toContain("if (isSessionReadyForSpeech(session))");
+  });
+
   test("unpinned artifacts preserve the remaining ordered page list", () => {
     expect(source).toContain("const remainingPinnedFiles = pinnedFilesBeforeRemoval.filter");
     expect(source).toContain("const nextActiveFile = nextActiveIndex >= 0 ? remainingPinnedFiles[nextActiveIndex] : null");

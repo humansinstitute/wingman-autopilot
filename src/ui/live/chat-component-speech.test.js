@@ -33,6 +33,9 @@ describe("Alpine chat speech controls", () => {
     expect(source).toContain("isSessionSpeechGenerationEnabled(session)");
     expect(source).toContain("isSessionAlwaysReadEnabled(session)");
     expect(source).toContain("void ensureLatestAssistantSpeech");
+    expect(source).toContain("if (this.isBusy)");
+    expect(source).toContain("const wasBusy = this.isBusy");
+    expect(source).toContain("if (wasBusy && !this.isBusy)");
     expect(source).toContain("_speechBaselineReady");
     expect(source).toContain("_lastSpeechCandidateKey");
     expect(source).toContain("window.Alpine?.store(\"sessions\")?.items");

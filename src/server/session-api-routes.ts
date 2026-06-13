@@ -2119,6 +2119,13 @@ async function handleMessageSpeech(
     return Response.json({ sessionId, messageId, speech: existing });
   }
 
+  if (liveOwnedSession?.agentRuntimeStatus === "running") {
+    return Response.json(
+      { error: "Speech can only be generated after the agent response is complete" },
+      { status: 409 },
+    );
+  }
+
   let payload: Record<string, unknown> | null = null;
   try {
     payload = await request.json() as Record<string, unknown>;

@@ -137,6 +137,11 @@ export function initLiveView(deps) {
   configureLiveChatFeatures({ isFeatureEnabled: isFeatureEnabledForViewer });
   const speechCandidateKeys = new Map();
 
+  const isSessionReadyForSpeech = (session) => {
+    const runtimeStatus = typeof session?.agentRuntimeStatus === "string" ? session.agentRuntimeStatus : "";
+    return runtimeStatus !== "running";
+  };
+
   const agentOutputFormattingEnabled = () => Boolean(
     isFeatureEnabledForViewer(AGENT_OUTPUT_FORMATTING_FLAG_KEY),
   );
@@ -684,19 +689,21 @@ export function initLiveView(deps) {
       attachComposerScrollControls(composerEl);
     }
 
-    const latestSpeechKey = getLatestAssistantSpeechKey(sessionId, conversation);
-    if (!speechCandidateKeys.has(sessionId)) {
-      speechCandidateKeys.set(sessionId, latestSpeechKey);
-    } else if (
-      latestSpeechKey &&
-      latestSpeechKey !== speechCandidateKeys.get(sessionId) &&
-      isSessionSpeechGenerationEnabled(session)
-    ) {
-      speechCandidateKeys.set(sessionId, latestSpeechKey);
-      if (isSessionAlwaysReadEnabled(session)) {
-        void autoReadLatestAssistantMessage({ sessionId, session, conversation, showToast });
-      } else {
-        void ensureLatestAssistantSpeech({ sessionId, session, conversation, showToast });
+    if (isSessionReadyForSpeech(session)) {
+      const latestSpeechKey = getLatestAssistantSpeechKey(sessionId, conversation);
+      if (!speechCandidateKeys.has(sessionId)) {
+        speechCandidateKeys.set(sessionId, latestSpeechKey);
+      } else if (
+        latestSpeechKey &&
+        latestSpeechKey !== speechCandidateKeys.get(sessionId) &&
+        isSessionSpeechGenerationEnabled(session)
+      ) {
+        speechCandidateKeys.set(sessionId, latestSpeechKey);
+        if (isSessionAlwaysReadEnabled(session)) {
+          void autoReadLatestAssistantMessage({ sessionId, session, conversation, showToast });
+        } else {
+          void ensureLatestAssistantSpeech({ sessionId, session, conversation, showToast });
+        }
       }
     }
 
