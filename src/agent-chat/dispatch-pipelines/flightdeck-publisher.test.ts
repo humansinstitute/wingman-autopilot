@@ -195,6 +195,8 @@ mock.module('../tower-client', () => ({
       task: {
         id: input.taskId,
         state: 'in_progress',
+        channel_id: 'channel-1',
+        thread_id: 'thread-1',
         row_version: 2,
       },
     };
@@ -911,6 +913,75 @@ describe('dispatch pipeline Flight Deck publisher', () => {
       operation: 'tasks.update',
       taskId: 'pg-task-1',
       state: 'in_progress',
+    });
+  });
+
+  test('task response publishing attaches generated TTS audio to Flight Deck PG task comment when configured', async () => {
+    const publish = createDispatchFlightDeckPublisher(buildChatPublisherContext({
+      subscription: {
+        subscriptionId: 'sub-pg-1',
+        workspaceOwnerNpub: 'npub1workspace',
+        sourceAppNpub: 'npub1source',
+        backendBaseUrl: 'https://tower.example.com',
+        workspaceId: 'workspace-pg-1',
+        botNpub: 'npub1bot',
+        wsKeyNpub: null,
+      },
+      triggerKind: 'task',
+      capability: 'task_dispatch',
+      recordId: 'pg-task-1',
+      recordFamily: 'task',
+      bindingType: 'task',
+      bindingId: 'pg-task-1',
+      payload: {
+        task_id: 'pg-task-1',
+        channel_id: 'channel-1',
+        thread_id: 'thread-1',
+      },
+      runtime: {
+        mode: 'flightdeck_pg',
+        yokeStateDir: null,
+        commandPrefix: null,
+        commands: {},
+        error: null,
+      },
+      userSettings: {
+        speech_chat_replies_enabled: 'true',
+        speech_chat_replies_mode: 'summary',
+        speech_provider: 'openrouter',
+        speech_api_key: 'test-openrouter-key',
+      },
+    }));
+
+    const result = await publish({
+      agentResponse: {
+        accepted: true,
+        taskSummary: 'Started task work.',
+        confidence: 0.72,
+      },
+    });
+
+    expect(pgTaskCommentCreateCalls).toHaveLength(1);
+    expect(pgStorageUploadCalls).toHaveLength(1);
+    expect(pgAudioNoteCreateCalls).toHaveLength(1);
+    expect(pgAudioNoteCreateCalls[0]).toMatchObject({
+      channelId: 'channel-1',
+      threadId: 'thread-1',
+      storageObjectId: 'storage-tts-1',
+      targetType: 'task_comment',
+      targetId: 'pg-comment-1',
+      transcriptText: 'Short spoken summary.',
+      transcriptStatus: 'done',
+    });
+    expect(result).toMatchObject({
+      published: true,
+      commentResult: {
+        speech: {
+          status: 'ok',
+          storageObjectId: 'storage-tts-1',
+          audioNoteId: 'audio-note-tts-1',
+        },
+      },
     });
   });
 

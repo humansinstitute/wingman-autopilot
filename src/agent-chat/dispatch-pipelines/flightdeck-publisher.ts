@@ -91,7 +91,7 @@ function speechPreview(value: string): string {
   return normaliseSpeechTranscript(value).split(/\s+/).slice(0, 18).join(' ');
 }
 
-function getChatReplySpeechSettings(context: DispatchPipelineFlightDeckPublisherContext): {
+function getFlightDeckPublishSpeechSettings(context: DispatchPipelineFlightDeckPublisherContext): {
   enabled: boolean;
   mode: 'summary' | 'full';
   provider: 'openrouter' | 'local';
@@ -143,8 +143,8 @@ function getChatReplySpeechSettings(context: DispatchPipelineFlightDeckPublisher
   };
 }
 
-async function generateChatReplySpeech(context: DispatchPipelineFlightDeckPublisherContext, input: {
-  replyBody: string;
+async function generateFlightDeckPublishSpeech(context: DispatchPipelineFlightDeckPublisherContext, input: {
+  body: string;
   userPrompt?: string | null;
 }): Promise<{
   audio: Uint8Array;
@@ -155,16 +155,16 @@ async function generateChatReplySpeech(context: DispatchPipelineFlightDeckPublis
   transcript: string;
   summary: string;
 } | null> {
-  const settings = getChatReplySpeechSettings(context);
+  const settings = getFlightDeckPublishSpeechSettings(context);
   if (!settings) return null;
 
-  let transcript = normaliseSpeechTranscript(input.replyBody);
+  let transcript = normaliseSpeechTranscript(input.body);
   if (!transcript) return null;
   if (settings.mode === 'summary') {
     try {
       transcript = await generateSpeechSummary({
         userPrompt: input.userPrompt ?? '',
-        agentResponse: input.replyBody,
+        agentResponse: input.body,
         config: {
           apiKey: settings.apiKey,
           baseUrl: settings.summaryBaseUrl,
@@ -199,6 +199,21 @@ function getPublishedPgMessageId(result: unknown): string | null {
   return getText(message.id) ?? getText(objectValue(result)?.message_id) ?? null;
 }
 
+function getPublishedPgTaskCommentId(result: unknown): string | null {
+  const comment = objectValue(objectValue(result)?.comment);
+  return getText(comment.id) ?? getText(objectValue(result)?.comment_id) ?? null;
+}
+
+function resolveFlightDeckPgChannelId(context: DispatchPipelineFlightDeckPublisherContext, fallback?: string | null): string | null {
+  return getText(fallback)
+    ?? context.eventInput.channelId
+    ?? getText(context.eventInput.payload.channel_id)
+    ?? getText(context.eventInput.payload.pg_channel_id)
+    ?? getText(objectValue(context.eventInput.record).channel_id)
+    ?? getText(objectValue(objectValue(context.eventInput.record).payload).channel_id)
+    ?? null;
+}
+
 function getFlightDeckPgPublishContext(context: DispatchPipelineFlightDeckPublisherContext): {
   backendBaseUrl: string;
   workspaceId: string;
@@ -217,6 +232,137 @@ function getFlightDeckPgPublishContext(context: DispatchPipelineFlightDeckPublis
     workspaceId,
     appNpub: context.eventInput.subscription.sourceAppNpub,
     botIdentity: context.botIdentity,
+  };
+}
+
+async function attachFlightDeckPgSpeechToTarget(
+  context: DispatchPipelineFlightDeckPublisherContext,
+  input: {
+    channelId?: string | null;
+    threadId?: string | null;
+    targetType: 'message' | 'task_comment' | 'task';
+    targetId?: string | null;
+    body: string;
+    title: string;
+    filePrefix: string;
+    userPrompt?: string | null;
+    metadata?: Record<string, unknown> | null;
+  },
+): Promise<JsonObject> {
+  const targetId = getText(input.targetId);
+  if (!targetId) {
+    return {
+      status: 'skipped',
+      reason: 'target_id_missing',
+    };
+  }
+  const channelId = resolveFlightDeckPgChannelId(context, input.channelId);
+  if (!channelId) {
+    return {
+      status: 'skipped',
+      reason: 'channel_id_missing',
+    };
+  }
+  try {
+    const pg = getFlightDeckPgPublishContext(context);
+    const speech = await generateFlightDeckPublishSpeech(context, {
+      body: input.body,
+      userPrompt: input.userPrompt,
+    });
+    if (!speech) {
+      return {
+        status: 'skipped',
+        reason: 'speech_not_configured',
+      };
+    }
+    const storage = await uploadFlightDeckPgStorageObject({
+      backendBaseUrl: pg.backendBaseUrl,
+      workspaceId: pg.workspaceId,
+      appNpub: pg.appNpub,
+      botIdentity: pg.botIdentity,
+      fileName: `${input.filePrefix}-${targetId}${resolveSpeechExtension(speech.format)}`,
+      contentType: speech.mimeType,
+      content: speech.audio,
+    });
+    const audioNote = await createFlightDeckPgAudioNote({
+      backendBaseUrl: pg.backendBaseUrl,
+      workspaceId: pg.workspaceId,
+      channelId,
+      appNpub: pg.appNpub,
+      botIdentity: pg.botIdentity,
+      storageObjectId: storage.object_id,
+      mimeType: speech.mimeType,
+      title: input.title,
+      targetType: input.targetType,
+      targetId,
+      threadId: input.threadId ?? context.eventInput.threadId ?? getText(context.eventInput.payload.thread_id),
+      sizeBytes: speech.audio.byteLength,
+      transcriptPreview: speechPreview(speech.transcript),
+      transcriptText: speech.transcript,
+      transcriptStatus: 'done',
+      summary: speech.summary,
+      metadata: {
+        autopilot_dispatch_tts: true,
+        target_type: input.targetType,
+        model: speech.model,
+        voice: speech.voice,
+        format: speech.format,
+        ...(input.metadata ?? {}),
+      },
+    });
+    return {
+      status: 'ok',
+      storageObjectId: storage.object_id,
+      audioNoteId: getText(objectValue(audioNote.audio_note)?.id),
+    };
+  } catch (error) {
+    console.warn('[dispatch-publisher] Flight Deck PG speech attachment failed', error);
+    return {
+      status: 'failed',
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function createFlightDeckPgChannelMessageFromContext(
+  context: DispatchPipelineFlightDeckPublisherContext,
+  input: {
+    channelId: string;
+    body: string;
+    threadId?: string | null;
+    createThread?: boolean;
+    metadata?: Record<string, unknown> | null;
+    speechTitle?: string;
+    speechFilePrefix?: string;
+    userPrompt?: string | null;
+  },
+): Promise<JsonObject> {
+  const pg = getFlightDeckPgPublishContext(context);
+  const result = await createFlightDeckPgChannelMessage({
+    backendBaseUrl: pg.backendBaseUrl,
+    workspaceId: pg.workspaceId,
+    channelId: input.channelId,
+    appNpub: pg.appNpub,
+    botIdentity: pg.botIdentity,
+    body: input.body,
+    threadId: input.threadId,
+    createThread: input.createThread,
+    metadata: input.metadata ?? null,
+  });
+  const messageId = getPublishedPgMessageId(result);
+  const speech = await attachFlightDeckPgSpeechToTarget(context, {
+    channelId: input.channelId,
+    threadId: input.threadId,
+    targetType: 'message',
+    targetId: messageId,
+    body: input.body,
+    title: input.speechTitle ?? 'Spoken message summary',
+    filePrefix: input.speechFilePrefix ?? 'flightdeck-message-tts',
+    userPrompt: input.userPrompt,
+  });
+  return {
+    ...objectValue(result),
+    speech,
   };
 }
 
@@ -256,7 +402,7 @@ async function createFlightDeckPgTaskCommentFromContext(
   metadata?: Record<string, unknown> | null,
 ): Promise<JsonObject> {
   const pg = getFlightDeckPgPublishContext(context);
-  return await createFlightDeckPgTaskComment({
+  const result = await createFlightDeckPgTaskComment({
     backendBaseUrl: pg.backendBaseUrl,
     workspaceId: pg.workspaceId,
     taskId,
@@ -269,7 +415,43 @@ async function createFlightDeckPgTaskCommentFromContext(
       source_message_id: context.eventInput.recordId,
       subscription_id: context.eventInput.subscription.subscriptionId,
     },
-  }) as JsonObject;
+  });
+  const commentId = getPublishedPgTaskCommentId(result);
+  let channelId = resolveFlightDeckPgChannelId(context);
+  let threadId = context.eventInput.threadId ?? getText(context.eventInput.payload.thread_id);
+  if (!channelId) {
+    try {
+      const task = await fetchFlightDeckPgTask({
+        backendBaseUrl: pg.backendBaseUrl,
+        workspaceId: pg.workspaceId,
+        taskId,
+        appNpub: pg.appNpub,
+        botIdentity: pg.botIdentity,
+      });
+      const taskRow = objectValue(task.task);
+      channelId = getText(taskRow.channel_id);
+      threadId = threadId ?? getText(taskRow.thread_id);
+    } catch (error) {
+      console.warn('[dispatch-publisher] could not resolve Flight Deck PG task channel for speech attachment', error);
+    }
+  }
+  const speech = await attachFlightDeckPgSpeechToTarget(context, {
+    channelId,
+    threadId,
+    targetType: 'task_comment',
+    targetId: commentId,
+    body,
+    title: 'Spoken task comment summary',
+    filePrefix: 'flightdeck-task-comment-tts',
+    userPrompt: getText(context.eventInput.payload.body),
+    metadata: {
+      task_id: taskId,
+    },
+  });
+  return {
+    ...objectValue(result),
+    speech,
+  };
 }
 
 async function updateFlightDeckPgTaskStateWithLease(
@@ -1632,14 +1814,10 @@ async function publishReadyForReviewChatNotification(
 
   try {
     if (isFlightDeckPgPublisherContext(context)) {
-      const pg = getFlightDeckPgPublishContext(context);
-      const result = await createFlightDeckPgChannelMessage({
-        backendBaseUrl: pg.backendBaseUrl,
-        workspaceId: pg.workspaceId,
+      const replyBody = buildReadyForReviewChatReply(input, taskId, reviewerNpub);
+      const result = await createFlightDeckPgChannelMessageFromContext(context, {
         channelId,
-        appNpub: pg.appNpub,
-        botIdentity: pg.botIdentity,
-        body: buildReadyForReviewChatReply(input, taskId, reviewerNpub),
+        body: replyBody,
         threadId,
         metadata: {
           autopilot_dispatch: true,
@@ -1647,6 +1825,9 @@ async function publishReadyForReviewChatNotification(
           subscription_id: context.eventInput.subscription.subscriptionId,
           notification_kind: 'ready_for_review',
         },
+        speechTitle: 'Spoken review notification summary',
+        speechFilePrefix: 'flightdeck-ready-review-tts',
+        userPrompt: getText(objectValue(context.eventInput.payload)?.body),
       });
       return {
         notified: true,
@@ -1715,13 +1896,8 @@ async function publishChatReply(
   }
 
   if (isFlightDeckPgPublisherContext(context)) {
-    const pg = getFlightDeckPgPublishContext(context);
-    const result = await createFlightDeckPgChannelMessage({
-      backendBaseUrl: pg.backendBaseUrl,
-      workspaceId: pg.workspaceId,
+    const result = await createFlightDeckPgChannelMessageFromContext(context, {
       channelId,
-      appNpub: pg.appNpub,
-      botIdentity: pg.botIdentity,
       body: normalizedBody,
       threadId,
       metadata: {
@@ -1729,68 +1905,10 @@ async function publishChatReply(
         source_message_id: context.eventInput.recordId,
         subscription_id: context.eventInput.subscription.subscriptionId,
       },
+      speechTitle: 'TTS reply summary',
+      speechFilePrefix: 'chat-reply-tts',
+      userPrompt: getText(objectValue(context.eventInput.payload)?.body),
     });
-    let speechResult: JsonObject | null = null;
-    try {
-      const messageId = getPublishedPgMessageId(result);
-      const speech = messageId
-        ? await generateChatReplySpeech(context, {
-          replyBody: normalizedBody,
-          userPrompt: getText(objectValue(context.eventInput.payload)?.body),
-        })
-        : null;
-      if (messageId && speech) {
-        const storage = await uploadFlightDeckPgStorageObject({
-          backendBaseUrl: pg.backendBaseUrl,
-          workspaceId: pg.workspaceId,
-          appNpub: pg.appNpub,
-          botIdentity: pg.botIdentity,
-          fileName: `chat-reply-tts-${messageId}${resolveSpeechExtension(speech.format)}`,
-          contentType: speech.mimeType,
-          content: speech.audio,
-        });
-        const audioNote = await createFlightDeckPgAudioNote({
-          backendBaseUrl: pg.backendBaseUrl,
-          workspaceId: pg.workspaceId,
-          channelId,
-          appNpub: pg.appNpub,
-          botIdentity: pg.botIdentity,
-          storageObjectId: storage.object_id,
-          mimeType: speech.mimeType,
-          title: 'TTS reply summary',
-          targetType: 'message',
-          targetId: messageId,
-          threadId,
-          sizeBytes: speech.audio.byteLength,
-          transcriptPreview: speechPreview(speech.transcript),
-          transcriptText: speech.transcript,
-          transcriptStatus: 'done',
-          summary: speech.summary,
-          metadata: {
-            autopilot_dispatch_tts: true,
-            model: speech.model,
-            voice: speech.voice,
-            format: speech.format,
-          },
-        });
-        speechResult = {
-          status: 'ok',
-          storageObjectId: storage.object_id,
-          audioNoteId: getText(objectValue(audioNote.audio_note)?.id),
-        };
-      } else {
-        speechResult = {
-          status: 'skipped',
-          reason: messageId ? 'speech_not_configured' : 'message_id_missing',
-        };
-      }
-    } catch (error) {
-      console.warn('[dispatch-publisher] chat reply TTS attachment failed', error);
-      speechResult = {
-        status: 'failed',
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
     return {
       published: true,
       status: 'ok',
@@ -1798,7 +1916,7 @@ async function publishChatReply(
       channelId,
       threadId,
       result,
-      speech: speechResult,
+      speech: objectValue(result).speech,
       agentResponse: {
         ...response,
         responseDraft: normalizedBody,
@@ -2642,14 +2760,10 @@ async function publishNeedsInputChatNotification(
 
   try {
     if (isFlightDeckPgPublisherContext(context)) {
-      const pg = getFlightDeckPgPublishContext(context);
-      const result = await createFlightDeckPgChannelMessage({
-        backendBaseUrl: pg.backendBaseUrl,
-        workspaceId: pg.workspaceId,
+      const replyBody = buildNeedsInputChatReply(input, taskId, question);
+      const result = await createFlightDeckPgChannelMessageFromContext(context, {
         channelId,
-        appNpub: pg.appNpub,
-        botIdentity: pg.botIdentity,
-        body: buildNeedsInputChatReply(input, taskId, question),
+        body: replyBody,
         threadId,
         metadata: {
           autopilot_dispatch: true,
@@ -2657,6 +2771,9 @@ async function publishNeedsInputChatNotification(
           subscription_id: context.eventInput.subscription.subscriptionId,
           notification_kind: 'needs_input',
         },
+        speechTitle: 'Spoken needs-input summary',
+        speechFilePrefix: 'flightdeck-needs-input-tts',
+        userPrompt: getText(objectValue(context.eventInput.payload)?.body),
       });
       return {
         notified: true,
