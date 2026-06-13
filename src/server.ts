@@ -523,7 +523,7 @@ const schedulerEngine = new SchedulerEngine({
       sessionApiContext,
       definition,
       registry: functions.registry,
-      input,
+      input: mergeScheduledPipelineInput(definition.spec.input ?? {}, input),
       defaultAgent,
       ownerNpub: job.userNpub,
       ownerAlias,
@@ -535,6 +535,15 @@ const schedulerEngine = new SchedulerEngine({
   onBotKeyUnlocked: onBotKeyUnlockedHook,
   getInstanceIdentity: () => wingmanInstanceIdentity,
 });
+
+function mergeScheduledPipelineInput(defaultInput: JsonObject, scheduledInput: JsonObject): JsonObject {
+  const merged: JsonObject = { ...defaultInput };
+  for (const [key, value] of Object.entries(scheduledInput)) {
+    if (value === null || value === undefined) continue;
+    merged[key] = value;
+  }
+  return merged;
+}
 const schedulerApiHandler = createSchedulerApiHandler({
   store: schedulerStore,
   engine: schedulerEngine,
