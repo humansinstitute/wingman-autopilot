@@ -102,7 +102,7 @@ export async function connectTerminalClient({ pin, container, onStatus }) {
   }
 
   const term = openTerminal(container);
-  term.writeln("Opening container shell...");
+  term.writeln("Opening shell...");
   onStatus?.("Connecting...");
 
   socket = new WebSocket(terminalWsUrl(authPayload.ticket));

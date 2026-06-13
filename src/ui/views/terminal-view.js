@@ -49,7 +49,7 @@ export function initTerminalView(deps) {
     title.id = "terminal-title";
     title.textContent = "Terminal";
     const subtitle = document.createElement("p");
-    subtitle.textContent = "Container shell for this Autopilot instance.";
+    subtitle.textContent = "Shell for this Autopilot instance.";
     titleGroup.append(title, subtitle);
 
     const status = document.createElement("div");
