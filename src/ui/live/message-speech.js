@@ -169,7 +169,7 @@ async function resolveServerSpeech({ sessionId, message, button = null }) {
   }
 }
 
-async function readMessageAloud({ sessionId, message, showToast, button = null }) {
+export async function readMessageAloud({ sessionId, message, showToast, button = null }) {
   if (!getMessageText(message)) {
     showToast?.("Message has no readable text", { type: "warning" });
     return;

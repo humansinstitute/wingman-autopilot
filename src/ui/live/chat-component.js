@@ -20,6 +20,11 @@ import {
   capturePrependedScrollState,
   schedulePrependedScrollRestore,
 } from "./conversation-window.js";
+import {
+  autoReadLatestAssistantMessage,
+  isSessionAlwaysReadEnabled,
+  readMessageAloud,
+} from "./message-speech.js";
 
 let featureEnabledResolver = () => false;
 
@@ -34,6 +39,12 @@ function isAgentOutputFormattingEnabled() {
 function shouldFormatAgentMessage(message) {
   const role = String(message?.role ?? message?.type ?? "").toLowerCase();
   return role === "assistant" || role === "agent";
+}
+
+function isReadableAgentMessage(message) {
+  const role = String(message?.role ?? message?.type ?? "").toLowerCase();
+  const content = String(message?.content ?? message?.message ?? "").trim();
+  return (role === "assistant" || role === "agent") && Boolean(content);
 }
 
 /**
@@ -225,11 +236,13 @@ export function registerChatComponent() {
     replaceMessages(messages) {
       this.messages = Array.isArray(messages) ? messages : [];
       this._syncMessageWindow();
+      this._scheduleAutoRead();
     },
 
     appendMessage(message) {
       this.messages = [...this.messages, message];
       this._syncMessageWindow();
+      this._scheduleAutoRead();
     },
 
     revealOlderMessages(scrollElement) {
@@ -263,6 +276,42 @@ export function registerChatComponent() {
     renderMessageContent(message) {
       return renderChatMessageHtml(message?.content ?? "", {
         cleanAgentText: Boolean(isAgentOutputFormattingEnabled() && shouldFormatAgentMessage(message)),
+      });
+    },
+
+    canReadMessage(message) {
+      return isReadableAgentMessage(message);
+    },
+
+    async playMessageSpeech(message, button) {
+      if (!this.sessionId) return;
+      await readMessageAloud({
+        sessionId: this.sessionId,
+        message,
+        button,
+        showToast: (messageText, options = {}) => {
+          const level = options.type === "error" ? "error" : "warn";
+          console[level]("[chat] speech playback", messageText);
+        },
+      });
+    },
+
+    _scheduleAutoRead() {
+      if (!this.sessionId || !Array.isArray(this.messages) || this.messages.length === 0) {
+        return;
+      }
+      const session = window.Alpine?.store("sessions")?.items?.find?.((item) => item.id === this.sessionId) ?? null;
+      if (!isSessionAlwaysReadEnabled(session)) {
+        return;
+      }
+      void autoReadLatestAssistantMessage({
+        sessionId: this.sessionId,
+        session,
+        conversation: this.messages,
+        showToast: (messageText, options = {}) => {
+          const level = options.type === "error" ? "error" : "warn";
+          console[level]("[chat] auto speech", messageText);
+        },
       });
     },
 
@@ -413,18 +462,30 @@ export function getChatTemplate(sessionId) {
                :data-role="(message.role || message.type || 'assistant').toLowerCase()"
                :class="message.role === 'user' ? 'user' : (message.role === 'assistant' || message.role === 'agent' ? 'assistant' : 'system')">
         <div class="wm-message-body" x-html="$store.chat.renderMessageContent(message)"></div>
-        <button type="button" class="wm-message-copy" aria-label="Copy message"
-                @click.stop="
-                  const text = message.content || '';
-                  if (text && navigator.clipboard?.writeText) {
-                    navigator.clipboard.writeText(text).then(() => {
-                      $el.closest('.wm-message').dataset.copied = 'true';
-                      setTimeout(() => { delete $el.closest('.wm-message').dataset.copied }, 1600);
-                    });
-                  }
-                ">
-          <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24"><path fill="currentColor" d="M15 3H7a2 2 0 0 0-2 2v10h2V5h8V3zm4 4h-8a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2zm0 12h-8V9h8v10z"/></svg>
-        </button>
+        <div class="wm-message-actions">
+          <template x-if="$store.chat.canReadMessage(message)">
+            <button type="button"
+                    class="wm-message-speech-play"
+                    data-testid="message-speech-play"
+                    aria-label="Play spoken summary"
+                    title="Play spoken summary"
+                    @click.stop="$store.chat.playMessageSpeech(message, $el)">
+              <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>
+            </button>
+          </template>
+          <button type="button" class="wm-message-copy" data-testid="message-copy" aria-label="Copy message"
+                  @click.stop="
+                    const text = message.content || '';
+                    if (text && navigator.clipboard?.writeText) {
+                      navigator.clipboard.writeText(text).then(() => {
+                        $el.closest('.wm-message').dataset.copied = 'true';
+                        setTimeout(() => { delete $el.closest('.wm-message').dataset.copied }, 1600);
+                      });
+                    }
+                  ">
+            <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24"><path fill="currentColor" d="M15 3H7a2 2 0 0 0-2 2v10h2V5h8V3zm4 4h-8a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2zm0 12h-8V9h8v10z"/></svg>
+          </button>
+        </div>
       </article>
     </template>
 
