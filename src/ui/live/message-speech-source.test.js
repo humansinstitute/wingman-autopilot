@@ -62,6 +62,10 @@ describe("live message speech controls", () => {
     expect(speechSource).toContain('overlay.className = "wm-speech-playback-modal"');
     expect(speechSource).toContain('overlay.dataset.testid = "speech-playback-modal"');
     expect(speechSource).toContain('stopButton.dataset.testid = "speech-playback-stop"');
+    expect(speechSource).toContain("function updateSpeechTimeline(audio = activeAudio)");
+    expect(speechSource).toContain('scrubber.dataset.testid = "speech-playback-scrubber"');
+    expect(speechSource).toContain('audio.addEventListener("timeupdate", () => updateSpeechTimeline(audio))');
+    expect(speechSource).toContain("activeAudio.currentTime = nextTime");
     expect(speechSource).toContain("export function stopSpeechPlayback()");
     expect(speechSource).toContain("export function getActiveSpeechPlaybackKey()");
     expect(speechSource).toContain("export function updateSpeechButtonPlaybackState(button, key)");
@@ -82,6 +86,8 @@ describe("live message speech controls", () => {
     expect(styles).toContain(".wm-message-speech-summary");
     expect(styles).toContain(".wm-speech-playback-modal");
     expect(styles).toContain(".wm-speech-playback-modal__stop");
+    expect(styles).toContain(".wm-speech-playback-modal__timeline");
+    expect(styles).toContain(".wm-speech-playback-modal__scrubber");
     expect(styles).toContain("bottom: 0.65rem;");
     expect(styles).toContain("right: 0.85rem;");
   });

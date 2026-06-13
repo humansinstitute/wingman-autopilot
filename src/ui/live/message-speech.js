@@ -140,6 +140,38 @@ function removeSpeechPlaybackModal() {
   activeSpeechModal = null;
 }
 
+function formatSpeechTime(seconds) {
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return "0:00";
+  }
+  const totalSeconds = Math.floor(seconds);
+  const minutes = Math.floor(totalSeconds / 60);
+  const remainder = String(totalSeconds % 60).padStart(2, "0");
+  return `${minutes}:${remainder}`;
+}
+
+function updateSpeechTimeline(audio = activeAudio) {
+  if (!activeSpeechModal || !audio) {
+    return;
+  }
+  const scrubber = activeSpeechModal.querySelector("[data-part='speech-scrubber']");
+  const elapsed = activeSpeechModal.querySelector("[data-part='speech-elapsed']");
+  const duration = activeSpeechModal.querySelector("[data-part='speech-duration']");
+  const currentTime = Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
+  const totalTime = Number.isFinite(audio.duration) ? audio.duration : 0;
+  if (scrubber) {
+    scrubber.max = totalTime > 0 ? String(Math.floor(totalTime)) : "0";
+    scrubber.value = String(Math.min(Math.floor(currentTime), Math.floor(totalTime || currentTime)));
+    scrubber.disabled = totalTime <= 0;
+  }
+  if (elapsed) {
+    elapsed.textContent = formatSpeechTime(currentTime);
+  }
+  if (duration) {
+    duration.textContent = totalTime > 0 ? formatSpeechTime(totalTime) : "--:--";
+  }
+}
+
 function syncSpeechPlaybackModal(key) {
   if (typeof document === "undefined") {
     return;
@@ -177,6 +209,43 @@ function syncSpeechPlaybackModal(key) {
   title.className = "wm-speech-playback-modal__title";
   title.textContent = "Audio playing";
 
+  const timeline = document.createElement("div");
+  timeline.className = "wm-speech-playback-modal__timeline";
+
+  const elapsed = document.createElement("span");
+  elapsed.className = "wm-speech-playback-modal__time";
+  elapsed.dataset.part = "speech-elapsed";
+  elapsed.textContent = "0:00";
+
+  const scrubber = document.createElement("input");
+  scrubber.type = "range";
+  scrubber.min = "0";
+  scrubber.max = "0";
+  scrubber.value = "0";
+  scrubber.step = "1";
+  scrubber.className = "wm-speech-playback-modal__scrubber";
+  scrubber.dataset.part = "speech-scrubber";
+  scrubber.dataset.testid = "speech-playback-scrubber";
+  scrubber.setAttribute("aria-label", "Speech playback timeline");
+  scrubber.disabled = true;
+  scrubber.addEventListener("input", () => {
+    if (!activeAudio) {
+      return;
+    }
+    const nextTime = Number(scrubber.value);
+    if (Number.isFinite(nextTime)) {
+      activeAudio.currentTime = nextTime;
+      updateSpeechTimeline(activeAudio);
+    }
+  });
+
+  const duration = document.createElement("span");
+  duration.className = "wm-speech-playback-modal__time";
+  duration.dataset.part = "speech-duration";
+  duration.textContent = "--:--";
+
+  timeline.append(elapsed, scrubber, duration);
+
   const stopButton = document.createElement("button");
   stopButton.type = "button";
   stopButton.className = "wm-speech-playback-modal__stop";
@@ -191,10 +260,11 @@ function syncSpeechPlaybackModal(key) {
     }
   });
 
-  panel.append(status, title, stopButton);
+  panel.append(status, title, stopButton, timeline);
   overlay.append(panel);
   document.body.append(overlay);
   activeSpeechModal = overlay;
+  updateSpeechTimeline(activeAudio);
   stopButton.focus({ preventScroll: true });
 }
 
@@ -233,6 +303,9 @@ function playSpeech(publicPath, key = "") {
   const audio = new Audio(publicPath);
   activeAudio = audio;
   dispatchSpeechPlaybackChange(key);
+  audio.addEventListener("loadedmetadata", () => updateSpeechTimeline(audio));
+  audio.addEventListener("durationchange", () => updateSpeechTimeline(audio));
+  audio.addEventListener("timeupdate", () => updateSpeechTimeline(audio));
   audio.addEventListener("ended", () => {
     if (activeAudio === audio) {
       activeAudio = null;

@@ -3705,6 +3705,33 @@ body[data-live-header-collapsed="true"]:has(#app[data-route="live"]) .wm-live-dr
   outline-offset: 2px;
 }
 
+.wm-speech-playback-modal__timeline {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 2.8rem 1fr 2.8rem;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.wm-speech-playback-modal__time {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  text-align: center;
+}
+
+.wm-speech-playback-modal__scrubber {
+  width: 100%;
+  accent-color: var(--accent-primary);
+  cursor: pointer;
+}
+
+.wm-speech-playback-modal__scrubber:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
 @keyframes wm-speech-level {
   0%,
   100% {
