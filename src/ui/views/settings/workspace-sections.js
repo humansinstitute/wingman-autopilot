@@ -63,6 +63,7 @@ const OPENROUTER_SPEECH_DEFAULTS = {
   model: 'hexgrad/kokoro-82m',
   voice: 'af_heart',
   format: 'mp3',
+  summaryBaseUrl: 'https://openrouter.ai/api/v1',
   summaryModel: 'openai/gpt-4o-mini',
 };
 
@@ -71,7 +72,8 @@ const LOCAL_SPEECH_DEFAULTS = {
   model: 'kokoro',
   voice: 'am_onyx',
   format: 'mp3',
-  summaryModel: OPENROUTER_SPEECH_DEFAULTS.summaryModel,
+  summaryBaseUrl: 'http://127.0.0.1:11434/v1',
+  summaryModel: 'gemma3:4b',
 };
 
 function normalizeHostname(value) {
@@ -346,6 +348,15 @@ export function createSpeechSettingsSection() {
   formatInput.value = OPENROUTER_SPEECH_DEFAULTS.format;
   formatRow.append(formatLabel, formatInput);
 
+  const summaryBaseUrlRow = document.createElement('div');
+  summaryBaseUrlRow.className = 'wm-settings__key-row';
+  summaryBaseUrlRow.style.cssText = 'display:flex;gap:8px;align-items:center;margin-top:8px;';
+  const summaryBaseUrlLabel = createRowLabel('Summary URL', 140, 'speech-summary-base-url-input');
+  const summaryBaseUrlInput = createInput(OPENROUTER_SPEECH_DEFAULTS.summaryBaseUrl, 'url', 'Speech summary API base URL', 'settings-speech-summary-base-url');
+  summaryBaseUrlInput.id = 'speech-summary-base-url-input';
+  summaryBaseUrlInput.value = OPENROUTER_SPEECH_DEFAULTS.summaryBaseUrl;
+  summaryBaseUrlRow.append(summaryBaseUrlLabel, summaryBaseUrlInput);
+
   const summaryModelRow = document.createElement('div');
   summaryModelRow.className = 'wm-settings__key-row';
   summaryModelRow.style.cssText = 'display:flex;gap:8px;align-items:center;margin-top:8px;';
@@ -376,6 +387,7 @@ export function createSpeechSettingsSection() {
     if (overwrite || !modelInput.value.trim()) modelInput.value = defaults.model;
     if (overwrite || !voiceInput.value.trim()) voiceInput.value = defaults.voice;
     if (overwrite || !formatInput.value.trim()) formatInput.value = defaults.format;
+    if (overwrite || !summaryBaseUrlInput.value.trim()) summaryBaseUrlInput.value = defaults.summaryBaseUrl;
     if (overwrite || !summaryModelInput.value.trim()) summaryModelInput.value = defaults.summaryModel;
     apiKeyInput.disabled = providerSelect.value === 'local';
     apiKeyInput.placeholder = providerSelect.value === 'local' ? 'not required for local' : 'sk-...';
@@ -405,6 +417,9 @@ export function createSpeechSettingsSection() {
     if (typeof settings.speech_format === 'string') {
       formatInput.value = settings.speech_format;
     }
+    if (typeof settings.speech_summary_base_url === 'string') {
+      summaryBaseUrlInput.value = settings.speech_summary_base_url;
+    }
     if (typeof settings.speech_summary_model === 'string') {
       summaryModelInput.value = settings.speech_summary_model;
     }
@@ -421,6 +436,7 @@ export function createSpeechSettingsSection() {
       const model = modelInput.value.trim();
       const voice = voiceInput.value.trim();
       const format = formatInput.value.trim();
+      const summaryBaseUrl = summaryBaseUrlInput.value.trim();
       const summaryModel = summaryModelInput.value.trim();
       const saves = [];
       saves.push(saveUserSetting('speech_provider', provider));
@@ -430,6 +446,7 @@ export function createSpeechSettingsSection() {
       if (model) saves.push(saveUserSetting('speech_model', model));
       if (voice) saves.push(saveUserSetting('speech_voice', voice));
       if (format) saves.push(saveUserSetting('speech_format', format));
+      if (summaryBaseUrl) saves.push(saveUserSetting('speech_summary_base_url', summaryBaseUrl));
       if (summaryModel) saves.push(saveUserSetting('speech_summary_model', summaryModel));
       if (saves.length === 0) {
         setStatus(status, 'Enter at least one value to save', 'var(--error, #f44336)');
@@ -458,6 +475,7 @@ export function createSpeechSettingsSection() {
         deleteUserSetting('speech_model'),
         deleteUserSetting('speech_voice'),
         deleteUserSetting('speech_format'),
+        deleteUserSetting('speech_summary_base_url'),
         deleteUserSetting('speech_summary_model'),
       ]);
       apiKeyInput.value = '';
@@ -474,9 +492,9 @@ export function createSpeechSettingsSection() {
   const helpText = document.createElement('p');
   helpText.className = 'wm-settings__port-note';
   helpText.style.cssText = 'margin-top:6px;font-size:0.8em;';
-  helpText.textContent = 'OpenRouter default: hexgrad/kokoro-82m. Local default: OpenAI-compatible Kokoro at http://127.0.0.1:8880/v1, model kokoro, voice am_onyx.';
+  helpText.textContent = 'OpenRouter default: hexgrad/kokoro-82m with OpenRouter summaries. Local default: Kokoro at http://127.0.0.1:8880/v1 plus Ollama summaries at http://127.0.0.1:11434/v1, model gemma3:4b.';
 
-  container.append(heading, description, providerRow, apiKeyRow, baseUrlRow, modelRow, voiceRow, formatRow, summaryModelRow, actionsRow, helpText);
+  container.append(heading, description, providerRow, apiKeyRow, baseUrlRow, modelRow, voiceRow, formatRow, summaryBaseUrlRow, summaryModelRow, actionsRow, helpText);
   return container;
 }
 

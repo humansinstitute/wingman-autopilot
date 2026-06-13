@@ -3,7 +3,7 @@ const MAX_PROMPT_CHARS = 2_000;
 const MAX_RESPONSE_CHARS = 8_000;
 
 export type SpeechSummaryConfig = {
-  apiKey: string;
+  apiKey?: string;
   baseUrl: string;
   model: string;
 };
@@ -95,12 +95,15 @@ export async function generateSpeechSummary(input: GenerateSpeechSummaryInput): 
   }
 
   const baseUrl = input.config.baseUrl.endsWith("/") ? input.config.baseUrl : `${input.config.baseUrl}/`;
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+  };
+  if (input.config.apiKey?.trim()) {
+    headers.Authorization = `Bearer ${input.config.apiKey.trim()}`;
+  }
   const response = await fetch(new URL(OPENROUTER_CHAT_COMPLETIONS_PATH, baseUrl), {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${input.config.apiKey}`,
-      "content-type": "application/json",
-    },
+    headers,
     body: JSON.stringify({
       model: input.config.model,
       temperature: 0.2,

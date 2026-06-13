@@ -50,6 +50,8 @@ const DEFAULT_SETTINGS_SPEECH_SUMMARY_MODEL = "openai/gpt-4o-mini";
 const DEFAULT_LOCAL_SPEECH_BASE_URL = "http://127.0.0.1:8880/v1";
 const DEFAULT_LOCAL_SPEECH_MODEL = "kokoro";
 const DEFAULT_LOCAL_SPEECH_VOICE = "am_onyx";
+const DEFAULT_LOCAL_SPEECH_SUMMARY_BASE_URL = "http://127.0.0.1:11434/v1";
+const DEFAULT_LOCAL_SPEECH_SUMMARY_MODEL = "gemma3:4b";
 
 // ---------- Types shared with server.ts ----------
 
@@ -2074,7 +2076,7 @@ function resolveSpeechSummarySettings(
   ctx: SessionApiContext,
   npub: string | null,
 ): {
-  apiKey: string;
+  apiKey?: string;
   baseUrl: string;
   model: string;
 } | null {
@@ -2082,20 +2084,22 @@ function resolveSpeechSummarySettings(
     return null;
   }
   const settings = ctx.userSettingsStore.getAll(npub);
-  const apiKey =
-    settings.speech_api_key?.trim() ||
-    settings.openrouter_api_key?.trim() ||
-    settings.openai_api_key?.trim() ||
-    "";
-  if (!apiKey) {
+  const provider = settings.speech_provider === "local" ? "local" : "openrouter";
+  const apiKey = provider === "local"
+    ? ""
+    : settings.speech_api_key?.trim() ||
+      settings.openrouter_api_key?.trim() ||
+      settings.openai_api_key?.trim() ||
+      "";
+  if (!apiKey && provider !== "local") {
     return null;
   }
   return {
-    apiKey,
+    ...(apiKey ? { apiKey } : {}),
     baseUrl: settings.speech_summary_base_url?.trim() ||
-      settings.speech_base_url?.trim() ||
-      DEFAULT_SETTINGS_SPEECH_BASE_URL,
-    model: settings.speech_summary_model?.trim() || DEFAULT_SETTINGS_SPEECH_SUMMARY_MODEL,
+      (provider === "local" ? DEFAULT_LOCAL_SPEECH_SUMMARY_BASE_URL : DEFAULT_SETTINGS_SPEECH_BASE_URL),
+    model: settings.speech_summary_model?.trim() ||
+      (provider === "local" ? DEFAULT_LOCAL_SPEECH_SUMMARY_MODEL : DEFAULT_SETTINGS_SPEECH_SUMMARY_MODEL),
   };
 }
 
