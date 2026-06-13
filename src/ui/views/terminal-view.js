@@ -5,7 +5,7 @@ import {
 } from "../terminal/client.js";
 
 export function initTerminalView(deps) {
-  const { state, render } = deps;
+  const { state } = deps;
 
   function setStatus(root, message, stateName = "info") {
     const status = root.querySelector("[data-terminal-status]");
@@ -98,7 +98,9 @@ export function initTerminalView(deps) {
     disconnectButton.addEventListener("click", () => {
       disconnectTerminalClient();
       setStatus(wrapper, "Disconnected");
-      render();
+      connectButton.disabled = false;
+      terminalSurface.replaceChildren();
+      pinInput.focus();
     });
 
     authForm.addEventListener("submit", async (event) => {

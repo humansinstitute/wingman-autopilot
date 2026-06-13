@@ -5,7 +5,7 @@ import {
 } from "./auth-route-guard.js";
 
 export function shouldFullRenderOnSessionUpdate(route) {
-  return route !== "files" && route !== "live";
+  return route !== "files" && route !== "live" && route !== "terminal";
 }
 
 export function createAppRenderer({
@@ -38,7 +38,7 @@ export function createAppRenderer({
   let renderDebounceTimer = null;
   let isRendering = false;
   let previousRenderRoute = null;
-  const stablePages = new Set(["scheduler", "jobs"]);
+  const stablePages = new Set(["scheduler", "jobs", "terminal"]);
 
   function render() {
     if (isRendering) {
