@@ -1655,7 +1655,14 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const assignerNpub = getText(raw.assignerNpub ?? taskDraft.assignerNpub ?? chat.senderNpub ?? payload.sender_npub ?? record.updaterNpub);
     const reviewerNpub = getText(raw.reviewerNpub ?? taskDraft.reviewerNpub ?? assignerNpub);
     const title = getText(taskDraft.title ?? raw.title) ?? "Chat-requested Wingman task";
-    const instructions = getText(taskDraft.instructions ?? raw.instructions ?? raw.taskInstructions ?? raw.messageSummary);
+    const instructions = getText(
+      taskDraft.instructions
+        ?? taskDraft.concreteInstructions
+        ?? raw.instructions
+        ?? raw.concreteInstructions
+        ?? raw.taskInstructions
+        ?? raw.messageSummary,
+    );
     const acceptanceCriteria = getStringArray(taskDraft.acceptanceCriteria ?? raw.acceptanceCriteria);
     const executionPlan = getStringArray(taskDraft.executionPlan ?? raw.executionPlan);
     const managerChecklist = getStringArray(taskDraft.managerChecklist ?? raw.managerChecklist);

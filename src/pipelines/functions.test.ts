@@ -936,6 +936,39 @@ describe("memory pipeline functions", () => {
     });
   });
 
+  test("create_task decisions with concreteInstructions stay pending for task selection", async () => {
+    const result = await builtinPipelineFunctions["dispatch.normaliseChatDispatchDecision"]!({
+      agent: { workingDirectory: "/repo" },
+      chat: { senderNpub: "npub1requester", channelId: "channel-1", threadId: "thread-1" },
+      record: { recordId: "message-1", updaterNpub: "npub1requester", payload: {} },
+      dispatch: { triggerKind: "chat" },
+      agentDecision: {
+        intent: "create_task",
+        dispatchTask: true,
+        taskDraft: {
+          title: "Create planning threads",
+          concreteInstructions: "Create one Flight Deck thread per refactor area.",
+          acceptanceCriteria: ["The planning threads are created"],
+        },
+        chatResponse: { body: "" },
+        confidence: 0.94,
+      },
+    });
+
+    expect(result).toMatchObject({
+      dispatchTask: false,
+      requestedDispatchTask: true,
+      intent: "create_task",
+      taskRoutingPending: true,
+      taskDraft: {
+        instructions: "Create one Flight Deck thread per refactor area.",
+      },
+      workPlan: {
+        instructions: "Create one Flight Deck thread per refactor area.",
+      },
+    });
+  });
+
   test("shared agent-dispatch-chat definition keeps initial chat lifecycle narrow", () => {
     const spec = loadSharedPipelineSpec("agent-dispatch-chat.json");
     const names = spec.steps.map((step) => step.name);
