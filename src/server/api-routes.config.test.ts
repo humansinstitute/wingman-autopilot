@@ -68,6 +68,28 @@ function createHandler(options: {
     uploadApiContext: {} as any,
     voiceNoteUploadApiContext: {} as any,
     delegationRoutesContext: {} as any,
+    userSettingsRoutesContext: {
+      agents: {
+        claude: { label: "Claude" },
+        codex: { label: "Codex" },
+        goose: { label: "Goose" },
+        opencode: { label: "OpenCode" },
+        gemini: { label: "Gemini" },
+        pi: { label: "Pi" },
+      },
+      userSettingsStore: {
+        getAll: (npub: string) => (npub === authContext.npub ? settings : {}),
+        set: (npub: string, key: string, value: string) => {
+          options.onSet?.(npub, key, value);
+        },
+        delete: () => true,
+      },
+      ensureApiAccess: async (_action, _request, _url, currentAuth) =>
+        currentAuth.npub ? null : Response.json({ error: "Authentication required" }, { status: 401 }),
+      AccessActions: {
+        SessionsManage: "sessions:manage" as any,
+      },
+    },
     workspaceDelegationStore: {} as any,
     featureFlagStore: {
       getFlag: () => null,

@@ -2457,6 +2457,12 @@ const handleApi = createApiRouteHandler({
     ensureApiAccess,
     AccessActions,
   },
+  userSettingsRoutesContext: {
+    agents: config.agents,
+    userSettingsStore,
+    ensureApiAccess,
+    AccessActions,
+  },
   workspaceDelegationStore,
 
   // Stores accessed directly

@@ -35,6 +35,7 @@ import type { WorkspaceDelegationStore } from "../storage/workspace-delegation-s
 import { getEffectiveOwnerNpub } from "../auth/effective-owner";
 import { handleSigningApi, type SigningApiContext } from "../signing/signing-api";
 import { handleTerminalApi, type TerminalRoutesContext } from "./terminal-routes";
+import { handleUserSettingsApi, type UserSettingsRoutesContext } from "./user-settings-routes";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "HEAD";
 
@@ -104,6 +105,7 @@ export interface ApiRoutesContext {
   pipelineApiContext?: PipelineApiContext;
   signingApiContext?: SigningApiContext;
   terminalRoutesContext?: TerminalRoutesContext;
+  userSettingsRoutesContext: UserSettingsRoutesContext;
   workspaceDelegationStore: WorkspaceDelegationStore;
 
   // Stores accessed directly by handleApi
@@ -752,71 +754,15 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
       }
     }
 
-    // User settings API
     if (pathname.startsWith("/api/user/settings")) {
-      const denied = await ctx.ensureApiAccess(ctx.AccessActions.SessionsManage, request, url, authContext);
-      if (denied) return denied;
-
-      const viewerNpub = authContext.npub;
-      if (!viewerNpub) {
-        return Response.json({ error: "Authentication required" }, { status: 401 });
-      }
-
-      const settingsParts = pathname.split("/");
-      const settingKey = settingsParts[4]; // /api/user/settings/:key
-
-      if (method === "GET" && !settingKey) {
-        // GET /api/user/settings — list all settings for user
-        const settings = ctx.userSettingsStore.getAll(viewerNpub);
-        // Mask sensitive keys
-        const masked: Record<string, string> = {};
-        for (const [k, v] of Object.entries(settings)) {
-          const lowerKey = k.toLowerCase();
-          const isSensitive =
-            lowerKey.includes("key") ||
-            lowerKey.includes("secret") ||
-            lowerKey.includes("token") ||
-            lowerKey.includes("password");
-          masked[k] = isSensitive
-            ? (v.length > 8 ? `${v.slice(0, 4)}..${v.slice(-4)}` : "****")
-            : v;
-        }
-        return Response.json({ settings: masked });
-      }
-
-      if (method === "PUT" && settingKey) {
-        // PUT /api/user/settings/:key — set a setting
-        let payload: unknown;
-        try {
-          payload = await request.json();
-        } catch {
-          return Response.json({ error: "Invalid JSON" }, { status: 400 });
-        }
-        const record = payload as Record<string, unknown>;
-        const value = typeof record.value === "string" ? record.value.trim() : "";
-        if (!value) {
-          return Response.json({ error: "value is required" }, { status: 400 });
-        }
-        if (settingKey === DEFAULT_AGENT_SETTING_KEY) {
-          const normalizedValue = value.toLowerCase();
-          if (!(normalizedValue in ctx.config.agents)) {
-            const supportedAgents = Object.keys(ctx.config.agents).join(", ");
-            return Response.json({ error: `value must be one of: ${supportedAgents}` }, { status: 400 });
-          }
-          ctx.userSettingsStore.set(viewerNpub, settingKey, normalizedValue);
-          return Response.json({ success: true, key: settingKey, value: normalizedValue });
-        }
-        ctx.userSettingsStore.set(viewerNpub, settingKey, value);
-        return Response.json({ success: true, key: settingKey });
-      }
-
-      if (method === "DELETE" && settingKey) {
-        // DELETE /api/user/settings/:key — remove a setting
-        ctx.userSettingsStore.delete(viewerNpub, settingKey);
-        return Response.json({ success: true, key: settingKey, deleted: true });
-      }
-
-      return Response.json({ error: "Not found" }, { status: 404 });
+      const userSettingsResponse = await handleUserSettingsApi(
+        request,
+        url,
+        method,
+        authContext,
+        ctx.userSettingsRoutesContext,
+      );
+      if (userSettingsResponse) return userSettingsResponse;
     }
 
     // /api/sessions/:id/* routes are handled by sessionApiContext above
