@@ -1889,15 +1889,16 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const launchFailed = childPipeline.started === false || childPipelineStatus === "failed" || childPipelineStatus === "error";
     const needsInput = getText(childPipeline.status) === "needs_input";
     const needsInputUpdate = objectValue(childPipeline.needsInputUpdate);
+    const taskAction = createdTask.reused === true ? "reopened task" : "created task";
     let responseDraft = getText(decision.responseDraft) ?? "Done.";
     if (taskCreationFailed) {
       responseDraft = `I have the request, but I could not create the Flight Deck task yet: ${getText(createdTask.reason) ?? "unknown error"}. I am not dropping the request; please retry or check the dispatch/Yoke connection.`;
     } else if (decision.dispatchTask === true && taskId) {
       responseDraft = needsInput
-        ? `I created task ${taskMention} and started ${pipelineName ?? "the selected pipeline"}${pipelineRunId ? ` (${pipelineRunId})` : ""}, but it needs input before it can continue.${getText(needsInputUpdate.question) ? `\nQuestion: ${getText(needsInputUpdate.question)}` : ""}`
+        ? `I ${taskAction} ${taskMention} and started ${pipelineName ?? "the selected pipeline"}${pipelineRunId ? ` (${pipelineRunId})` : ""}, but it needs input before it can continue.${getText(needsInputUpdate.question) ? `\nQuestion: ${getText(needsInputUpdate.question)}` : ""}`
         : launchFailed
-        ? `I created task ${taskMention}, but the selected pipeline did not start: ${getText(childPipeline.reason) ?? "unknown error"}. I marked the task blocked for review.`
-        : `I created task ${taskMention} and started ${pipelineName ?? "the selected pipeline"}${pipelineRunId ? ` (${pipelineRunId})` : ""}. I will hand it back for review when the pipeline finishes.`;
+        ? `I ${taskAction} ${taskMention}, but the selected pipeline did not start: ${getText(childPipeline.reason) ?? "unknown error"}. I marked the task blocked for review.`
+        : `I ${taskAction} ${taskMention} and started ${pipelineName ?? "the selected pipeline"}${pipelineRunId ? ` (${pipelineRunId})` : ""}. I will hand it back for review when the pipeline finishes.`;
     }
     return {
       shouldRespond: !(needsInput && needsInputUpdate.chatNotified === true),
@@ -1911,10 +1912,12 @@ export const builtinPipelineFunctions: FunctionRegistry = {
         : needsInput
           ? "The child pipeline needs input; a clarification question was published."
         : decision.dispatchTask === true
-          ? "Created a task and started the selected pipeline."
+          ? createdTask.reused === true
+            ? "Reused an existing task and started the selected pipeline."
+            : "Created a task and started the selected pipeline."
           : "Responded directly without dispatching task-backed work.",
       actionsTaken: [
-        ...(taskId ? [`created task ${taskId}`] : []),
+        ...(taskId ? [`${createdTask.reused === true ? "reused" : "created"} task ${taskId}`] : []),
         ...(pipelineRunId ? [`started pipeline run ${pipelineRunId}`] : []),
         ...(closeoutContext.hydrated === true ? ["re-read chat thread before replying"] : []),
         ...(taskCreationFailed ? [`task creation failed: ${getText(createdTask.reason) ?? "unknown error"}`] : []),

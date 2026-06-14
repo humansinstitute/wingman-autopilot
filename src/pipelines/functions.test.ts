@@ -1331,6 +1331,34 @@ describe("memory pipeline functions", () => {
     expect(result.actionsTaken).toEqual(["created task task-1", "started pipeline run run-1"]);
   });
 
+  test("dispatch.prepareChatDispatchResponse describes reused tasks distinctly", async () => {
+    const result = await builtinPipelineFunctions["dispatch.prepareChatDispatchResponse"]!({
+      decision: {
+        dispatchTask: true,
+        pipelineDefinitionId: "software-implementation-review-loop",
+        confidence: 0.9,
+      },
+      createdTask: {
+        reused: true,
+        taskId: "task-1",
+        workPlan: {
+          taskSummary: "Existing setup permissions bug",
+        },
+      },
+      childPipeline: {
+        started: true,
+        pipelineName: "software-implementation-review-loop",
+        pipelineRunId: "run-1",
+      },
+    });
+
+    expect(result.responseDraft).toContain(
+      "I reopened task @[Existing setup permissions bug](mention:task:task-1) and started software-implementation-review-loop (run-1).",
+    );
+    expect(result.reasoningSummary).toBe("Reused an existing task and started the selected pipeline.");
+    expect(result.actionsTaken).toEqual(["reused task task-1", "started pipeline run run-1"]);
+  });
+
   test("dispatch.prepareChatDispatchResponse reports immediate child pipeline errors", async () => {
     const result = await builtinPipelineFunctions["dispatch.prepareChatDispatchResponse"]!({
       decision: {

@@ -8,6 +8,7 @@ import type { SessionApiContext } from '../../server/session-api-routes';
 import type { AgentDefinitionRecord, RuntimeBotIdentity } from '../types';
 import {
   acquireFlightDeckPgEditLease,
+  assignFlightDeckPgTask,
   createFlightDeckPgAudioNote,
   createFlightDeckPgChannelMessage,
   createFlightDeckPgChannelTask,
@@ -15,6 +16,7 @@ import {
   createFlightDeckPgTaskComment,
   fetchFlightDeckPgChannelMessages,
   fetchFlightDeckPgTask,
+  fetchFlightDeckPgWorkspaceMembers,
   uploadFlightDeckPgStorageObject,
   updateFlightDeckPgTaskState,
   type FlightDeckPgMessage,
@@ -393,6 +395,67 @@ async function createFlightDeckPgTaskFromContext(
     threadId: context.eventInput.threadId ?? getText(context.eventInput.payload.thread_id),
     metadata: input.metadata ?? null,
   }) as JsonObject;
+}
+
+async function resolveFlightDeckPgActorIdByNpub(
+  context: DispatchPipelineFlightDeckPublisherContext,
+  actorNpub: string | null,
+): Promise<string | null> {
+  if (!actorNpub) return null;
+  const pg = getFlightDeckPgPublishContext(context);
+  const result = await fetchFlightDeckPgWorkspaceMembers({
+    backendBaseUrl: pg.backendBaseUrl,
+    workspaceId: pg.workspaceId,
+    appNpub: pg.appNpub,
+    botIdentity: pg.botIdentity,
+  });
+  for (const member of result.members) {
+    const actor = objectValue(member.actor);
+    if (getText(actor.npub) === actorNpub) {
+      return getText(actor.actor_id) ?? getText(actor.id);
+    }
+  }
+  return null;
+}
+
+async function assignFlightDeckPgTaskToNpub(
+  context: DispatchPipelineFlightDeckPublisherContext,
+  taskId: string,
+  assigneeNpub: string | null,
+): Promise<{
+  status: 'skipped' | 'ok' | 'not_found' | 'failed';
+  assigneeNpub: string | null;
+  actorId: string | null;
+  result: unknown;
+  error: string | null;
+}> {
+  if (!assigneeNpub) {
+    return { status: 'skipped', assigneeNpub, actorId: null, result: null, error: 'missing_assignee_npub' };
+  }
+  try {
+    const actorId = await resolveFlightDeckPgActorIdByNpub(context, assigneeNpub);
+    if (!actorId) {
+      return { status: 'not_found', assigneeNpub, actorId: null, result: null, error: 'assignee_not_workspace_member' };
+    }
+    const pg = getFlightDeckPgPublishContext(context);
+    const result = await assignFlightDeckPgTask({
+      backendBaseUrl: pg.backendBaseUrl,
+      workspaceId: pg.workspaceId,
+      taskId,
+      appNpub: pg.appNpub,
+      botIdentity: pg.botIdentity,
+      actorId,
+    });
+    return { status: 'ok', assigneeNpub, actorId, result, error: null };
+  } catch (error) {
+    return {
+      status: 'failed',
+      assigneeNpub,
+      actorId: null,
+      result: null,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 async function createFlightDeckPgTaskCommentFromContext(
@@ -1182,6 +1245,49 @@ export function createDispatchChatTaskCreator(
     const description = buildChatCreatedTaskDescription(context, decision);
     const scopeId = getText(decision.scopeId ?? workPlan.scopeId);
     const assignedTo = context.eventInput.subscription.botNpub;
+    const reusableTaskId = getText(workPlan.taskId ?? decision.taskId) ?? findReusableTaskIdForChatTask(input);
+    if (reusableTaskId) {
+      let updateResult: unknown = null;
+      let updateError: string | null = null;
+      try {
+        updateResult = isFlightDeckPgPublisherContext(context)
+          ? await updateFlightDeckPgTaskStateWithLease(context, reusableTaskId, 'in_progress')
+          : await runYokeJson(context, [
+            'tasks',
+            'update',
+            reusableTaskId,
+            '--state',
+            'in_progress',
+            '--assign',
+            assignedTo,
+            '--json',
+          ]);
+      } catch (error) {
+        updateError = error instanceof Error ? error.message : String(error);
+      }
+      const assignment = isFlightDeckPgPublisherContext(context)
+        ? await assignFlightDeckPgTaskToNpub(context, reusableTaskId, assignedTo)
+        : null;
+      const nextWorkPlan = buildCreatedTaskWorkPlan(workPlan, decision, {
+        taskId: reusableTaskId,
+        scopeId,
+        assignedTo,
+      });
+      return {
+        created: false,
+        reused: true,
+        status: updateError || (assignment && assignment.status !== 'ok') ? 'partial' : 'ok',
+        operation: 'tasks.reuse-from-chat',
+        taskId: reusableTaskId,
+        scopeId,
+        assignedToNpub: assignedTo,
+        assignment,
+        updateResult,
+        updateError,
+        pipelineDefinitionId: nextWorkPlan.pipelineDefinitionId,
+        workPlan: nextWorkPlan,
+      };
+    }
     if (isFlightDeckPgPublisherContext(context)) {
       const createResult = await createFlightDeckPgTaskFromContext(context, {
         title,
@@ -1220,13 +1326,15 @@ export function createDispatchChatTaskCreator(
         scopeId,
         assignedTo,
       });
+      const assignment = await assignFlightDeckPgTaskToNpub(context, taskId, assignedTo);
       return {
         created: true,
-        status: 'ok',
+        status: assignment.status === 'ok' ? 'ok' : 'partial',
         operation: 'tasks.create-from-chat',
         taskId,
         scopeId,
         assignedToNpub: assignedTo,
+        assignment,
         pipelineDefinitionId: nextWorkPlan.pipelineDefinitionId,
         workPlan: nextWorkPlan,
         createResult,
@@ -1412,6 +1520,27 @@ function buildCreatedTaskWorkPlan(
   };
 }
 
+function findReusableTaskIdForChatTask(input: JsonObject): string | null {
+  const values = [
+    objectValue(input.chatContext).thread,
+    objectValue(input.chatContext).referencedRecords,
+    objectValue(input.decision).workPlan,
+    objectValue(input.agentResponse).workPlan,
+  ];
+  const orderedMentions: Array<{ type: string; id: string }> = [];
+  for (const value of values) {
+    if (Array.isArray(value)) {
+      for (let index = value.length - 1; index >= 0; index -= 1) {
+        orderedMentions.push(...extractMentionRefs(value[index]));
+      }
+    } else {
+      orderedMentions.push(...extractMentionRefs(value));
+    }
+  }
+  const taskMention = orderedMentions.find((ref) => ref.type.toLowerCase() === 'task');
+  return taskMention?.id ?? null;
+}
+
 export function createDispatchNeedsInputPublisher(
   context: DispatchPipelineFlightDeckPublisherContext,
 ): DeclarativeFunction {
@@ -1563,6 +1692,10 @@ export function createDispatchImplementationReviewTaskEnsurer(
       updateError = error instanceof Error ? error.message : String(error);
     }
 
+    const assignment = isFlightDeckPgPublisherContext(context)
+      ? await assignFlightDeckPgTaskToNpub(context, taskId, assignedTo)
+      : null;
+
     let commentResult: unknown = null;
     let commentError: string | null = null;
     try {
@@ -1624,12 +1757,13 @@ export function createDispatchImplementationReviewTaskEnsurer(
 
     return {
       published: true,
-      status: updateError || commentError ? 'partial' : 'ok',
+      status: updateError || commentError || (assignment && assignment.status !== 'ok') ? 'partial' : 'ok',
       operation: 'tasks.ensure-implementation-review-loop',
       taskId,
       created: !existingTaskId,
       state: 'in_progress',
       assignedToNpub: assignedTo,
+      assignment,
       scopeId,
       createResult,
       updateResult,
@@ -1730,6 +1864,10 @@ export function createDispatchTaskStateUpdater(
       }
     }
 
+    const assignment = isFlightDeckPgPublisherContext(context) && targetState === 'review'
+      ? await assignFlightDeckPgTaskToNpub(context, taskId, reviewerNpub)
+      : null;
+
     const commentBody = targetState === 'review'
       ? buildReadyForReviewComment(input, reviewerNpub)
       : buildInProgressComment(input);
@@ -1763,11 +1901,12 @@ export function createDispatchTaskStateUpdater(
 
     return {
       published: true,
-      status: commentError || chatNotification.error ? 'partial' : 'ok',
+      status: commentError || chatNotification.error || (assignment && assignment.status !== 'ok') ? 'partial' : 'ok',
       operation: targetState === 'review' ? 'tasks.move-to-review' : 'tasks.move-to-in-progress',
       taskId,
       state: targetState,
       assignedToNpub: reviewerNpub,
+      assignment,
       updateStatus,
       updateResult,
       updateFallback,

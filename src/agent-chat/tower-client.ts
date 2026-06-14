@@ -103,6 +103,17 @@ export interface FlightDeckPgTaskComment {
   updated_at?: string | null;
 }
 
+export interface FlightDeckPgWorkspaceMember {
+  actor?: {
+    id?: string | null;
+    actor_id?: string | null;
+    npub?: string | null;
+    kind?: string | null;
+    display_name?: string | null;
+  };
+  membership?: Record<string, unknown> | null;
+}
+
 export interface FlightDeckPgEditLease {
   id: string;
   entity_type?: string;
@@ -933,6 +944,76 @@ export async function updateFlightDeckPgTaskState(params: {
   });
   if (!response.ok) {
     const error = await parseTowerError(response, 'flightdeck_pg_task_state_update');
+    throw Object.assign(new Error(error.message), error);
+  }
+  return await response.json() as FlightDeckPgWriteResult;
+}
+
+export async function fetchFlightDeckPgWorkspaceMembers(params: {
+  backendBaseUrl: string;
+  workspaceId: string;
+  appNpub: string;
+  botIdentity: RuntimeBotIdentity;
+  signal?: AbortSignal;
+}): Promise<{ identity?: Record<string, unknown>; members: FlightDeckPgWorkspaceMember[]; next_cursor?: string | null }> {
+  const path = `/api/v4/flightdeck-pg/workspaces/${encodeURIComponent(params.workspaceId)}/members`;
+  const url = buildFlightDeckPgUrl(params.backendBaseUrl, path);
+  const authorization = await signFlightDeckPgBotRequest({
+    botIdentity: params.botIdentity,
+    url,
+    method: 'GET',
+  });
+  const response = await fetch(url, {
+    headers: {
+      Accept: 'application/json',
+      Authorization: authorization,
+      'x-flightdeck-pg-app-npub': params.appNpub,
+    },
+    signal: params.signal,
+  });
+  if (!response.ok) {
+    const error = await parseTowerError(response, 'flightdeck_pg_workspace_members');
+    throw Object.assign(new Error(error.message), error);
+  }
+  const payload = await response.json() as { identity?: Record<string, unknown>; members?: FlightDeckPgWorkspaceMember[]; next_cursor?: string | null };
+  return {
+    ...payload,
+    members: Array.isArray(payload.members) ? payload.members : [],
+    next_cursor: typeof payload.next_cursor === 'string' ? payload.next_cursor : null,
+  };
+}
+
+export async function assignFlightDeckPgTask(params: {
+  backendBaseUrl: string;
+  workspaceId: string;
+  taskId: string;
+  appNpub: string;
+  botIdentity: RuntimeBotIdentity;
+  actorId: string;
+  signal?: AbortSignal;
+}): Promise<FlightDeckPgWriteResult> {
+  const path = `/api/v4/flightdeck-pg/workspaces/${encodeURIComponent(params.workspaceId)}/tasks/${encodeURIComponent(params.taskId)}/assignments`;
+  const url = buildFlightDeckPgUrl(params.backendBaseUrl, path);
+  const body = { actor_id: params.actorId };
+  const authorization = await signFlightDeckPgBotRequest({
+    botIdentity: params.botIdentity,
+    url,
+    method: 'POST',
+    body,
+  });
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      Authorization: authorization,
+      'Content-Type': 'application/json',
+      'x-flightdeck-pg-app-npub': params.appNpub,
+    },
+    body: JSON.stringify(body),
+    signal: params.signal,
+  });
+  if (!response.ok) {
+    const error = await parseTowerError(response, 'flightdeck_pg_task_assignment_create');
     throw Object.assign(new Error(error.message), error);
   }
   return await response.json() as FlightDeckPgWriteResult;

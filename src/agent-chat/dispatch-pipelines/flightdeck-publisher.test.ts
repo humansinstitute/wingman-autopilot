@@ -15,6 +15,8 @@ const pgTaskFetchCalls: Array<Record<string, unknown>> = [];
 const pgTaskStateUpdateCalls: Array<Record<string, unknown>> = [];
 const pgTaskCommentCreateCalls: Array<Record<string, unknown>> = [];
 const pgLeaseAcquireCalls: Array<Record<string, unknown>> = [];
+const pgWorkspaceMemberFetchCalls: Array<Record<string, unknown>> = [];
+const pgTaskAssignmentCalls: Array<Record<string, unknown>> = [];
 let failChatContextCount = 0;
 let failReactionCount = 0;
 let failTaskCreateCount = 0;
@@ -230,6 +232,25 @@ mock.module('../tower-client', () => ({
       },
     };
   }),
+  fetchFlightDeckPgWorkspaceMembers: mock(async (input: Record<string, unknown>) => {
+    pgWorkspaceMemberFetchCalls.push(input);
+    return {
+      members: [
+        { actor: { id: 'actor-bot', npub: 'npub1bot' } },
+        { actor: { id: 'actor-requester', npub: 'npub1requester' } },
+      ],
+      next_cursor: null,
+    };
+  }),
+  assignFlightDeckPgTask: mock(async (input: Record<string, unknown>) => {
+    pgTaskAssignmentCalls.push(input);
+    return {
+      assignment: {
+        task_id: input.taskId,
+        actor_id: input.actorId,
+      },
+    };
+  }),
 }));
 
 const {
@@ -320,6 +341,8 @@ describe('dispatch pipeline Flight Deck publisher', () => {
     pgTaskStateUpdateCalls.length = 0;
     pgTaskCommentCreateCalls.length = 0;
     pgLeaseAcquireCalls.length = 0;
+    pgWorkspaceMemberFetchCalls.length = 0;
+    pgTaskAssignmentCalls.length = 0;
     failChatContextCount = 0;
     failReactionCount = 0;
     failTaskCreateCount = 0;
@@ -1153,14 +1176,91 @@ describe('dispatch pipeline Flight Deck publisher', () => {
       title: 'Write a poem about a sausage',
       state: 'in_progress',
     });
+    expect(pgWorkspaceMemberFetchCalls).toHaveLength(1);
+    expect(pgTaskAssignmentCalls).toHaveLength(1);
+    expect(pgTaskAssignmentCalls[0]).toMatchObject({
+      taskId: 'pg-task-1',
+      actorId: 'actor-bot',
+    });
     expect(result).toMatchObject({
       created: true,
       status: 'ok',
       operation: 'tasks.create-from-chat',
       taskId: 'pg-task-1',
+      assignedToNpub: 'npub1bot',
+      assignment: {
+        status: 'ok',
+        actorId: 'actor-bot',
+      },
       workPlan: {
         taskId: 'pg-task-1',
         pipelineDefinitionId: 'do-and-review',
+      },
+    });
+  });
+
+  test('chat task creation reuses prior thread task mention for Flight Deck PG follow-up', async () => {
+    const createTask = createDispatchChatTaskCreator(buildChatPublisherContext({
+      subscription: {
+        subscriptionId: 'sub-pg-1',
+        workspaceOwnerNpub: 'npub1workspace',
+        sourceAppNpub: 'npub1source',
+        backendBaseUrl: 'https://tower.example.com',
+        workspaceId: 'workspace-pg-1',
+        botNpub: 'npub1bot',
+        wsKeyNpub: null,
+      },
+      runtime: {
+        mode: 'flightdeck_pg',
+        yokeStateDir: null,
+        commandPrefix: null,
+        commands: {},
+        error: null,
+      },
+    }));
+
+    const result = await createTask({
+      dispatchTask: true,
+      pipelineDefinitionId: 'software-implementation-review-loop',
+      taskDraft: {
+        title: 'Fix follow-up bug',
+        instructions: 'Handle the feedback.',
+      },
+      workPlan: {
+        taskSummary: 'Fix follow-up bug',
+        instructions: 'Handle the feedback.',
+        pipelineDefinitionId: 'software-implementation-review-loop',
+      },
+      chatContext: {
+        thread: [
+          { body: 'I created task @[Existing bug](mention:task:task-existing-1) and started software-implementation-review-loop.' },
+          { body: 'This still is not complete.' },
+        ],
+      },
+    });
+
+    expect(yokeCommandCalls).toHaveLength(0);
+    expect(pgTaskCreateCalls).toHaveLength(0);
+    expect(pgTaskStateUpdateCalls).toHaveLength(1);
+    expect(pgTaskStateUpdateCalls[0]).toMatchObject({
+      taskId: 'task-existing-1',
+      state: 'in_progress',
+    });
+    expect(pgTaskAssignmentCalls).toHaveLength(1);
+    expect(pgTaskAssignmentCalls[0]).toMatchObject({
+      taskId: 'task-existing-1',
+      actorId: 'actor-bot',
+    });
+    expect(result).toMatchObject({
+      created: false,
+      reused: true,
+      status: 'ok',
+      operation: 'tasks.reuse-from-chat',
+      taskId: 'task-existing-1',
+      assignedToNpub: 'npub1bot',
+      workPlan: {
+        taskId: 'task-existing-1',
+        pipelineDefinitionId: 'software-implementation-review-loop',
       },
     });
   });
@@ -1304,6 +1404,12 @@ describe('dispatch pipeline Flight Deck publisher', () => {
       rowVersion: 2,
       leaseToken: 'lease-token-1',
     });
+    expect(pgWorkspaceMemberFetchCalls).toHaveLength(1);
+    expect(pgTaskAssignmentCalls).toHaveLength(1);
+    expect(pgTaskAssignmentCalls[0]).toMatchObject({
+      taskId: 'pg-task-1',
+      actorId: 'actor-requester',
+    });
     expect(pgTaskCommentCreateCalls).toHaveLength(1);
     expect(pgMessageCreateCalls).toHaveLength(1);
     expect(pgMessageCreateCalls[0]).toMatchObject({
@@ -1316,6 +1422,11 @@ describe('dispatch pipeline Flight Deck publisher', () => {
       status: 'ok',
       operation: 'tasks.move-to-review',
       taskId: 'pg-task-1',
+      assignedToNpub: 'npub1requester',
+      assignment: {
+        status: 'ok',
+        actorId: 'actor-requester',
+      },
       chatNotified: true,
       chatError: null,
     });
@@ -1724,6 +1835,57 @@ describe('dispatch pipeline Flight Deck publisher', () => {
     expect(body).not.toContain('Summary:');
     expect(chatCall).toContain('--thread');
     expect(chatCall?.[chatCall.indexOf('--thread') + 1]).toBeTruthy();
+  });
+
+  test('implementation review task ensurer assigns Flight Deck PG task to bot actor', async () => {
+    const ensureTask = createDispatchImplementationReviewTaskEnsurer(buildChatPublisherContext({
+      subscription: {
+        subscriptionId: 'sub-pg-1',
+        workspaceOwnerNpub: 'npub1workspace',
+        sourceAppNpub: 'npub1source',
+        backendBaseUrl: 'https://tower.example.com',
+        workspaceId: 'workspace-pg-1',
+        botNpub: 'npub1bot',
+        wsKeyNpub: null,
+      },
+      runtime: {
+        mode: 'flightdeck_pg',
+        yokeStateDir: null,
+        commandPrefix: null,
+        commands: {},
+        error: null,
+      },
+    }));
+
+    const createdTask = await ensureTask({
+      implementationPrompt: 'Implement the editor design.',
+      workingDirectory: '/repo/app',
+      workPlan: {
+        taskSummary: 'Implement editor design',
+        reviewerNpub: 'npub1requester',
+      },
+    });
+
+    expect(yokeCommandCalls).toHaveLength(0);
+    expect(pgTaskCreateCalls).toHaveLength(1);
+    expect(pgTaskStateUpdateCalls).toHaveLength(1);
+    expect(pgWorkspaceMemberFetchCalls).toHaveLength(1);
+    expect(pgTaskAssignmentCalls).toHaveLength(1);
+    expect(pgTaskAssignmentCalls[0]).toMatchObject({
+      taskId: 'pg-task-1',
+      actorId: 'actor-bot',
+    });
+    expect(createdTask).toMatchObject({
+      published: true,
+      status: 'ok',
+      operation: 'tasks.ensure-implementation-review-loop',
+      taskId: 'pg-task-1',
+      assignedToNpub: 'npub1bot',
+      assignment: {
+        status: 'ok',
+        actorId: 'actor-bot',
+      },
+    });
   });
 
   test('stored dispatch child runs resume with Flight Deck publishing functions', async () => {
