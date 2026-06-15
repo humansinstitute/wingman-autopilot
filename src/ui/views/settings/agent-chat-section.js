@@ -8,14 +8,12 @@ import {
   saveAgentChatBackendConnectionAvailability,
   saveAgentChatDispatchRoute,
   saveAgentChatSubscription,
-  saveAgentChatProfileWorkspace,
 } from '../../services/agent-chat.js';
 import { fetchPipelineDefinitions } from '../../pipelines/api.js';
 import {
   createConfiguredDispatchesPanel,
   createStatusLine,
 } from './agent-chat-shared-ui.js';
-import { createProfileWorkspaceSettingsPanel } from './agent-chat-profile-workspace-card.js';
 import { createAgentDispatchSetupCards } from './agent-chat-setup-cards.js';
 import { createAgentConnectImportModal } from './agent-chat-connect-import-card.js';
 import {
@@ -127,7 +125,6 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
   setupCardsContainer.setAttribute('data-testid', 'agent-chat-setup-cards');
   const workspaceSelectorContainer = document.createElement('div');
   const configuredDispatchesContainer = document.createElement('div');
-  const profileWorkspaceContainer = document.createElement('div');
   const subscriptionEditor = createSubscriptionEditorCard();
   const connectImportModal = createAgentConnectImportModal({
     onImport: async (input) => {
@@ -161,14 +158,12 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
     workspaceSelectorContainer,
     setupCardsContainer,
     subscriptionEditor.card,
-    profileWorkspaceContainer,
     configuredDispatchesContainer,
   );
   async function refreshList() {
     setupCardsContainer.replaceChildren();
     workspaceSelectorContainer.replaceChildren();
     configuredDispatchesContainer.replaceChildren();
-    profileWorkspaceContainer.replaceChildren();
 
     try {
       const {
@@ -252,18 +247,6 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
         onEditTaskReviewTemplate: null,
         onEditApprovalDispatchTemplate: null,
         onToggleCapability: null,
-      }));
-      profileWorkspaceContainer.append(createProfileWorkspaceSettingsPanel({
-        subscription: selectedSubscription,
-        pipelineDefinitions,
-        canManage: permissions?.canManage !== false,
-        onSave: permissions?.canManage === false || !selectedSubscription
-          ? null
-          : async (input) => {
-              await saveAgentChatProfileWorkspace(selectedSubscription.subscriptionId, input);
-              statusLine.textContent = 'Profile workspace settings saved.';
-              await refreshList();
-          },
       }));
     } catch (error) {
       statusLine.textContent = error instanceof Error ? error.message : 'Failed to load Agent Dispatch state.';

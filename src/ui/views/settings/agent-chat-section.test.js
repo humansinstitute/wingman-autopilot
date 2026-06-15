@@ -147,6 +147,7 @@ describe("agent chat settings subscription selection", () => {
     expect(agentChatSectionSource).not.toContain("agent-chat-live-panel");
     expect(agentChatSectionSource).not.toContain("agent-chat-subscription-list");
     expect(agentChatSectionSource).not.toContain("createSubscriptionCard");
+    expect(agentChatSectionSource).not.toContain("createProfileWorkspaceSettingsPanel");
   });
 
   test("keeps an explicit selected subscription instead of falling back to the first row", () => {
