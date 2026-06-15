@@ -3644,7 +3644,7 @@ body[data-live-header-collapsed="true"]:has(#app[data-route="live"]) .wm-live-dr
   border: 1px solid rgba(148, 163, 184, 0.28);
   border-radius: 0.5rem;
   background: var(--surface-elevated, #111827);
-  color: var(--text-primary, #f8fafc);
+  color: #f8fafc;
   box-shadow: 0 20px 48px rgba(15, 23, 42, 0.35);
 }
 
@@ -3708,7 +3708,7 @@ body[data-live-header-collapsed="true"]:has(#app[data-route="live"]) .wm-live-dr
 .wm-speech-playback-modal[data-state="pending"] .wm-speech-playback-modal__stop {
   border-color: rgba(148, 163, 184, 0.45);
   background: rgba(148, 163, 184, 0.14);
-  color: var(--text-primary);
+  color: #f8fafc;
 }
 
 .wm-speech-playback-modal__timeline {
@@ -3720,7 +3720,7 @@ body[data-live-header-collapsed="true"]:has(#app[data-route="live"]) .wm-live-dr
 }
 
 .wm-speech-playback-modal__time {
-  color: var(--text-secondary);
+  color: rgba(226, 232, 240, 0.72);
   font-size: 0.78rem;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0;

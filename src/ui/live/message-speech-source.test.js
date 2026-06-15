@@ -102,6 +102,7 @@ describe("live message speech controls", () => {
     expect(styles).toContain(".wm-speech-playback-modal__stop");
     expect(styles).toContain(".wm-speech-playback-modal__timeline");
     expect(styles).toContain(".wm-speech-playback-modal__scrubber");
+    expect(styles).toContain("color: #f8fafc;");
     expect(styles).toContain("bottom: 0.65rem;");
     expect(styles).toContain("right: 0.85rem;");
   });
