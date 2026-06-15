@@ -11,7 +11,7 @@
 const THRESHOLD = 50;
 const USER_MESSAGE_SELECTOR = '.wm-message[data-role="user"]';
 const HEADER_OFFSET_FALLBACK = 12;
-const LAST_PROMPT_TOP_CLEARANCE = 44;
+const LAST_PROMPT_TOP_CLEARANCE = 56;
 
 function isDocumentScrollTarget(el) {
   return (
