@@ -1,8 +1,8 @@
 import {
   listAgentChatAgents,
   listAgentChatBackendConnections,
-  listAgentChatDispatchRoutes,
   listAgentChatSubscriptions,
+  saveAgentChatProfileWorkspace,
 } from '../../services/agent-chat.js';
 import { fetchSessionsApi } from '../../services/sessions.js';
 import { isAgentChatSession } from '../../sessions/session-classification.js';
@@ -16,6 +16,15 @@ function filterFlightDeckSessions(sessions) {
       || session?.origin?.type === 'agent-work'
     ))
     : [];
+}
+
+async function fetchPipelineDefinitionsForSettings() {
+  const response = await fetch('/api/pipelines/definitions', { credentials: 'include' });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || `Failed to fetch pipeline definitions: ${response.status}`);
+  }
+  return payload;
 }
 
 function shortenIdentifier(value, { head = 14, tail = 8 } = {}) {
@@ -283,19 +292,6 @@ function getAgentForSubscription(subscription, agents) {
   )) ?? null;
 }
 
-function getRoutesForSubscription(subscription, dispatchRoutes) {
-  if (!subscription?.subscriptionId || !Array.isArray(dispatchRoutes)) {
-    return [];
-  }
-  return dispatchRoutes.filter((route) => (
-    String(route?.subscriptionId || route?.subscription_id || '') === subscription.subscriptionId
-  ));
-}
-
-function countEnabledRoutes(routes) {
-  return Array.isArray(routes) ? routes.filter((route) => route?.enabled !== false).length : 0;
-}
-
 function countVisibleTargets(subscription) {
   const visibleContext = subscription?.profileWorkspace?.visibleContext;
   const scopes = Array.isArray(visibleContext?.scopes) ? visibleContext.scopes.length : 0;
@@ -310,73 +306,165 @@ function countAppendedContext(subscription) {
 
 const FLIGHT_DECK_DISPATCH_ROWS = [
   {
-    id: 'chat',
-    label: 'Chat',
-    changeType: 'Chat messages',
-    triggerKind: 'chat',
-    capability: 'chat_intercept',
+    group: 'Chat',
+    eventType: 'direct_message',
+    label: 'Direct Message',
+    changeType: 'Message in a direct channel with the agent',
+    defaultAction: 'respond',
+    defaultEnabled: true,
   },
   {
-    id: 'docs',
-    label: 'Docs',
-    changeType: 'Document comments',
-    triggerKind: 'comment',
-    capability: 'comment_dispatch',
+    group: 'Chat',
+    eventType: 'chat_mention',
+    label: 'Chat Tagged',
+    changeType: 'Message explicitly tags or addresses the agent',
+    defaultAction: 'respond',
+    defaultEnabled: true,
   },
   {
-    id: 'tasks',
-    label: 'Tasks',
-    changeType: 'Task assignments and comments',
-    triggerKind: 'task',
-    capability: 'task_dispatch',
+    group: 'Chat',
+    eventType: 'chat_observe',
+    label: 'Chat Observed',
+    changeType: 'Message in a channel the agent can see',
+    defaultAction: 'observe',
+    defaultEnabled: false,
+  },
+  {
+    group: 'Docs',
+    eventType: 'document_created',
+    label: 'Doc Created',
+    changeType: 'New document created in the channel',
+    defaultAction: 'index',
+    defaultEnabled: false,
+  },
+  {
+    group: 'Docs',
+    eventType: 'document_comment_tagged',
+    label: 'Doc Tagged',
+    changeType: 'Document comment explicitly tags or addresses the agent',
+    defaultAction: 'respond',
+    defaultEnabled: true,
+  },
+  {
+    group: 'Docs',
+    eventType: 'document_comment_observe',
+    label: 'Doc Observed',
+    changeType: 'Document comment in a visible channel',
+    defaultAction: 'observe',
+    defaultEnabled: false,
+  },
+  {
+    group: 'Tasks',
+    eventType: 'task_assigned',
+    label: 'Task Assigned',
+    changeType: 'Task assigned to this agent',
+    defaultAction: 'work',
+    defaultEnabled: true,
+  },
+  {
+    group: 'Tasks',
+    eventType: 'task_comment',
+    label: 'Task Comment',
+    changeType: 'Comment added to a task in the channel',
+    defaultAction: 'respond',
+    defaultEnabled: true,
   },
 ];
 
-function findDispatchRoute(routes, config) {
-  return Array.isArray(routes)
-    ? routes.find((route) => (
-      String(route?.triggerKind || route?.trigger_kind || '') === config.triggerKind
-      && String(route?.capability || '') === config.capability
-    )) ?? null
+const POLICY_ACTIONS = [
+  'respond',
+  'ignore',
+  'observe',
+  'index',
+  'work',
+  'acknowledge',
+  'notify',
+  'process',
+];
+
+function formatPolicyAction(value) {
+  return String(value || '')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function findPolicy(policies, eventType) {
+  return Array.isArray(policies)
+    ? policies.find((policy) => policy?.eventType === eventType) ?? null
     : null;
 }
 
-function getSupportedDispatchRoutes(routes) {
-  return FLIGHT_DECK_DISPATCH_ROWS
-    .map((config) => findDispatchRoute(routes, config))
-    .filter(Boolean);
+function getPolicyPipelineId(policy) {
+  return policy?.pipelineDefinitionId || '';
 }
 
-function createDispatchStatusCell(route) {
-  const cell = document.createElement('td');
-  cell.style.cssText = 'padding:10px;border-top:1px solid rgba(255,255,255,0.06);vertical-align:top;';
-  const enabled = Boolean(route && route.enabled !== false);
-  cell.append(createTonePill(enabled ? 'Enabled' : 'Disabled', enabled ? 'success' : 'muted'));
-  return cell;
+function countEnabledPolicies(subscription) {
+  const policies = subscription?.profileWorkspace?.policies;
+  return FLIGHT_DECK_DISPATCH_ROWS.filter((config) => {
+    const policy = findPolicy(policies, config.eventType);
+    return policy ? policy.enabled !== false : config.defaultEnabled !== false;
+  }).length;
 }
 
-function createFlightDeckDispatchTable(routes) {
+function createPipelineSelect(definitions, selectedId, testId) {
+  const select = document.createElement('select');
+  select.className = 'wm-input';
+  select.setAttribute('aria-label', 'Default pipeline');
+  select.setAttribute('data-testid', testId);
+
+  const empty = document.createElement('option');
+  empty.value = '';
+  empty.textContent = 'Built-in default';
+  select.append(empty);
+
+  definitions.forEach((definition) => {
+    const option = document.createElement('option');
+    option.value = definition.id || '';
+    option.textContent = definition.name || definition.slug || definition.id || 'Pipeline';
+    select.append(option);
+  });
+  select.value = selectedId || '';
+  return select;
+}
+
+function createActionSelect(selectedAction, fallbackAction, testId) {
+  const select = document.createElement('select');
+  select.className = 'wm-input';
+  select.setAttribute('aria-label', 'Dispatch action');
+  select.setAttribute('data-testid', testId);
+  POLICY_ACTIONS.forEach((action) => {
+    const option = document.createElement('option');
+    option.value = action;
+    option.textContent = formatPolicyAction(action);
+    select.append(option);
+  });
+  const value = selectedAction || fallbackAction || 'respond';
+  select.value = POLICY_ACTIONS.includes(value) ? value : 'respond';
+  return select;
+}
+
+function createFlightDeckDispatchTable({ subscription, pipelineDefinitions, canManage }) {
   const section = document.createElement('section');
   section.style.cssText = 'margin-top:16px;';
   section.setAttribute('data-testid', 'flight-deck-dispatch-table');
 
   const heading = document.createElement('h4');
-  heading.textContent = 'Default Dispatch';
+  heading.textContent = 'Dispatch Settings';
   heading.style.cssText = 'margin:0 0 8px;font-size:0.98rem;';
 
   const note = document.createElement('p');
   note.className = 'wm-settings__port-note';
-  note.textContent = 'Default workspace dispatch for Flight Deck changes. Channel overrides will be managed separately.';
+  note.textContent = 'Manage which Flight Deck events dispatch to agents and which default pipeline each event uses.';
 
   const wrapper = document.createElement('div');
   wrapper.style.cssText = 'overflow:auto;border:1px solid rgba(255,255,255,0.08);border-radius:8px;margin-top:10px;';
 
   const table = document.createElement('table');
-  table.style.cssText = 'width:100%;border-collapse:collapse;font-size:0.9rem;min-width:620px;';
+  table.style.cssText = 'width:100%;border-collapse:collapse;font-size:0.9rem;min-width:860px;';
 
   const thead = document.createElement('thead');
   const headerRow = document.createElement('tr');
-  ['Area', 'Flight Deck change', 'Status', 'Default pipeline'].forEach((label) => {
+  ['Group', 'Dispatch', 'Flight Deck change', 'Enabled', 'Action', 'Default pipeline'].forEach((label) => {
     const th = document.createElement('th');
     th.scope = 'col';
     th.textContent = label;
@@ -386,37 +474,59 @@ function createFlightDeckDispatchTable(routes) {
   thead.append(headerRow);
 
   const tbody = document.createElement('tbody');
+  const policies = Array.isArray(subscription?.profileWorkspace?.policies) ? subscription.profileWorkspace.policies : [];
+  const definitions = Array.isArray(pipelineDefinitions) ? pipelineDefinitions : [];
+  const rowControls = [];
   FLIGHT_DECK_DISPATCH_ROWS.forEach((config) => {
-    const route = findDispatchRoute(routes, config);
+    const policy = findPolicy(policies, config.eventType) || {};
     const row = document.createElement('tr');
-    row.setAttribute('data-testid', `flight-deck-dispatch-row-${config.id}`);
+    row.setAttribute('data-testid', `flight-deck-dispatch-row-${config.eventType}`);
 
-    const area = document.createElement('td');
-    area.style.cssText = 'padding:10px;border-top:1px solid rgba(255,255,255,0.06);font-weight:650;vertical-align:top;';
-    area.textContent = config.label;
+    const group = document.createElement('td');
+    group.style.cssText = 'padding:10px;border-top:1px solid rgba(255,255,255,0.06);font-weight:650;vertical-align:top;';
+    group.textContent = config.group;
+
+    const dispatch = document.createElement('td');
+    dispatch.style.cssText = 'padding:10px;border-top:1px solid rgba(255,255,255,0.06);font-weight:650;vertical-align:top;';
+    dispatch.textContent = config.label;
 
     const change = document.createElement('td');
     change.style.cssText = 'padding:10px;border-top:1px solid rgba(255,255,255,0.06);vertical-align:top;';
     change.textContent = config.changeType;
 
-    const status = createDispatchStatusCell(route);
+    const enabledCell = document.createElement('td');
+    enabledCell.style.cssText = 'padding:10px;border-top:1px solid rgba(255,255,255,0.06);vertical-align:top;';
+    const enabled = document.createElement('input');
+    enabled.type = 'checkbox';
+    enabled.checked = policy.eventType ? policy.enabled !== false : config.defaultEnabled !== false;
+    enabled.disabled = canManage === false;
+    enabled.setAttribute('aria-label', `Enable ${config.label}`);
+    enabled.setAttribute('data-testid', `flight-deck-dispatch-enabled-${config.eventType}`);
+    enabledCell.append(enabled);
 
-    const pipeline = document.createElement('td');
-    pipeline.style.cssText = 'padding:10px;border-top:1px solid rgba(255,255,255,0.06);vertical-align:top;word-break:break-word;';
-    pipeline.textContent = route?.pipelineDefinitionId || route?.pipeline_definition_id || 'Not configured';
-    pipeline.title = pipeline.textContent;
+    const actionCell = document.createElement('td');
+    actionCell.style.cssText = 'padding:10px;border-top:1px solid rgba(255,255,255,0.06);vertical-align:top;';
+    const action = createActionSelect(policy.defaultAction, config.defaultAction, `flight-deck-dispatch-action-${config.eventType}`);
+    action.disabled = canManage === false;
+    actionCell.append(action);
 
-    row.append(area, change, status, pipeline);
+    const pipelineCell = document.createElement('td');
+    pipelineCell.style.cssText = 'padding:10px;border-top:1px solid rgba(255,255,255,0.06);vertical-align:top;';
+    const pipeline = createPipelineSelect(definitions, getPolicyPipelineId(policy), `flight-deck-dispatch-pipeline-${config.eventType}`);
+    pipeline.disabled = canManage === false;
+    pipelineCell.append(pipeline);
+
+    row.append(group, dispatch, change, enabledCell, actionCell, pipelineCell);
     tbody.append(row);
+    rowControls.push({ config, policy, enabled, action, pipeline });
   });
 
   table.append(thead, tbody);
   wrapper.append(table);
-  section.append(heading, note, wrapper);
-  return section;
+  return { section, heading, note, wrapper, rowControls };
 }
 
-function createFlightDeckDispatchCard(routes, workspaceTitle) {
+function createFlightDeckDispatchCard({ subscription, pipelineDefinitions, workspaceTitle, canManage, onSaveProfileWorkspace }) {
   const card = document.createElement('section');
   card.className = 'wm-card';
   card.style.cssText = 'padding:14px;margin-top:12px;';
@@ -429,7 +539,78 @@ function createFlightDeckDispatchCard(routes, workspaceTitle) {
   note.className = 'wm-settings__port-note';
   note.textContent = `Selected workspace: ${workspaceTitle || 'Flight Deck Workspace'}`;
 
-  card.append(heading, note, createFlightDeckDispatchTable(routes));
+  const dispatchTable = createFlightDeckDispatchTable({ subscription, pipelineDefinitions, canManage });
+  dispatchTable.section.append(dispatchTable.heading, dispatchTable.note, dispatchTable.wrapper);
+
+  const status = document.createElement('p');
+  status.className = 'wm-settings__port-note';
+  status.setAttribute('aria-live', 'polite');
+  status.textContent = canManage === false
+    ? 'Dispatch settings are shared and can only be changed by an administrator.'
+    : '';
+
+  const saveButton = createButton('Save Changes', `flight-deck-dispatch-save-${subscription?.subscriptionId || 'unknown'}`, 'Save Flight Deck dispatch settings');
+  saveButton.disabled = canManage === false || typeof onSaveProfileWorkspace !== 'function';
+  saveButton.addEventListener('click', async () => {
+    if (saveButton.disabled) return;
+    saveButton.disabled = true;
+    status.textContent = 'Saving dispatch settings...';
+    try {
+      const bundle = subscription?.profileWorkspace || {};
+      const existingPolicies = Array.isArray(bundle.policies) ? bundle.policies : [];
+      const editableEventTypes = new Set(FLIGHT_DECK_DISPATCH_ROWS.map((row) => row.eventType));
+      const retiredEventTypes = new Set(['approval_assigned', 'flow_step_assigned']);
+      const policies = [
+        ...existingPolicies
+          .filter((policy) => policy?.eventType && !editableEventTypes.has(policy.eventType))
+          .map((policy) => ({
+            eventType: policy.eventType,
+            enabled: retiredEventTypes.has(policy.eventType) ? false : policy.enabled !== false,
+            defaultAction: retiredEventTypes.has(policy.eventType) ? 'ignore' : policy.defaultAction || 'ignore',
+            pipelineDefinitionId: policy.pipelineDefinitionId || '',
+            promptContext: policy.promptContext || '',
+            quietMode: retiredEventTypes.has(policy.eventType) ? true : policy.quietMode === true,
+          })),
+        ...dispatchTable.rowControls.map(({ config, enabled, action, pipeline, policy }) => ({
+          eventType: config.eventType,
+          enabled: enabled.checked,
+          defaultAction: action.value,
+          pipelineDefinitionId: pipeline.value,
+          promptContext: policy.promptContext || '',
+          quietMode: action.value === 'observe' ? true : policy.quietMode === true,
+        })),
+      ];
+      await onSaveProfileWorkspace(subscription, {
+        profileDefaultPipelineDefinitionId: bundle.profile?.defaultPipelineDefinitionId || '',
+        profilePromptContext: bundle.profile?.promptContext || '',
+        workspaceDefaultPipelineDefinitionId: bundle.workspace?.defaultPipelineDefinitionId || '',
+        workspaceContext: bundle.workspace?.workspaceContext || '',
+        policies,
+        pipelineOverrides: Array.isArray(bundle.pipelineOverrides)
+          ? bundle.pipelineOverrides.map((override) => ({
+            targetKind: override.targetKind,
+            targetId: override.targetId,
+            pipelineDefinitionId: override.pipelineDefinitionId,
+          }))
+          : [],
+        appendedContexts: Array.isArray(bundle.appendedContexts)
+          ? bundle.appendedContexts.map((context) => ({
+            contextKind: context.contextKind,
+            targetId: context.targetId || null,
+            eventType: context.eventType || null,
+            contextText: context.contextText || '',
+          }))
+          : [],
+      });
+      status.textContent = 'Dispatch settings saved.';
+    } catch (error) {
+      status.textContent = error instanceof Error ? error.message : 'Failed to save dispatch settings.';
+    } finally {
+      saveButton.disabled = canManage === false;
+    }
+  });
+
+  card.append(heading, note, dispatchTable.section, createInlineActions(saveButton), status);
   return card;
 }
 
@@ -525,11 +706,13 @@ export function createFlightDeckConnectionsPanel({
   backendConnections = [],
   agents = [],
   chatSessions = [],
-  dispatchRoutes = [],
+  pipelineDefinitions = [],
   selectedSubscriptionId = null,
+  canManage = true,
   onManageDispatch,
   onRefresh,
   onSelectWorkspace,
+  onSaveProfileWorkspace,
 } = {}) {
   const explicitList = Array.isArray(subscriptions) ? subscriptions.filter(isExplicitOnboardedWorkspace) : [];
   const list = explicitList.filter(isExplicitActiveOnboardedWorkspace);
@@ -553,8 +736,7 @@ export function createFlightDeckConnectionsPanel({
     { label: 'Diagnostics', value: diagnosticList.length },
     { label: 'Default Dispatch', value: list.filter((subscription) => {
       const agent = getAgentForSubscription(subscription, agents);
-      const supportedRoutes = getSupportedDispatchRoutes(getRoutesForSubscription(subscription, dispatchRoutes));
-      return Boolean(agent && countEnabledRoutes(supportedRoutes) > 0);
+      return Boolean(agent && countEnabledPolicies(subscription) > 0);
     }).length },
     { label: 'Active Sessions', value: Array.isArray(chatSessions) ? chatSessions.length : 0 },
   ]));
@@ -605,10 +787,8 @@ export function createFlightDeckConnectionsPanel({
     const subscription = selectedSubscription;
     const backendConnection = getBackendConnectionForSubscription(subscription, backendConnections);
     const agent = getAgentForSubscription(subscription, agents);
-    const routes = getRoutesForSubscription(subscription, dispatchRoutes);
-    const supportedRoutes = getSupportedDispatchRoutes(routes);
-    const enabledRoutes = countEnabledRoutes(supportedRoutes);
-    const dispatchReady = Boolean(agent && enabledRoutes > 0);
+    const enabledPolicies = countEnabledPolicies(subscription);
+    const dispatchReady = Boolean(agent && enabledPolicies > 0);
     const targets = countVisibleTargets(subscription);
     const appendedContextCount = countAppendedContext(subscription);
     const profileWorkspace = subscription?.profileWorkspace?.workspace;
@@ -616,7 +796,13 @@ export function createFlightDeckConnectionsPanel({
     const onboardingStatus = profileWorkspace?.relayOnboardingStatus || 'unknown';
     const yokeStatus = profileWorkspace?.yokeSyncStatus || subscription?.groupKeyStatus || 'unknown';
 
-    panel.append(createFlightDeckDispatchCard(routes, workspaceTitle));
+    panel.append(createFlightDeckDispatchCard({
+      subscription,
+      pipelineDefinitions,
+      workspaceTitle,
+      canManage,
+      onSaveProfileWorkspace,
+    }));
 
     const card = document.createElement('article');
     card.className = 'wm-card';
@@ -654,7 +840,7 @@ export function createFlightDeckConnectionsPanel({
       ['Workspace member owner', shortenIdentifier(subscription?.workspaceOwnerNpub, { head: 20, tail: 10 })],
       ['Tower service', subscription?.backendBaseUrl || profileWorkspace?.towerUrl || 'unknown'],
       ['Connection source', 'kind 33357'],
-      ['Default dispatch routes', `${enabledRoutes}/${supportedRoutes.length} enabled`],
+      ['Default dispatch events', `${enabledPolicies}/${FLIGHT_DECK_DISPATCH_ROWS.length} enabled`],
       ['Visible scopes', String(targets.scopes)],
       ['Visible channels', String(targets.channels)],
       ['Appended context', String(appendedContextCount)],
@@ -713,6 +899,20 @@ export function createFlightDeckSection({ onManageDispatch } = {}) {
       selectedSubscriptionId,
       onManageDispatch,
       onRefresh: refresh,
+      onSaveProfileWorkspace: async (subscription, input) => {
+        if (!subscription?.subscriptionId) {
+          throw new Error('Select a Flight Deck workspace first.');
+        }
+        const profileWorkspace = await saveAgentChatProfileWorkspace(subscription.subscriptionId, input);
+        if (profileWorkspace) {
+          latestData.subscriptions = latestData.subscriptions.map((candidate) => (
+            candidate?.subscriptionId === subscription.subscriptionId
+              ? { ...candidate, profileWorkspace }
+              : candidate
+          ));
+        }
+        renderPanel(subscription.subscriptionId);
+      },
       onSelectWorkspace: (subscription) => {
         pushSelectedFlightDeckSubscriptionRoute(subscription);
         renderPanel(subscription?.subscriptionId ?? null);
@@ -724,20 +924,21 @@ export function createFlightDeckSection({ onManageDispatch } = {}) {
   async function refresh() {
     statusLine.textContent = 'Loading Flight Deck connections...';
     try {
-      const [subscriptions, backendConnections, agentPayload, sessionPayload, dispatchRoutes] = await Promise.all([
+      const [subscriptions, backendConnections, agentPayload, sessionPayload, pipelinePayload] = await Promise.all([
         listAgentChatSubscriptions(),
         listAgentChatBackendConnections().catch(() => []),
         listAgentChatAgents().catch(() => ({ agents: [] })),
         fetchSessionsApi().catch(() => ({ sessions: [] })),
-        listAgentChatDispatchRoutes().catch(() => []),
+        fetchPipelineDefinitionsForSettings().catch(() => ({ definitions: [] })),
       ]);
       const allSessions = Array.isArray(sessionPayload?.sessions) ? sessionPayload.sessions : [];
       latestData = {
         subscriptions,
         backendConnections,
         agents: Array.isArray(agentPayload?.agents) ? agentPayload.agents : [],
+        canManage: subscriptions?.permissions?.canManage !== false,
         chatSessions: filterFlightDeckSessions(allSessions),
-        dispatchRoutes,
+        pipelineDefinitions: Array.isArray(pipelinePayload?.definitions) ? pipelinePayload.definitions : [],
       };
       renderPanel();
       const onboardedCount = Array.isArray(subscriptions) ? subscriptions.filter(isExplicitActiveOnboardedWorkspace).length : 0;

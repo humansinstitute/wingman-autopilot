@@ -14,6 +14,9 @@ class FakeElement {
     this.textContent = "";
     this.title = "";
     this.type = "";
+    this.value = "";
+    this.checked = false;
+    this.disabled = false;
   }
 
   append(...children) {
@@ -148,6 +151,47 @@ describe("flight deck settings panel", () => {
                 scopes: [{ id: "scope-design", label: "Design" }],
                 channels: [{ id: "channel-bugs", label: "Bugs" }],
               },
+              profile: {
+                defaultPipelineDefinitionId: "",
+                promptContext: "",
+              },
+              policies: [
+                {
+                  eventType: "direct_message",
+                  enabled: true,
+                  defaultAction: "respond",
+                  pipelineDefinitionId: "fd-agent-dispatch-chat",
+                  quietMode: false,
+                },
+                {
+                  eventType: "chat_mention",
+                  enabled: true,
+                  defaultAction: "respond",
+                  pipelineDefinitionId: "fd-agent-dispatch-chat",
+                  quietMode: false,
+                },
+                {
+                  eventType: "chat_observe",
+                  enabled: false,
+                  defaultAction: "observe",
+                  pipelineDefinitionId: "fd-agent-dispatch-chat",
+                  quietMode: true,
+                },
+                {
+                  eventType: "document_comment_tagged",
+                  enabled: true,
+                  defaultAction: "respond",
+                  pipelineDefinitionId: "fd-agent-dispatch-comment-response",
+                  quietMode: false,
+                },
+                {
+                  eventType: "task_assigned",
+                  enabled: true,
+                  defaultAction: "work",
+                  pipelineDefinitionId: "fd-agent-dispatch-task-response",
+                  quietMode: false,
+                },
+              ],
               appendedContexts: [{ contextKind: "workspace", contextText: "Repo path" }],
             },
           },
@@ -160,39 +204,10 @@ describe("flight deck settings panel", () => {
             botNpub: "npub1agentbot",
           },
         ],
-        dispatchRoutes: [
-          {
-            routeId: "route-chat",
-            subscriptionId: "sub-flightdeck",
-            triggerKind: "chat",
-            capability: "chat_intercept",
-            pipelineDefinitionId: "fd-agent-dispatch-chat",
-            enabled: true,
-          },
-          {
-            routeId: "route-docs",
-            subscriptionId: "sub-flightdeck",
-            triggerKind: "comment",
-            capability: "comment_dispatch",
-            pipelineDefinitionId: "fd-agent-dispatch-comment-response",
-            enabled: true,
-          },
-          {
-            routeId: "route-task",
-            subscriptionId: "sub-flightdeck",
-            triggerKind: "task",
-            capability: "task_dispatch",
-            pipelineDefinitionId: "fd-agent-dispatch-task-response",
-            enabled: false,
-          },
-          {
-            routeId: "route-flow",
-            subscriptionId: "sub-flightdeck",
-            triggerKind: "flow",
-            capability: "flow_dispatch",
-            pipelineDefinitionId: "legacy-flow-pipeline",
-            enabled: true,
-          },
+        pipelineDefinitions: [
+          { id: "fd-agent-dispatch-chat", name: "FD Chat Dispatch" },
+          { id: "fd-agent-dispatch-comment-response", name: "FD Comment Dispatch" },
+          { id: "fd-agent-dispatch-task-response", name: "FD Task Dispatch" },
         ],
         chatSessions: [{ id: "session-1" }],
         onManageDispatch: (subscription) => {
@@ -208,7 +223,7 @@ describe("flight deck settings panel", () => {
       expect(text).toContain("Onboarding Ready");
       expect(text).toContain("Yoke Synced");
       expect(text).toContain("Default Dispatch Ready");
-      expect(text).toContain("2/3 enabled");
+      expect(text).toContain("5/8 enabled");
       expect(text).toContain("Workspace id");
       expect(text).toContain("workspace-swipeback");
       expect(text).toContain("Workspace service");
@@ -221,19 +236,23 @@ describe("flight deck settings panel", () => {
       expect(text).toContain("Appended context");
       expect(text).toContain("Default Dispatch");
       expect(text).toContain("Selected workspace: Swipeback");
+      expect(text).toContain("Dispatch Settings");
       expect(text).toContain("Chat");
       expect(text).toContain("Docs");
       expect(text).toContain("Tasks");
-      expect(text).toContain("Chat messages");
-      expect(text).toContain("Document comments");
-      expect(text).toContain("Task assignments and comments");
-      expect(text).toContain("fd-agent-dispatch-chat");
-      expect(text).toContain("fd-agent-dispatch-comment-response");
-      expect(text).toContain("fd-agent-dispatch-task-response");
+      expect(text).toContain("Direct Message");
+      expect(text).toContain("Chat Tagged");
+      expect(text).toContain("Chat Observed");
+      expect(text).toContain("Doc Tagged");
+      expect(text).toContain("Task Assigned");
+      expect(text).toContain("FD Chat Dispatch");
+      expect(text).toContain("FD Comment Dispatch");
+      expect(text).toContain("FD Task Dispatch");
       expect(text).not.toContain("legacy-flow-pipeline");
-      expect(queryByTestId(panel, "flight-deck-dispatch-row-chat")).not.toBeNull();
-      expect(queryByTestId(panel, "flight-deck-dispatch-row-docs")).not.toBeNull();
-      expect(queryByTestId(panel, "flight-deck-dispatch-row-tasks")).not.toBeNull();
+      expect(queryByTestId(panel, "flight-deck-dispatch-row-direct_message")).not.toBeNull();
+      expect(queryByTestId(panel, "flight-deck-dispatch-row-chat_mention")).not.toBeNull();
+      expect(queryByTestId(panel, "flight-deck-dispatch-row-chat_observe")).not.toBeNull();
+      expect(queryByTestId(panel, "flight-deck-dispatch-row-task_assigned")).not.toBeNull();
       expect(queryByTestId(panel, "flight-deck-default-dispatch-card")).not.toBeNull();
       expect(text).not.toContain("SSE Events");
       expect(text).not.toContain("flightdeck_pg.message.created");
@@ -250,7 +269,7 @@ describe("flight deck settings panel", () => {
     });
   });
 
-  test("keeps the selected workspace dispatch table visible without configured routes", () => {
+  test("keeps the selected workspace dispatch table visible without configured policies", () => {
     withFakeDocument(() => {
       const panel = createFlightDeckConnectionsPanel({
         subscriptions: [
@@ -273,58 +292,101 @@ describe("flight deck settings panel", () => {
             },
           },
         ],
-        dispatchRoutes: [],
       });
 
       const text = collectText(panel);
       expect(queryByTestId(panel, "flight-deck-default-dispatch-card")).not.toBeNull();
-      expect(queryByTestId(panel, "flight-deck-dispatch-row-chat")).not.toBeNull();
-      expect(queryByTestId(panel, "flight-deck-dispatch-row-docs")).not.toBeNull();
-      expect(queryByTestId(panel, "flight-deck-dispatch-row-tasks")).not.toBeNull();
+      expect(queryByTestId(panel, "flight-deck-dispatch-row-direct_message")).not.toBeNull();
+      expect(queryByTestId(panel, "flight-deck-dispatch-row-document_comment_tagged")).not.toBeNull();
+      expect(queryByTestId(panel, "flight-deck-dispatch-row-task_assigned")).not.toBeNull();
       expect(text).toContain("Selected workspace: Empty Routes");
-      expect(text).toContain("Not configured");
-      expect(text).toContain("Dispatch Setup Pending");
+      expect(text).toContain("Built-in default");
+      expect(text).toContain("5/8 enabled");
     });
   });
 
-  test("matches selected workspace dispatch routes with snake case fields", () => {
-    withFakeDocument(() => {
+  test("saves selected workspace dispatch policy changes", async () => {
+    await withFakeDocument(async () => {
+      let saved = null;
       const panel = createFlightDeckConnectionsPanel({
         subscriptions: [
           {
-            subscriptionId: "sub-snake-routes",
+            subscriptionId: "sub-save-policies",
             backendBaseUrl: "https://tower.example",
             workspaceOwnerNpub: "npub1workspaceowner",
             workspaceServiceNpub: "npub1workspaceservice",
-            workspaceId: "workspace-snake",
+            workspaceId: "workspace-save",
             sourceAppNpub: "npub1flightdeckapp",
             botNpub: "npub1agentbot",
             onboardingSource: "nostr_33357",
             healthStatus: "healthy",
             sseStatus: "connected",
             profileWorkspace: {
-              workspace: {
-                workspaceTitle: "Snake Routes",
-                relayOnboardingStatus: "ready",
+              profile: {
+                defaultPipelineDefinitionId: "",
+                promptContext: "",
               },
+              workspace: {
+                workspaceTitle: "Save Policies",
+                relayOnboardingStatus: "ready",
+                defaultPipelineDefinitionId: "",
+                workspaceContext: "",
+              },
+              policies: [
+                {
+                  eventType: "chat_mention",
+                  enabled: true,
+                  defaultAction: "respond",
+                  pipelineDefinitionId: "old-chat-pipeline",
+                  quietMode: false,
+                },
+                {
+                  eventType: "approval_assigned",
+                  enabled: true,
+                  defaultAction: "notify",
+                  pipelineDefinitionId: "approval-pipeline",
+                  quietMode: false,
+                },
+              ],
+              pipelineOverrides: [],
+              appendedContexts: [],
             },
           },
         ],
-        dispatchRoutes: [
-          {
-            route_id: "route-chat",
-            subscriptionId: "sub-snake-routes",
-            trigger_kind: "chat",
-            capability: "chat_intercept",
-            pipeline_definition_id: "snake-chat-pipeline",
-            enabled: true,
-          },
-        ],
+        pipelineDefinitions: [{ id: "new-chat-pipeline", name: "New Chat Pipeline" }],
+        onSaveProfileWorkspace: async (subscription, input) => {
+          saved = { subscriptionId: subscription.subscriptionId, input };
+        },
       });
 
-      const text = collectText(panel);
-      expect(queryByTestId(panel, "flight-deck-default-dispatch-card")).not.toBeNull();
-      expect(text).toContain("snake-chat-pipeline");
+      const enabled = queryByTestId(panel, "flight-deck-dispatch-enabled-chat_mention");
+      const action = queryByTestId(panel, "flight-deck-dispatch-action-chat_mention");
+      const pipeline = queryByTestId(panel, "flight-deck-dispatch-pipeline-chat_mention");
+      enabled.checked = false;
+      action.value = "ignore";
+      pipeline.value = "new-chat-pipeline";
+
+      queryByTestId(panel, "flight-deck-dispatch-save-sub-save-policies").click();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(saved.subscriptionId).toBe("sub-save-policies");
+      expect(saved.input.policies).toContainEqual({
+        eventType: "chat_mention",
+        enabled: false,
+        defaultAction: "ignore",
+        pipelineDefinitionId: "new-chat-pipeline",
+        promptContext: "",
+        quietMode: false,
+      });
+      expect(saved.input.policies).toContainEqual({
+        eventType: "approval_assigned",
+        enabled: false,
+        defaultAction: "ignore",
+        pipelineDefinitionId: "approval-pipeline",
+        promptContext: "",
+        quietMode: true,
+      });
     });
   });
 
@@ -383,6 +445,15 @@ describe("flight deck settings panel", () => {
                 workspaceTitle: "This Works",
                 relayOnboardingStatus: "ready",
               },
+              policies: [
+                {
+                  eventType: "chat_mention",
+                  enabled: true,
+                  defaultAction: "respond",
+                  pipelineDefinitionId: "thisworks-chat-pipeline",
+                  quietMode: false,
+                },
+              ],
             },
           },
           {
@@ -399,26 +470,21 @@ describe("flight deck settings panel", () => {
                 workspaceTitle: "Wingmen",
                 relayOnboardingStatus: "ready",
               },
+              policies: [
+                {
+                  eventType: "chat_mention",
+                  enabled: true,
+                  defaultAction: "respond",
+                  pipelineDefinitionId: "wingmen-chat-pipeline",
+                  quietMode: false,
+                },
+              ],
             },
           },
         ],
-        dispatchRoutes: [
-          {
-            routeId: "route-thisworks-chat",
-            subscriptionId: "sub-thisworks",
-            triggerKind: "chat",
-            capability: "chat_intercept",
-            pipelineDefinitionId: "thisworks-chat-pipeline",
-            enabled: true,
-          },
-          {
-            routeId: "route-wingmen-chat",
-            subscriptionId: "sub-wingmen",
-            triggerKind: "chat",
-            capability: "chat_intercept",
-            pipelineDefinitionId: "wingmen-chat-pipeline",
-            enabled: true,
-          },
+        pipelineDefinitions: [
+          { id: "thisworks-chat-pipeline", name: "Thisworks Chat Pipeline" },
+          { id: "wingmen-chat-pipeline", name: "Wingmen Chat Pipeline" },
         ],
         onSelectWorkspace: (subscription) => {
           selectedSubscriptionId = subscription?.subscriptionId ?? null;
@@ -432,8 +498,7 @@ describe("flight deck settings panel", () => {
       expect(queryByTestId(panel, "flight-deck-connection-sub-wingmen")).not.toBeNull();
       expect(text).toContain("This Works");
       expect(text).toContain("Wingmen");
-      expect(text).toContain("wingmen-chat-pipeline");
-      expect(text).not.toContain("thisworks-chat-pipeline");
+      expect(queryByTestId(panel, "flight-deck-dispatch-pipeline-chat_mention").value).toBe("wingmen-chat-pipeline");
 
       queryByTestId(panel, "flight-deck-workspace-tab-sub-thisworks").click();
       expect(selectedSubscriptionId).toBe("sub-thisworks");
