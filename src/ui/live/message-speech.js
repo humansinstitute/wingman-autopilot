@@ -10,6 +10,7 @@ const autoReadTimers = new Map();
 let activeAudio = null;
 let activeSpeechKey = "";
 let activeSpeechModal = null;
+let activeSpeechPendingKey = "";
 const AUTO_READ_IDLE_MS = 1400;
 const PLAY_ICON_SVG =
   '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>';
@@ -140,6 +141,11 @@ function removeSpeechPlaybackModal() {
   activeSpeechModal = null;
 }
 
+function closePendingSpeechModal() {
+  activeSpeechPendingKey = "";
+  removeSpeechPlaybackModal();
+}
+
 function formatSpeechTime(seconds) {
   if (!Number.isFinite(seconds) || seconds <= 0) {
     return "0:00";
@@ -186,7 +192,25 @@ function updateSpeechTimeline(audio = activeAudio) {
   }
 }
 
-function syncSpeechPlaybackModal(key) {
+function configureSpeechPlaybackModal(overlay, stateName) {
+  overlay.dataset.state = stateName;
+  const isPending = stateName === "pending";
+  const title = overlay.querySelector("[data-part='speech-title']");
+  const actionButton = overlay.querySelector("[data-part='speech-action']");
+  const timeline = overlay.querySelector("[data-part='speech-timeline']");
+  if (title) {
+    title.textContent = isPending ? "Summarising" : "Audio playing";
+  }
+  if (actionButton) {
+    actionButton.textContent = isPending ? "Close" : "Stop";
+    actionButton.setAttribute("aria-label", isPending ? "Close speech summary status" : "Stop spoken summary");
+  }
+  if (timeline) {
+    timeline.hidden = isPending;
+  }
+}
+
+function syncSpeechPlaybackModal(key, stateName = "playing") {
   if (typeof document === "undefined") {
     return;
   }
@@ -196,12 +220,14 @@ function syncSpeechPlaybackModal(key) {
   }
   if (activeSpeechModal?.isConnected) {
     activeSpeechModal.dataset.speechKey = key;
+    configureSpeechPlaybackModal(activeSpeechModal, stateName);
     return;
   }
 
   const overlay = document.createElement("div");
   overlay.className = "wm-speech-playback-modal";
   overlay.dataset.speechKey = key;
+  overlay.dataset.state = stateName;
   overlay.dataset.testid = "speech-playback-modal";
   overlay.setAttribute("role", "dialog");
   overlay.setAttribute("aria-modal", "true");
@@ -221,10 +247,11 @@ function syncSpeechPlaybackModal(key) {
   const title = document.createElement("p");
   title.id = "speech-playback-title";
   title.className = "wm-speech-playback-modal__title";
-  title.textContent = "Audio playing";
+  title.dataset.part = "speech-title";
 
   const timeline = document.createElement("div");
   timeline.className = "wm-speech-playback-modal__timeline";
+  timeline.dataset.part = "speech-timeline";
 
   const elapsed = document.createElement("span");
   elapsed.className = "wm-speech-playback-modal__time";
@@ -264,12 +291,21 @@ function syncSpeechPlaybackModal(key) {
   stopButton.type = "button";
   stopButton.className = "wm-speech-playback-modal__stop";
   stopButton.dataset.testid = "speech-playback-stop";
-  stopButton.setAttribute("aria-label", "Stop spoken summary");
-  stopButton.textContent = "Stop";
-  stopButton.addEventListener("click", () => stopSpeechPlayback());
+  stopButton.dataset.part = "speech-action";
+  stopButton.addEventListener("click", () => {
+    if (overlay.dataset.state === "pending") {
+      closePendingSpeechModal();
+      return;
+    }
+    stopSpeechPlayback();
+  });
   overlay.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       event.preventDefault();
+      if (overlay.dataset.state === "pending") {
+        closePendingSpeechModal();
+        return;
+      }
       stopSpeechPlayback();
     }
   });
@@ -278,8 +314,17 @@ function syncSpeechPlaybackModal(key) {
   overlay.append(panel);
   document.body.append(overlay);
   activeSpeechModal = overlay;
+  configureSpeechPlaybackModal(overlay, stateName);
   updateSpeechTimeline(activeAudio);
   stopButton.focus({ preventScroll: true });
+}
+
+function showSpeechPendingModal(key) {
+  if (!key) {
+    return;
+  }
+  activeSpeechPendingKey = key;
+  syncSpeechPlaybackModal(key, "pending");
 }
 
 function setSpeechButtonPlaying(button, playing, hasSpeech = true) {
@@ -339,6 +384,7 @@ async function ensureServerSpeech({
   message,
   button = null,
   generateIfMissing = true,
+  onGenerationStart = null,
 }) {
   const existing = getSpeech(message);
   if (existing?.publicPath) {
@@ -357,6 +403,7 @@ async function ensureServerSpeech({
 
   const inFlight = speechRequests.get(cacheKey);
   if (inFlight) {
+    onGenerationStart?.(cacheKey);
     return inFlight;
   }
 
@@ -384,6 +431,7 @@ async function ensureServerSpeech({
     if (!generateIfMissing) {
       throw new Error("Message audio is not available yet");
     }
+    onGenerationStart?.(cacheKey);
     const response = await generateMessageSpeechApi({
       sessionId,
       messageId: getMessageId(serverMessage),
@@ -406,6 +454,9 @@ async function ensureServerSpeech({
     throw error;
   } finally {
     speechRequests.delete(cacheKey);
+    if (activeSpeechPendingKey === cacheKey) {
+      activeSpeechPendingKey = "";
+    }
     if (button) {
       button.disabled = false;
       delete button.dataset.loading;
@@ -425,6 +476,7 @@ export async function readMessageAloud({ sessionId, message, showToast, button =
       message,
       button,
       generateIfMissing: true,
+      onGenerationStart: (key) => showSpeechPendingModal(key),
     });
     if (button) {
       button.dataset.hasSpeech = "true";
@@ -433,6 +485,9 @@ export async function readMessageAloud({ sessionId, message, showToast, button =
     const key = getSpeechCacheKey(sessionId, message);
     playSpeech(speech.publicPath, key);
   } catch (error) {
+    if (activeSpeechModal?.dataset.state === "pending") {
+      closePendingSpeechModal();
+    }
     showToast?.(error instanceof Error ? error.message : "Speech is not available in this browser", { type: "error" });
   }
 }

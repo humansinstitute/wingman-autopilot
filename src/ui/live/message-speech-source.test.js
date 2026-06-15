@@ -58,7 +58,7 @@ describe("live message speech controls", () => {
   test("turns play controls into stop controls while audio is active", () => {
     expect(speechSource).toContain("const STOP_ICON_SVG");
     expect(speechSource).toContain('window.dispatchEvent(new CustomEvent("speech-playback-change"');
-    expect(speechSource).toContain("function syncSpeechPlaybackModal(key)");
+    expect(speechSource).toContain('function syncSpeechPlaybackModal(key, stateName = "playing")');
     expect(speechSource).toContain('overlay.className = "wm-speech-playback-modal"');
     expect(speechSource).toContain('overlay.dataset.testid = "speech-playback-modal"');
     expect(speechSource).toContain('stopButton.dataset.testid = "speech-playback-stop"');
@@ -75,6 +75,17 @@ describe("live message speech controls", () => {
     expect(speechSource).toContain("updateSpeechButtonPlaybackState(button, getActiveSpeechPlaybackKey())");
     expect(speechSource).toContain('button.dataset.playing === "true"');
     expect(speechSource).toContain("stopSpeechPlayback();");
+  });
+
+  test("shows a dismissible summarising modal while missing speech is generated", () => {
+    expect(speechSource).toContain('title.textContent = isPending ? "Summarising" : "Audio playing";');
+    expect(speechSource).toContain('actionButton.textContent = isPending ? "Close" : "Stop";');
+    expect(speechSource).toContain('timeline.hidden = isPending;');
+    expect(speechSource).toContain("function showSpeechPendingModal(key)");
+    expect(speechSource).toContain("onGenerationStart?.(cacheKey)");
+    expect(speechSource).toContain("onGenerationStart: (key) => showSpeechPendingModal(key)");
+    expect(speechSource).toContain("closePendingSpeechModal();");
+    expect(styles).toContain('.wm-speech-playback-modal[data-state="pending"] .wm-speech-playback-modal__stop');
   });
 
   test("uses server-generated summary audio instead of browser speech for read aloud", () => {

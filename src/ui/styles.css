@@ -3705,6 +3705,12 @@ body[data-live-header-collapsed="true"]:has(#app[data-route="live"]) .wm-live-dr
   outline-offset: 2px;
 }
 
+.wm-speech-playback-modal[data-state="pending"] .wm-speech-playback-modal__stop {
+  border-color: rgba(148, 163, 184, 0.45);
+  background: rgba(148, 163, 184, 0.14);
+  color: var(--text-primary);
+}
+
 .wm-speech-playback-modal__timeline {
   grid-column: 1 / -1;
   display: grid;
