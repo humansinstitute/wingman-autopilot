@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
 import {
+  getLastPromptPillPosition,
   isMessageRectAboveView,
   isMessageRectInView,
 } from "./scroll-pill.js";
@@ -44,8 +45,21 @@ describe("last prompt pill visibility helpers", () => {
     expect(isMessageRectAboveView(visiblePromptRect, scrollRect, 12)).toBe(false);
   });
 
-  test("mounts the last prompt pill in the scroll container when available", () => {
-    expect(source).toContain("const pillParent = isDocumentScrollTarget(scrollElement) ? parent : scrollElement;");
-    expect(source).toContain("pillParent.insertBefore(button, firstChild);");
+  test("positions the last prompt pill from the visible scroll container", () => {
+    expect(getLastPromptPillPosition({
+      top: 80,
+      bottom: 720,
+      left: 40,
+      right: 1040,
+    }, 16)).toEqual({
+      top: 108,
+      left: 540,
+    });
+  });
+
+  test("mounts the last prompt pill outside scroll flow", () => {
+    expect(source).toContain("const pillParent = document.body || parent;");
+    expect(source).toContain("pillParent.appendChild(button);");
+    expect(source).not.toContain("pillParent.insertBefore(button");
   });
 });

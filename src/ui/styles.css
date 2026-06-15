@@ -4973,13 +4973,12 @@ body[data-keyboard-open="true"] .wm-composer-shell {
 }
 
 .wm-scroll-pill.wm-scroll-pill--last-prompt {
-  position: sticky;
+  position: fixed;
   top: 0.75rem;
   bottom: auto;
-  left: auto;
-  align-self: center;
-  transform: none;
-  margin: 0.35rem auto -2.35rem;
+  left: 50%;
+  transform: translateX(-50%);
+  margin: 0;
   z-index: 8;
 }
 

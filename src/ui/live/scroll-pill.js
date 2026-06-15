@@ -11,6 +11,7 @@
 const THRESHOLD = 50;
 const USER_MESSAGE_SELECTOR = '.wm-message[data-role="user"]';
 const HEADER_OFFSET_FALLBACK = 12;
+const LAST_PROMPT_TOP_GAP = 12;
 
 function isDocumentScrollTarget(el) {
   return (
@@ -69,6 +70,7 @@ function createPillState() {
     conversationElement: null,
     scrollListener: null,
     scrollListenerTarget: null,
+    resizeListener: null,
     mutationObserver: null,
     lastMessageElement: null,
   };
@@ -89,6 +91,8 @@ function getScrollContainerRect(el) {
     return {
       top: 0,
       bottom: window.innerHeight,
+      left: 0,
+      right: window.innerWidth,
     };
   }
   return el.getBoundingClientRect();
@@ -110,6 +114,9 @@ function cleanupPillState(state) {
   if (state.mutationObserver) {
     state.mutationObserver.disconnect();
   }
+  if (state.resizeListener) {
+    window.removeEventListener("resize", state.resizeListener);
+  }
   if (state.pillEl && state.pillEl.parentNode) {
     state.pillEl.parentNode.removeChild(state.pillEl);
   }
@@ -118,6 +125,7 @@ function cleanupPillState(state) {
   state.conversationElement = null;
   state.scrollListener = null;
   state.scrollListenerTarget = null;
+  state.resizeListener = null;
   state.lastMessageElement = null;
 }
 
@@ -185,6 +193,23 @@ function isMessageAboveView(messageElement, scrollElement) {
   return isMessageRectAboveView(messageRect, scrollRect, headerInset);
 }
 
+export function getLastPromptPillPosition(scrollRect, headerInset = 0) {
+  return {
+    top: scrollRect.top + headerInset + LAST_PROMPT_TOP_GAP,
+    left: scrollRect.left + ((scrollRect.right - scrollRect.left) / 2),
+  };
+}
+
+function positionLastPromptPill(state) {
+  if (!state?.pillEl || !state.scrollTarget) {
+    return;
+  }
+  const scrollRect = getScrollContainerRect(state.scrollTarget);
+  const position = getLastPromptPillPosition(scrollRect, getHeaderInset(state.scrollTarget));
+  state.pillEl.style.top = `${position.top}px`;
+  state.pillEl.style.left = `${position.left}px`;
+}
+
 function updateLastPromptPillVisibility(state) {
   if (!state || !state.pillEl) return;
   state.conversationElement = resolveConversationElement(state.scrollTarget, state.conversationElement);
@@ -197,6 +222,9 @@ function updateLastPromptPillVisibility(state) {
   const shouldShow = !isMessageInView(latestMessage, state.scrollTarget)
     && isMessageAboveView(latestMessage, state.scrollTarget);
   state.pillEl.style.display = shouldShow ? "" : "none";
+  if (shouldShow) {
+    positionLastPromptPill(state);
+  }
 }
 
 /**
@@ -279,9 +307,8 @@ export function attachLastPromptPill(parent, scrollElement, conversationElement 
     hideLastPromptPill();
   });
 
-  const pillParent = isDocumentScrollTarget(scrollElement) ? parent : scrollElement;
-  const firstChild = pillParent.firstElementChild || null;
-  pillParent.insertBefore(button, firstChild);
+  const pillParent = document.body || parent;
+  pillParent.appendChild(button);
   lastPromptPillState.pillEl = button;
 
   lastPromptPillState.scrollListener = () => {
@@ -290,6 +317,10 @@ export function attachLastPromptPill(parent, scrollElement, conversationElement 
   };
   lastPromptPillState.scrollListenerTarget = resolveListenerTarget(scrollElement);
   lastPromptPillState.scrollListenerTarget.addEventListener("scroll", lastPromptPillState.scrollListener, { passive: true });
+  lastPromptPillState.resizeListener = () => {
+    updateLastPromptPillVisibility(lastPromptPillState);
+  };
+  window.addEventListener("resize", lastPromptPillState.resizeListener, { passive: true });
 
   if (typeof MutationObserver === "function" && lastPromptPillState.conversationElement) {
     lastPromptPillState.mutationObserver = new MutationObserver(() => {
