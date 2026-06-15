@@ -38,7 +38,7 @@ export function createAppRenderer({
   let renderDebounceTimer = null;
   let isRendering = false;
   let previousRenderRoute = null;
-  const stablePages = new Set(["scheduler", "jobs", "settings", "terminal"]);
+  const stablePages = new Set(["scheduler", "jobs", "terminal"]);
 
   function render() {
     if (isRendering) {

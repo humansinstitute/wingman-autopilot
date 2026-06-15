@@ -323,6 +323,37 @@ function isExplicitActiveOnboardedWorkspace(subscription) {
   return isExplicitOnboardedWorkspace(subscription) && !isRevokedOrDeletedWorkspace(subscription);
 }
 
+function resolveSelectedSubscription(list, selectedSubscriptionId) {
+  if (!Array.isArray(list) || list.length === 0) {
+    return null;
+  }
+  return list.find((subscription) => subscription?.subscriptionId === selectedSubscriptionId) ?? list[0];
+}
+
+function createWorkspaceTabs(list, selectedSubscriptionId, onSelectWorkspace) {
+  const tabList = document.createElement('div');
+  tabList.className = 'wm-settings-tabs__list wm-settings__flight-deck-workspace-tabs';
+  tabList.setAttribute('role', 'tablist');
+  tabList.setAttribute('aria-label', 'Flight Deck workspaces');
+  tabList.style.marginTop = '12px';
+
+  list.forEach((subscription) => {
+    const tab = document.createElement('button');
+    const isActive = subscription?.subscriptionId === selectedSubscriptionId;
+    tab.type = 'button';
+    tab.className = `wm-settings-tabs__tab${isActive ? ' is-active' : ''}`;
+    tab.textContent = resolveWorkspaceTitle(subscription);
+    tab.setAttribute('role', 'tab');
+    tab.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    tab.setAttribute('aria-label', `Show Flight Deck workspace ${resolveWorkspaceTitle(subscription)}`);
+    tab.setAttribute('data-testid', `flight-deck-workspace-tab-${subscription?.subscriptionId || 'unknown'}`);
+    tab.addEventListener('click', () => onSelectWorkspace?.(subscription));
+    tabList.append(tab);
+  });
+
+  return tabList;
+}
+
 function createDiagnosticHistorySection(subscriptions) {
   const diagnostics = document.createElement('section');
   diagnostics.className = 'wm-card';
@@ -368,8 +399,10 @@ export function createFlightDeckConnectionsPanel({
   agents = [],
   chatSessions = [],
   dispatchRoutes = [],
+  selectedSubscriptionId = null,
   onManageDispatch,
   onRefresh,
+  onSelectWorkspace,
 } = {}) {
   const explicitList = Array.isArray(subscriptions) ? subscriptions.filter(isExplicitOnboardedWorkspace) : [];
   const list = explicitList.filter(isExplicitActiveOnboardedWorkspace);
@@ -431,7 +464,17 @@ export function createFlightDeckConnectionsPanel({
     return panel;
   }
 
-  list.forEach((subscription) => {
+  const selectedSubscription = resolveSelectedSubscription(list, selectedSubscriptionId);
+  if (list.length > 1) {
+    panel.append(createWorkspaceTabs(
+      list,
+      selectedSubscription?.subscriptionId ?? null,
+      onSelectWorkspace,
+    ));
+  }
+
+  if (selectedSubscription) {
+    const subscription = selectedSubscription;
     const backendConnection = getBackendConnectionForSubscription(subscription, backendConnections);
     const agent = getAgentForSubscription(subscription, agents);
     const routes = getRoutesForSubscription(subscription, dispatchRoutes);
@@ -486,8 +529,6 @@ export function createFlightDeckConnectionsPanel({
       ['Appended context', String(appendedContextCount)],
     ]));
 
-    card.append(createConnectionDiagnosticsTables(subscription));
-
     if (typeof onManageDispatch === 'function') {
       const manageButton = createButton('Manage Dispatch', `flight-deck-manage-${subscription?.subscriptionId || 'unknown'}`, `Open Agent Dispatch settings for ${workspaceTitle}`);
       manageButton.addEventListener('click', () => onManageDispatch(subscription));
@@ -495,7 +536,7 @@ export function createFlightDeckConnectionsPanel({
     }
 
     panel.append(card);
-  });
+  }
 
   if (diagnosticList.length > 0) {
     panel.append(createDiagnosticHistorySection(diagnosticList));
@@ -504,10 +545,50 @@ export function createFlightDeckConnectionsPanel({
   return panel;
 }
 
+function getSelectedFlightDeckSubscriptionIdFromPath() {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  const match = window.location.pathname.match(/^\/settings\/(?:flightdeck|flight-deck)\/([^/]+)/);
+  return match ? decodeURIComponent(match[1] || '') : null;
+}
+
+function pushSelectedFlightDeckSubscriptionRoute(subscription) {
+  if (typeof window === 'undefined' || !subscription?.subscriptionId) {
+    return;
+  }
+  const path = `/settings/flightdeck/${encodeURIComponent(subscription.subscriptionId)}`;
+  if (window.location.pathname !== path) {
+    window.history.pushState(
+      { route: 'settings', settingsTab: 'flightdeck', subscriptionId: subscription.subscriptionId },
+      '',
+      path,
+    );
+  }
+}
+
 export function createFlightDeckSection({ onManageDispatch } = {}) {
   const container = document.createElement('div');
   container.className = 'wm-settings__flight-deck-shell';
   const statusLine = createStatusLine();
+  let latestData = null;
+
+  function renderPanel(selectedSubscriptionId = getSelectedFlightDeckSubscriptionIdFromPath()) {
+    if (!latestData) {
+      return;
+    }
+    const panel = createFlightDeckConnectionsPanel({
+      ...latestData,
+      selectedSubscriptionId,
+      onManageDispatch,
+      onRefresh: refresh,
+      onSelectWorkspace: (subscription) => {
+        pushSelectedFlightDeckSubscriptionRoute(subscription);
+        renderPanel(subscription?.subscriptionId ?? null);
+      },
+    });
+    container.replaceChildren(panel, statusLine);
+  }
 
   async function refresh() {
     statusLine.textContent = 'Loading Flight Deck connections...';
@@ -520,16 +601,14 @@ export function createFlightDeckSection({ onManageDispatch } = {}) {
         listAgentChatDispatchRoutes().catch(() => []),
       ]);
       const allSessions = Array.isArray(sessionPayload?.sessions) ? sessionPayload.sessions : [];
-      const panel = createFlightDeckConnectionsPanel({
+      latestData = {
         subscriptions,
         backendConnections,
         agents: Array.isArray(agentPayload?.agents) ? agentPayload.agents : [],
         chatSessions: filterFlightDeckSessions(allSessions),
         dispatchRoutes,
-        onManageDispatch,
-        onRefresh: refresh,
-      });
-      container.replaceChildren(panel, statusLine);
+      };
+      renderPanel();
       const onboardedCount = Array.isArray(subscriptions) ? subscriptions.filter(isExplicitActiveOnboardedWorkspace).length : 0;
       statusLine.textContent = `Flight Deck onboarded workspaces refreshed: ${onboardedCount} workspace${onboardedCount === 1 ? '' : 's'}.`;
     } catch (error) {

@@ -189,16 +189,15 @@ describe("flight deck settings panel", () => {
       expect(text).toContain("Visible scopes");
       expect(text).toContain("Visible channels");
       expect(text).toContain("Appended context");
-      expect(text).toContain("SSE Events");
-      expect(text).toContain("flightdeck_pg.message.created");
-      expect(text).toContain("channel_id: channel-bugs");
-      expect(text).toContain("Dispatches");
-      expect(text).toContain("chat_pipeline_dispatch");
-      expect(text).toContain("Last Routing Result");
-      expect(text).toContain("chat_pipeline_dispatched");
-      expect(queryByTestId(panel, "flight-deck-sse-events-sub-flightdeck-row-0")).not.toBeNull();
-      expect(queryByTestId(panel, "flight-deck-dispatch-events-sub-flightdeck-row-0")).not.toBeNull();
-      expect(queryByTestId(panel, "flight-deck-routing-result-sub-flightdeck-row-0")).not.toBeNull();
+      expect(text).not.toContain("SSE Events");
+      expect(text).not.toContain("flightdeck_pg.message.created");
+      expect(text).not.toContain("Dispatches");
+      expect(text).not.toContain("chat_pipeline_dispatch");
+      expect(text).not.toContain("Last Routing Result");
+      expect(text).not.toContain("chat_pipeline_dispatched");
+      expect(queryByTestId(panel, "flight-deck-sse-events-sub-flightdeck-row-0")).toBeNull();
+      expect(queryByTestId(panel, "flight-deck-dispatch-events-sub-flightdeck-row-0")).toBeNull();
+      expect(queryByTestId(panel, "flight-deck-routing-result-sub-flightdeck-row-0")).toBeNull();
 
       queryByTestId(panel, "flight-deck-manage-sub-flightdeck").click();
       expect(managedSubscriptionId).toBe("sub-flightdeck");
@@ -237,6 +236,63 @@ describe("flight deck settings panel", () => {
       expect(text).toContain("No kind 33357 workspace onboarding events");
       expect(text).not.toContain("manual.example");
       expect(text).not.toContain("agent-connect.example");
+    });
+  });
+
+  test("tabs multiple onboarded workspaces and renders only the selected one", () => {
+    withFakeDocument(() => {
+      let selectedSubscriptionId = null;
+      const panel = createFlightDeckConnectionsPanel({
+        selectedSubscriptionId: "sub-wingmen",
+        subscriptions: [
+          {
+            subscriptionId: "sub-thisworks",
+            backendBaseUrl: "https://tower.example",
+            workspaceOwnerNpub: "npub1thisworks",
+            sourceAppNpub: "npub1flightdeckapp",
+            botNpub: "npub1agentbot",
+            onboardingSource: "nostr_33357",
+            healthStatus: "healthy",
+            sseStatus: "connected",
+            profileWorkspace: {
+              workspace: {
+                workspaceTitle: "This Works",
+                relayOnboardingStatus: "ready",
+              },
+            },
+          },
+          {
+            subscriptionId: "sub-wingmen",
+            backendBaseUrl: "https://tower.example",
+            workspaceOwnerNpub: "npub1wingmen",
+            sourceAppNpub: "npub1flightdeckapp",
+            botNpub: "npub1agentbot",
+            onboardingSource: "nostr_33357",
+            healthStatus: "healthy",
+            sseStatus: "connected",
+            profileWorkspace: {
+              workspace: {
+                workspaceTitle: "Wingmen",
+                relayOnboardingStatus: "ready",
+              },
+            },
+          },
+        ],
+        onSelectWorkspace: (subscription) => {
+          selectedSubscriptionId = subscription?.subscriptionId ?? null;
+        },
+      });
+
+      const text = collectText(panel);
+      expect(queryByTestId(panel, "flight-deck-workspace-tab-sub-thisworks")).not.toBeNull();
+      expect(queryByTestId(panel, "flight-deck-workspace-tab-sub-wingmen")).not.toBeNull();
+      expect(queryByTestId(panel, "flight-deck-connection-sub-thisworks")).toBeNull();
+      expect(queryByTestId(panel, "flight-deck-connection-sub-wingmen")).not.toBeNull();
+      expect(text).toContain("This Works");
+      expect(text).toContain("Wingmen");
+
+      queryByTestId(panel, "flight-deck-workspace-tab-sub-thisworks").click();
+      expect(selectedSubscriptionId).toBe("sub-thisworks");
     });
   });
 
