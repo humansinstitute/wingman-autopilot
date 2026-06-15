@@ -279,8 +279,8 @@ export function showRunningPipelinesModal({ showToast, agentOutputFormattingEnab
     }
     try {
       selectedRunDetail = await fetchPipelineRunDetail(selectedRunId, {
-        includeRunPayload: true,
-        includeStepPayload: true,
+        includeRunPayload: false,
+        includeStepPayload: false,
         forceFresh,
       });
       if (selectedStepDetail) {

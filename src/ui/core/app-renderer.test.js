@@ -6,6 +6,7 @@ describe("shouldFullRenderOnSessionUpdate", () => {
   test("skips full rerenders for stable long-lived routes", () => {
     expect(shouldFullRenderOnSessionUpdate("files")).toBe(false);
     expect(shouldFullRenderOnSessionUpdate("live")).toBe(false);
+    expect(shouldFullRenderOnSessionUpdate("pipelines")).toBe(false);
     expect(shouldFullRenderOnSessionUpdate("settings")).toBe(false);
     expect(shouldFullRenderOnSessionUpdate("terminal")).toBe(false);
   });

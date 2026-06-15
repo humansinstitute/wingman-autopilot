@@ -5,7 +5,7 @@ import {
 } from "./auth-route-guard.js";
 
 export function shouldFullRenderOnSessionUpdate(route) {
-  return route !== "files" && route !== "live" && route !== "settings" && route !== "terminal";
+  return route !== "files" && route !== "live" && route !== "settings" && route !== "pipelines" && route !== "terminal";
 }
 
 export function createAppRenderer({
@@ -38,7 +38,8 @@ export function createAppRenderer({
   let renderDebounceTimer = null;
   let isRendering = false;
   let previousRenderRoute = null;
-  const stablePages = new Set(["scheduler", "jobs", "terminal"]);
+  let previousRenderPath = null;
+  const stablePages = new Set(["scheduler", "jobs", "pipelines", "terminal"]);
 
   function render() {
     if (isRendering) {
@@ -96,14 +97,17 @@ export function createAppRenderer({
         }
 
         const resolvedRoute = authPending ? currentRoute : getCurrentRoute();
+        const currentPath = window.location.pathname;
+        const pathChanged = previousRenderPath !== currentPath;
         const focusSnapshot = captureFocusSnapshot();
-        if (!routeChanged && stablePages.has(resolvedRoute)) {
+        if (!routeChanged && !pathChanged && stablePages.has(resolvedRoute)) {
           setActiveNav();
           syncMenuTabs();
           updateAgentStatusIndicators();
           updateDocumentTitle();
           return;
         }
+        previousRenderPath = currentPath;
 
         appRoot.innerHTML = "";
         const view = authPending ? renderAuthPendingView() : renderRouteView(resolvedRoute);

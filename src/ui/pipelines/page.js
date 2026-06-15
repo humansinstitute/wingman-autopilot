@@ -52,9 +52,9 @@ export function initPipelinesPage({ showToast, isFeatureEnabledForViewer = () =>
   function renderPage() {
     const page = document.createElement("div");
     page.className = "wm-page wm-pipelines-page";
-    state.loading = true;
+    state.loading = !isRouteLoaded(getCurrentRoute());
     page.append(renderShell(page));
-    void loadAll({ force: true }).then(() => hydrateRouteDetail()).then(() => updatePage(page)).catch((error) => renderError(page, error));
+    void loadAll().then(() => hydrateRouteDetail()).then(() => updatePage(page)).catch((error) => renderError(page, error));
     return page;
   }
 
@@ -77,6 +77,16 @@ export function initPipelinesPage({ showToast, isFeatureEnabledForViewer = () =>
       tasks.push(loadDefinitions(options));
     }
     await Promise.all(tasks);
+  }
+
+  function isRouteLoaded(route) {
+    if (!loaded.root) return false;
+    if (route.section === "runs") return loaded.runs && (!route.id || state.selectedRun?.run?.id === route.id);
+    if (route.section === "definitions") return loaded.definitions;
+    if (route.section === "functions") {
+      return loaded.functions && (!route.id || state.selectedFunctionDetail?.function?.name === route.id);
+    }
+    return true;
   }
 
   async function loadRoot({ force = false } = {}) {
@@ -232,8 +242,8 @@ export function initPipelinesPage({ showToast, isFeatureEnabledForViewer = () =>
       (runChanged || runIsActive);
     if (shouldRefreshRun) {
       state.selectedRun = await fetchPipelineRun(route.id, {
-        includeRunPayload: true,
-        includeStepPayload: true,
+        includeRunPayload: false,
+        includeStepPayload: false,
         forceFresh: runIsActive,
       });
       if (runChanged) {
