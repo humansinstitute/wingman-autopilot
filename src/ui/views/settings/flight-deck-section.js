@@ -306,6 +306,114 @@ function countAppendedContext(subscription) {
   return Array.isArray(contexts) ? contexts.length : 0;
 }
 
+const FLIGHT_DECK_DISPATCH_ROWS = [
+  {
+    id: 'chat',
+    label: 'Chat',
+    changeType: 'Chat messages',
+    triggerKind: 'chat',
+    capability: 'chat_intercept',
+  },
+  {
+    id: 'docs',
+    label: 'Docs',
+    changeType: 'Document comments',
+    triggerKind: 'comment',
+    capability: 'comment_dispatch',
+  },
+  {
+    id: 'tasks',
+    label: 'Tasks',
+    changeType: 'Task assignments and comments',
+    triggerKind: 'task',
+    capability: 'task_dispatch',
+  },
+];
+
+function findDispatchRoute(routes, config) {
+  return Array.isArray(routes)
+    ? routes.find((route) => (
+      route?.triggerKind === config.triggerKind
+      && route?.capability === config.capability
+    )) ?? null
+    : null;
+}
+
+function getSupportedDispatchRoutes(routes) {
+  return FLIGHT_DECK_DISPATCH_ROWS
+    .map((config) => findDispatchRoute(routes, config))
+    .filter(Boolean);
+}
+
+function createDispatchStatusCell(route) {
+  const cell = document.createElement('td');
+  cell.style.cssText = 'padding:10px;border-top:1px solid rgba(255,255,255,0.06);vertical-align:top;';
+  const enabled = Boolean(route && route.enabled !== false);
+  cell.append(createTonePill(enabled ? 'Enabled' : 'Disabled', enabled ? 'success' : 'muted'));
+  return cell;
+}
+
+function createFlightDeckDispatchTable(routes) {
+  const section = document.createElement('section');
+  section.style.cssText = 'margin-top:16px;';
+  section.setAttribute('data-testid', 'flight-deck-dispatch-table');
+
+  const heading = document.createElement('h4');
+  heading.textContent = 'Default Dispatch';
+  heading.style.cssText = 'margin:0 0 8px;font-size:0.98rem;';
+
+  const note = document.createElement('p');
+  note.className = 'wm-settings__port-note';
+  note.textContent = 'Default workspace dispatch for Flight Deck changes. Channel overrides will be managed separately.';
+
+  const wrapper = document.createElement('div');
+  wrapper.style.cssText = 'overflow:auto;border:1px solid rgba(255,255,255,0.08);border-radius:8px;margin-top:10px;';
+
+  const table = document.createElement('table');
+  table.style.cssText = 'width:100%;border-collapse:collapse;font-size:0.9rem;min-width:620px;';
+
+  const thead = document.createElement('thead');
+  const headerRow = document.createElement('tr');
+  ['Area', 'Flight Deck change', 'Status', 'Default pipeline'].forEach((label) => {
+    const th = document.createElement('th');
+    th.scope = 'col';
+    th.textContent = label;
+    th.style.cssText = 'text-align:left;padding:10px;border-bottom:1px solid rgba(255,255,255,0.08);color:var(--muted);font-weight:650;';
+    headerRow.append(th);
+  });
+  thead.append(headerRow);
+
+  const tbody = document.createElement('tbody');
+  FLIGHT_DECK_DISPATCH_ROWS.forEach((config) => {
+    const route = findDispatchRoute(routes, config);
+    const row = document.createElement('tr');
+    row.setAttribute('data-testid', `flight-deck-dispatch-row-${config.id}`);
+
+    const area = document.createElement('td');
+    area.style.cssText = 'padding:10px;border-top:1px solid rgba(255,255,255,0.06);font-weight:650;vertical-align:top;';
+    area.textContent = config.label;
+
+    const change = document.createElement('td');
+    change.style.cssText = 'padding:10px;border-top:1px solid rgba(255,255,255,0.06);vertical-align:top;';
+    change.textContent = config.changeType;
+
+    const status = createDispatchStatusCell(route);
+
+    const pipeline = document.createElement('td');
+    pipeline.style.cssText = 'padding:10px;border-top:1px solid rgba(255,255,255,0.06);vertical-align:top;word-break:break-word;';
+    pipeline.textContent = route?.pipelineDefinitionId || 'Not configured';
+    pipeline.title = pipeline.textContent;
+
+    row.append(area, change, status, pipeline);
+    tbody.append(row);
+  });
+
+  table.append(thead, tbody);
+  wrapper.append(table);
+  section.append(heading, note, wrapper);
+  return section;
+}
+
 function isExplicitOnboardedWorkspace(subscription) {
   return subscription?.onboardingSource === 'nostr_33357';
 }
@@ -426,7 +534,8 @@ export function createFlightDeckConnectionsPanel({
     { label: 'Diagnostics', value: diagnosticList.length },
     { label: 'Default Dispatch', value: list.filter((subscription) => {
       const agent = getAgentForSubscription(subscription, agents);
-      return Boolean(agent && countEnabledRoutes(getRoutesForSubscription(subscription, dispatchRoutes)) > 0);
+      const supportedRoutes = getSupportedDispatchRoutes(getRoutesForSubscription(subscription, dispatchRoutes));
+      return Boolean(agent && countEnabledRoutes(supportedRoutes) > 0);
     }).length },
     { label: 'Active Sessions', value: Array.isArray(chatSessions) ? chatSessions.length : 0 },
   ]));
@@ -478,7 +587,8 @@ export function createFlightDeckConnectionsPanel({
     const backendConnection = getBackendConnectionForSubscription(subscription, backendConnections);
     const agent = getAgentForSubscription(subscription, agents);
     const routes = getRoutesForSubscription(subscription, dispatchRoutes);
-    const enabledRoutes = countEnabledRoutes(routes);
+    const supportedRoutes = getSupportedDispatchRoutes(routes);
+    const enabledRoutes = countEnabledRoutes(supportedRoutes);
     const dispatchReady = Boolean(agent && enabledRoutes > 0);
     const targets = countVisibleTargets(subscription);
     const appendedContextCount = countAppendedContext(subscription);
@@ -523,11 +633,13 @@ export function createFlightDeckConnectionsPanel({
       ['Workspace member owner', shortenIdentifier(subscription?.workspaceOwnerNpub, { head: 20, tail: 10 })],
       ['Tower service', subscription?.backendBaseUrl || profileWorkspace?.towerUrl || 'unknown'],
       ['Connection source', 'kind 33357'],
-      ['Default dispatch routes', `${enabledRoutes}/${routes.length} enabled`],
+      ['Default dispatch routes', `${enabledRoutes}/${supportedRoutes.length} enabled`],
       ['Visible scopes', String(targets.scopes)],
       ['Visible channels', String(targets.channels)],
       ['Appended context', String(appendedContextCount)],
     ]));
+
+    card.append(createFlightDeckDispatchTable(routes));
 
     if (typeof onManageDispatch === 'function') {
       const manageButton = createButton('Manage Dispatch', `flight-deck-manage-${subscription?.subscriptionId || 'unknown'}`, `Open Agent Dispatch settings for ${workspaceTitle}`);

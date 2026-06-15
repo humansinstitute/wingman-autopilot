@@ -161,8 +161,38 @@ describe("flight deck settings panel", () => {
           },
         ],
         dispatchRoutes: [
-          { routeId: "route-on", subscriptionId: "sub-flightdeck", enabled: true },
-          { routeId: "route-off", subscriptionId: "sub-flightdeck", enabled: false },
+          {
+            routeId: "route-chat",
+            subscriptionId: "sub-flightdeck",
+            triggerKind: "chat",
+            capability: "chat_intercept",
+            pipelineDefinitionId: "fd-agent-dispatch-chat",
+            enabled: true,
+          },
+          {
+            routeId: "route-docs",
+            subscriptionId: "sub-flightdeck",
+            triggerKind: "comment",
+            capability: "comment_dispatch",
+            pipelineDefinitionId: "fd-agent-dispatch-comment-response",
+            enabled: true,
+          },
+          {
+            routeId: "route-task",
+            subscriptionId: "sub-flightdeck",
+            triggerKind: "task",
+            capability: "task_dispatch",
+            pipelineDefinitionId: "fd-agent-dispatch-task-response",
+            enabled: false,
+          },
+          {
+            routeId: "route-flow",
+            subscriptionId: "sub-flightdeck",
+            triggerKind: "flow",
+            capability: "flow_dispatch",
+            pipelineDefinitionId: "legacy-flow-pipeline",
+            enabled: true,
+          },
         ],
         chatSessions: [{ id: "session-1" }],
         onManageDispatch: (subscription) => {
@@ -178,7 +208,7 @@ describe("flight deck settings panel", () => {
       expect(text).toContain("Onboarding Ready");
       expect(text).toContain("Yoke Synced");
       expect(text).toContain("Default Dispatch Ready");
-      expect(text).toContain("1/2 enabled");
+      expect(text).toContain("2/3 enabled");
       expect(text).toContain("Workspace id");
       expect(text).toContain("workspace-swipeback");
       expect(text).toContain("Workspace service");
@@ -189,6 +219,20 @@ describe("flight deck settings panel", () => {
       expect(text).toContain("Visible scopes");
       expect(text).toContain("Visible channels");
       expect(text).toContain("Appended context");
+      expect(text).toContain("Default Dispatch");
+      expect(text).toContain("Chat");
+      expect(text).toContain("Docs");
+      expect(text).toContain("Tasks");
+      expect(text).toContain("Chat messages");
+      expect(text).toContain("Document comments");
+      expect(text).toContain("Task assignments and comments");
+      expect(text).toContain("fd-agent-dispatch-chat");
+      expect(text).toContain("fd-agent-dispatch-comment-response");
+      expect(text).toContain("fd-agent-dispatch-task-response");
+      expect(text).not.toContain("legacy-flow-pipeline");
+      expect(queryByTestId(panel, "flight-deck-dispatch-row-chat")).not.toBeNull();
+      expect(queryByTestId(panel, "flight-deck-dispatch-row-docs")).not.toBeNull();
+      expect(queryByTestId(panel, "flight-deck-dispatch-row-tasks")).not.toBeNull();
       expect(text).not.toContain("SSE Events");
       expect(text).not.toContain("flightdeck_pg.message.created");
       expect(text).not.toContain("Dispatches");
@@ -278,6 +322,24 @@ describe("flight deck settings panel", () => {
             },
           },
         ],
+        dispatchRoutes: [
+          {
+            routeId: "route-thisworks-chat",
+            subscriptionId: "sub-thisworks",
+            triggerKind: "chat",
+            capability: "chat_intercept",
+            pipelineDefinitionId: "thisworks-chat-pipeline",
+            enabled: true,
+          },
+          {
+            routeId: "route-wingmen-chat",
+            subscriptionId: "sub-wingmen",
+            triggerKind: "chat",
+            capability: "chat_intercept",
+            pipelineDefinitionId: "wingmen-chat-pipeline",
+            enabled: true,
+          },
+        ],
         onSelectWorkspace: (subscription) => {
           selectedSubscriptionId = subscription?.subscriptionId ?? null;
         },
@@ -290,6 +352,8 @@ describe("flight deck settings panel", () => {
       expect(queryByTestId(panel, "flight-deck-connection-sub-wingmen")).not.toBeNull();
       expect(text).toContain("This Works");
       expect(text).toContain("Wingmen");
+      expect(text).toContain("wingmen-chat-pipeline");
+      expect(text).not.toContain("thisworks-chat-pipeline");
 
       queryByTestId(panel, "flight-deck-workspace-tab-sub-thisworks").click();
       expect(selectedSubscriptionId).toBe("sub-thisworks");
