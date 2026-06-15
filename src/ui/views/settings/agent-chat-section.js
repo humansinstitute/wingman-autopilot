@@ -1,19 +1,13 @@
 import {
   importAgentConnectPackage,
   listAgentChatBackendConnections,
-  listAgentChatDispatchRoutes,
   listAgentChatAgents,
   listAgentChatSubscriptions,
   saveAgentChatAgent,
   saveAgentChatBackendConnectionAvailability,
-  saveAgentChatDispatchRoute,
   saveAgentChatSubscription,
 } from '../../services/agent-chat.js';
-import { fetchPipelineDefinitions } from '../../pipelines/api.js';
-import {
-  createConfiguredDispatchesPanel,
-  createStatusLine,
-} from './agent-chat-shared-ui.js';
+import { createStatusLine } from './agent-chat-shared-ui.js';
 import { createAgentDispatchSetupCards } from './agent-chat-setup-cards.js';
 import { createAgentConnectImportModal } from './agent-chat-connect-import-card.js';
 import {
@@ -23,18 +17,15 @@ import {
 import {
   buildAgentBindingInput,
   buildBackendSubscriptionInput,
-  filterDispatchRoutesForSubscription,
   getAgentForSubscription,
   getSubscriptionById,
   resolveSelectedSubscriptionId,
 } from './agent-chat-section-state.js';
 
 async function loadOperatorState(selectedSubscriptionId = null) {
-  const [subscriptions, agentPayload, definitionPayload, dispatchRoutes, backendConnections] = await Promise.all([
+  const [subscriptions, agentPayload, backendConnections] = await Promise.all([
     listAgentChatSubscriptions(),
     listAgentChatAgents(),
-    fetchPipelineDefinitions().catch(() => ({ definitions: [] })),
-    listAgentChatDispatchRoutes().catch(() => []),
     listAgentChatBackendConnections().catch(() => []),
   ]);
   const onboardedSubscriptions = Array.isArray(subscriptions)
@@ -47,11 +38,8 @@ async function loadOperatorState(selectedSubscriptionId = null) {
     subscriptions: onboardedSubscriptions,
     agents: Array.isArray(agentPayload?.agents) ? agentPayload.agents : [],
     permissions: subscriptionPermissions || agentPayload?.permissions || { shared: false, canManage: true },
-    defaults: agentPayload?.defaults && typeof agentPayload.defaults === 'object' ? agentPayload.defaults : {},
-    dispatchRoutes: filterDispatchRoutesForSubscription(dispatchRoutes, effectiveSelectedSubscriptionId),
     selectedSubscription,
     selectedSubscriptionId: effectiveSelectedSubscriptionId,
-    pipelineDefinitions: Array.isArray(definitionPayload?.definitions) ? definitionPayload.definitions : [],
     backendConnections: Array.isArray(backendConnections) ? backendConnections : [],
   };
 }
@@ -104,13 +92,6 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
   const container = document.createElement('div');
   container.className = 'wm-settings__agent-chat';
   let selectedSubscriptionId = null;
-  let promptDefaults = {
-    chatPromptTemplate: '',
-    taskPromptTemplate: '',
-    flowDispatchPromptTemplate: '',
-    taskReviewPromptTemplate: '',
-    approvalDispatchPromptTemplate: '',
-  };
   if (standalone) {
     const heading = document.createElement('h2');
     heading.textContent = 'Agent Dispatch';
@@ -124,7 +105,6 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
   const setupCardsContainer = document.createElement('div');
   setupCardsContainer.setAttribute('data-testid', 'agent-chat-setup-cards');
   const workspaceSelectorContainer = document.createElement('div');
-  const configuredDispatchesContainer = document.createElement('div');
   const subscriptionEditor = createSubscriptionEditorCard();
   const connectImportModal = createAgentConnectImportModal({
     onImport: async (input) => {
@@ -158,38 +138,20 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
     workspaceSelectorContainer,
     setupCardsContainer,
     subscriptionEditor.card,
-    configuredDispatchesContainer,
   );
   async function refreshList() {
     setupCardsContainer.replaceChildren();
     workspaceSelectorContainer.replaceChildren();
-    configuredDispatchesContainer.replaceChildren();
 
     try {
       const {
         subscriptions,
         agents,
         permissions,
-        defaults,
-        dispatchRoutes,
         selectedSubscription,
         selectedSubscriptionId: effectiveSelectedSubscriptionId,
-        pipelineDefinitions,
         backendConnections,
       } = await loadOperatorState(selectedSubscriptionId);
-      promptDefaults = {
-        chatPromptTemplate: typeof defaults.chatPromptTemplate === 'string' ? defaults.chatPromptTemplate : promptDefaults.chatPromptTemplate,
-        taskPromptTemplate: typeof defaults.taskPromptTemplate === 'string' ? defaults.taskPromptTemplate : promptDefaults.taskPromptTemplate,
-        flowDispatchPromptTemplate: typeof defaults.flowDispatchPromptTemplate === 'string'
-          ? defaults.flowDispatchPromptTemplate
-          : promptDefaults.flowDispatchPromptTemplate,
-        taskReviewPromptTemplate: typeof defaults.taskReviewPromptTemplate === 'string'
-          ? defaults.taskReviewPromptTemplate
-          : promptDefaults.taskReviewPromptTemplate,
-        approvalDispatchPromptTemplate: typeof defaults.approvalDispatchPromptTemplate === 'string'
-          ? defaults.approvalDispatchPromptTemplate
-          : promptDefaults.approvalDispatchPromptTemplate,
-      };
       selectedSubscriptionId = effectiveSelectedSubscriptionId;
       const selectedAgent = getAgentForSubscription(agents, selectedSubscription);
       workspaceSelectorContainer.append(createWorkspaceSelector(
@@ -228,25 +190,6 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
         onCreateAgent: () => agentNameModal.open(selectedSubscription?.profileWorkspace?.workspace?.workspaceTitle || ''),
         onEditAgent: null,
         onRefresh: refreshList,
-      }));
-      configuredDispatchesContainer.append(createConfiguredDispatchesPanel(selectedAgent, promptDefaults, {
-        subscription: selectedSubscription,
-        dispatchRoutes,
-        pipelineDefinitions,
-        onCreateAgent: null,
-        onEditAgent: null,
-        onRemoveAgent: null,
-        onSaveRoute: permissions?.canManage === false ? null : async (input) => {
-          const route = await saveAgentChatDispatchRoute(input);
-          await refreshList();
-          return route;
-        },
-        onEditChatTemplate: null,
-        onEditTaskTemplate: null,
-        onEditFlowDispatchTemplate: null,
-        onEditTaskReviewTemplate: null,
-        onEditApprovalDispatchTemplate: null,
-        onToggleCapability: null,
       }));
     } catch (error) {
       statusLine.textContent = error instanceof Error ? error.message : 'Failed to load Agent Dispatch state.';

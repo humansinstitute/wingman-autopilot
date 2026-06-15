@@ -3,9 +3,9 @@
 ## Agent Dispatch Profile Workspace Cleanup
 
 The Agents settings UI no longer exposes the older Profile Workspace Settings
-panel. Flight Deck workspace connection status now belongs on
-`/settings/flightdeck`, while `/settings/agents` keeps the active Agent Dispatch
-setup controls.
+panel or the configured capability/pipeline dispatch cards. Flight Deck
+workspace connection status now belongs on `/settings/flightdeck`, while
+`/settings/agents` keeps the active Agent Dispatch setup controls.
 
 The UI removal is complete, but the related runtime and storage code should not
 be deleted until the current dispatch path is confirmed to no longer depend on
@@ -33,6 +33,15 @@ Older code elements to review:
 - `src/ui/views/settings/agent-chat-profile-workspace-card.js`
   - UI component is no longer mounted from the Agents tab and can be deleted
     after any remaining imports/tests are removed.
+- `src/ui/views/settings/agent-chat-shared-ui.js`
+  - `createConfiguredDispatchesPanel` and related capability route controls are
+    no longer mounted from the Agents tab.
+  - The component still has isolated tests and should be deleted only after the
+    replacement Agent Dispatch state design is in place.
+- `src/ui/services/agent-chat.js`
+  - Dispatch route client helpers are no longer used by the Agents tab after the
+    old capability/pipeline card removal, but may still be used by other
+    settings or future redesign code.
 
 Before removing the logic, confirm and/or migrate:
 
@@ -49,10 +58,12 @@ Before removing the logic, confirm and/or migrate:
 6. Default dispatch route seeding from AgentConnect capability defaults remains
    covered by the current dispatch route store, without profile workspace
    policy fallback.
-7. Tests around `AgentProfilePolicyStore`, profile workspace serialization, and
-   profile-based dispatch decisions are either removed or rewritten around the
-   replacement path.
-8. SQLite migrations/tables can be left as inert historical data, or a deliberate
+7. Existing dispatch routes and pipeline definition selection have a replacement
+   state surface, or the runtime no longer supports editing them locally.
+8. Tests around `AgentProfilePolicyStore`, profile workspace serialization,
+   configured dispatch cards, and profile-based dispatch decisions are either
+   removed or rewritten around the replacement path.
+9. SQLite migrations/tables can be left as inert historical data, or a deliberate
    data migration/drop plan is created for deployments that already have these
    tables.
 
