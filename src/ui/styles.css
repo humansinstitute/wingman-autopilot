@@ -13829,6 +13829,11 @@ textarea.wm-input {
   letter-spacing: 0;
 }
 
+.wm-terminal-auth input::placeholder {
+  color: var(--text-muted);
+  opacity: 1;
+}
+
 .wm-terminal-surface {
   min-height: 360px;
   height: 100%;

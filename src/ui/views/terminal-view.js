@@ -74,7 +74,7 @@ export function initTerminalView(deps) {
     pinInput.autocomplete = "one-time-code";
     pinInput.maxLength = 5;
     pinInput.pattern = "\\d{5}";
-    pinInput.placeholder = "44444";
+    pinInput.placeholder = "*****";
     pinInput.setAttribute("aria-label", "Terminal PIN");
     pinInput.dataset.testid = "terminal-pin-input";
     const connectButton = document.createElement("button");
