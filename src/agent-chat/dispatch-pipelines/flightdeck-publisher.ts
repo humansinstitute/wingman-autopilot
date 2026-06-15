@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
 import type { DeclarativeFunction, DeclarativePipeline, DeclarativeStep } from '../../pipelines/declarative';
 import type { JsonObject } from '../../pipelines/pipeline-store';
@@ -65,6 +67,7 @@ const CHAT_REPLY_TTS_DEFAULT_VOICE = 'af_heart';
 const CHAT_REPLY_TTS_DEFAULT_FORMAT = 'mp3';
 const CHAT_REPLY_TTS_DEFAULT_SUMMARY_MODEL = 'openai/gpt-4o-mini';
 const CHAT_REPLY_TTS_MAX_TEXT_LENGTH = 8000;
+const IMPLEMENTATION_REVIEW_DOC_SNAPSHOT_DIR = '/Users/mini/.wingmen/pipelines/shared/artifacts/implementation-review-docs';
 
 export function pipelineNeedsFlightDeckPublisher(pipeline: DeclarativePipeline): boolean {
   return pipeline.steps.some(stepNeedsFlightDeckPublisher);
@@ -1803,9 +1806,10 @@ export function createDispatchImplementationReviewTaskEnsurer(
         ?? getText(input.designDocumentUnavailableReason)
         ?? (designDocument?.status === 'failed' ? getText(designDocument.error) : undefined),
       ...(designDocument ? { designDocument } : {}),
+      designDocumentLocalPath: getText(designDocument?.localPath),
       designDocumentAccessInstructions: [
         designDocument?.status === 'loaded'
-          ? 'Use workPlan.designDocument.body as the design baseline; refresh with flightdeck_doc_get if current state matters.'
+          ? 'Use workPlan.designDocument.localPath as the design baseline; refresh with flightdeck_doc_get only if current state matters.'
           : 'If the design reference is a Flight Deck document, read it with the flightdeck_doc_get helper.',
         'Do not run Yoke or sync a Yoke workspace to read Flight Deck PG documents.',
       ].join(' '),
@@ -1910,13 +1914,23 @@ async function hydrateImplementationDesignDocument(
     });
     const document = objectValue(result.doc ?? result.document);
     const body = decodeFlightDeckPgDocumentBody(result);
+    const localPath = body
+      ? await writeImplementationDesignDocumentSnapshot({
+        documentId,
+        title: getText(document.title),
+        rowVersion: document.row_version ?? document.rowVersion ?? null,
+        reference,
+        body,
+      })
+      : null;
     return {
       status: 'loaded',
       id: documentId,
       title: getText(document.title),
       rowVersion: document.row_version ?? document.rowVersion ?? null,
       reference,
-      body: body ? truncateBlock(body, 30000) : '',
+      localPath,
+      bodyExcerpt: body ? truncateBlock(body, 4000) : '',
       bodyTruncated: Boolean(body && body.length > 30000),
     };
   } catch (error) {
@@ -1938,6 +1952,39 @@ function extractFlightDeckDocumentId(reference: string): string | null {
   if (docPath?.[1]) return docPath[1];
   const bare = reference.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
   return bare?.[0] ?? null;
+}
+
+async function writeImplementationDesignDocumentSnapshot(input: {
+  documentId: string;
+  title: string | null;
+  rowVersion: unknown;
+  reference: string;
+  body: string;
+}): Promise<string> {
+  await mkdir(IMPLEMENTATION_REVIEW_DOC_SNAPSHOT_DIR, { recursive: true });
+  const safeTitle = (input.title ?? 'design-document')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60)
+    || 'design-document';
+  const filePath = join(
+    IMPLEMENTATION_REVIEW_DOC_SNAPSHOT_DIR,
+    `${input.documentId}.${safeTitle}.md`,
+  );
+  const metadata = [
+    '<!--',
+    'Local snapshot of Flight Deck design document for software-implementation-review-loop.',
+    `Document ID: ${input.documentId}`,
+    input.title ? `Title: ${input.title}` : null,
+    input.rowVersion !== null && input.rowVersion !== undefined ? `Row version: ${String(input.rowVersion)}` : null,
+    `Source: ${input.reference}`,
+    `Snapshot created: ${new Date().toISOString()}`,
+    '-->',
+    '',
+  ].filter((line): line is string => line !== null);
+  await writeFile(filePath, `${metadata.join('\n')}${input.body.trim()}\n`, 'utf8');
+  return filePath;
 }
 
 export function createDispatchTaskStateUpdater(

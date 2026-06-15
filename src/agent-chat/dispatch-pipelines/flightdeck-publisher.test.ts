@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -2088,6 +2089,7 @@ describe('dispatch pipeline Flight Deck publisher', () => {
       documentId: '76ebf6ac-91ff-47e2-af36-b99d47a10d57',
       includeBody: true,
     });
+    const localPath = String((createdTask as any).workPlan.designDocument.localPath);
     expect(createdTask).toMatchObject({
       workPlan: {
         designDocumentUrl: '@[Design for Autopilot Overview](mention:doc:76ebf6ac-91ff-47e2-af36-b99d47a10d57)',
@@ -2095,11 +2097,15 @@ describe('dispatch pipeline Flight Deck publisher', () => {
           status: 'loaded',
           id: '76ebf6ac-91ff-47e2-af36-b99d47a10d57',
           title: 'Design for Autopilot Overview',
-          body: expect.stringContaining('Build the Autopilot overview screen.'),
+          localPath: expect.stringContaining('76ebf6ac-91ff-47e2-af36-b99d47a10d57'),
+          bodyExcerpt: expect.stringContaining('Build the Autopilot overview screen.'),
         },
       },
     });
-    expect(String((createdTask as any).workPlan.designDocumentAccessInstructions)).toContain('Do not run Yoke');
+    const snapshot = await readFile(localPath, 'utf8');
+    expect(snapshot).toContain('Build the Autopilot overview screen.');
+    expect(String((createdTask as any).workPlan.designDocumentLocalPath)).toBe(localPath);
+    expect(String((createdTask as any).workPlan.designDocumentAccessInstructions)).toContain('localPath');
   });
 
   test('implementation review closeout leaves task in progress when manager review is not done', async () => {
