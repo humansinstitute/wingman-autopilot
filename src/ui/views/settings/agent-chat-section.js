@@ -1,23 +1,16 @@
 import {
   importAgentConnectPackage,
-  deleteAgentChatSubscription,
   listAgentChatBackendConnections,
   listAgentChatDispatchRoutes,
   listAgentChatAgents,
   listAgentChatSubscriptions,
-  runAgentChatSubscriptionAction,
   saveAgentChatAgent,
   saveAgentChatBackendConnectionAvailability,
   saveAgentChatDispatchRoute,
   saveAgentChatSubscription,
   saveAgentChatProfileWorkspace,
 } from '../../services/agent-chat.js';
-import { fetchSessionsApi } from '../../services/sessions.js';
 import { fetchPipelineDefinitions } from '../../pipelines/api.js';
-import {
-  createSubscriptionCard,
-  filterAgentChatSessions,
-} from './agent-chat-operator-cards.js';
 import {
   createConfiguredDispatchesPanel,
   createStatusLine,
@@ -34,17 +27,14 @@ import {
   buildBackendSubscriptionInput,
   filterDispatchRoutesForSubscription,
   getAgentForSubscription,
-  getRoutesForSubscription,
   getSubscriptionById,
-  hasDuplicateWorkspaceAppOnAnotherTower,
   resolveSelectedSubscriptionId,
 } from './agent-chat-section-state.js';
 
 async function loadOperatorState(selectedSubscriptionId = null) {
-  const [subscriptions, agentPayload, sessionPayload, definitionPayload, dispatchRoutes, backendConnections] = await Promise.all([
+  const [subscriptions, agentPayload, definitionPayload, dispatchRoutes, backendConnections] = await Promise.all([
     listAgentChatSubscriptions(),
     listAgentChatAgents(),
-    fetchSessionsApi(),
     fetchPipelineDefinitions().catch(() => ({ definitions: [] })),
     listAgentChatDispatchRoutes().catch(() => []),
     listAgentChatBackendConnections().catch(() => []),
@@ -53,7 +43,6 @@ async function loadOperatorState(selectedSubscriptionId = null) {
     ? subscriptions.filter((subscription) => subscription?.onboardingSource === 'nostr_33357')
     : [];
   const subscriptionPermissions = subscriptions?.permissions;
-  const allSessions = Array.isArray(sessionPayload?.sessions) ? sessionPayload.sessions : [];
   const effectiveSelectedSubscriptionId = resolveSelectedSubscriptionId(onboardedSubscriptions, selectedSubscriptionId);
   const selectedSubscription = getSubscriptionById(onboardedSubscriptions, effectiveSelectedSubscriptionId);
   return {
@@ -61,14 +50,56 @@ async function loadOperatorState(selectedSubscriptionId = null) {
     agents: Array.isArray(agentPayload?.agents) ? agentPayload.agents : [],
     permissions: subscriptionPermissions || agentPayload?.permissions || { shared: false, canManage: true },
     defaults: agentPayload?.defaults && typeof agentPayload.defaults === 'object' ? agentPayload.defaults : {},
-    chatSessions: filterAgentChatSessions(allSessions),
     dispatchRoutes: filterDispatchRoutesForSubscription(dispatchRoutes, effectiveSelectedSubscriptionId),
-    allDispatchRoutes: Array.isArray(dispatchRoutes) ? dispatchRoutes : [],
     selectedSubscription,
     selectedSubscriptionId: effectiveSelectedSubscriptionId,
     pipelineDefinitions: Array.isArray(definitionPayload?.definitions) ? definitionPayload.definitions : [],
     backendConnections: Array.isArray(backendConnections) ? backendConnections : [],
   };
+}
+
+function resolveWorkspaceLabel(subscription) {
+  return subscription?.profileWorkspace?.workspace?.workspaceTitle
+    || subscription?.profileWorkspace?.workspace?.workspaceId
+    || subscription?.workspaceId
+    || subscription?.workspaceName
+    || subscription?.workspaceOwnerNpub
+    || 'Workspace';
+}
+
+function createWorkspaceSelector(subscriptions, selectedSubscriptionId, onSelect) {
+  const wrapper = document.createElement('div');
+  wrapper.setAttribute('data-testid', 'agent-chat-workspace-selector');
+
+  if (!Array.isArray(subscriptions) || subscriptions.length <= 1) {
+    return wrapper;
+  }
+
+  const label = document.createElement('p');
+  label.className = 'wm-settings__port-note';
+  label.textContent = 'Select a workspace to configure its agent binding and dispatch routes.';
+
+  const tabList = document.createElement('div');
+  tabList.className = 'wm-settings-tabs__list';
+  tabList.setAttribute('role', 'tablist');
+  tabList.setAttribute('aria-label', 'Agent Dispatch workspaces');
+
+  subscriptions.forEach((subscription) => {
+    const tab = document.createElement('button');
+    const isSelected = subscription?.subscriptionId === selectedSubscriptionId;
+    tab.type = 'button';
+    tab.className = `wm-settings-tabs__tab${isSelected ? ' is-active' : ''}`;
+    tab.textContent = resolveWorkspaceLabel(subscription);
+    tab.setAttribute('role', 'tab');
+    tab.setAttribute('aria-selected', isSelected ? 'true' : 'false');
+    tab.setAttribute('aria-label', `Configure Agent Dispatch for ${resolveWorkspaceLabel(subscription)}`);
+    tab.setAttribute('data-testid', `agent-chat-workspace-tab-${subscription?.subscriptionId || 'unknown'}`);
+    tab.addEventListener('click', () => onSelect?.(subscription));
+    tabList.append(tab);
+  });
+
+  wrapper.append(label, tabList);
+  return wrapper;
 }
 
 export function createAgentChatSection({ standalone = false, openDirectoryBrowser = null } = {}) {
@@ -94,6 +125,7 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
   const statusLine = createStatusLine();
   const setupCardsContainer = document.createElement('div');
   setupCardsContainer.setAttribute('data-testid', 'agent-chat-setup-cards');
+  const workspaceSelectorContainer = document.createElement('div');
   const configuredDispatchesContainer = document.createElement('div');
   const profileWorkspaceContainer = document.createElement('div');
   const subscriptionEditor = createSubscriptionEditorCard();
@@ -126,23 +158,17 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
   setupPanel.append(setupHeading);
   setupPanel.append(
     statusLine,
+    workspaceSelectorContainer,
     setupCardsContainer,
     subscriptionEditor.card,
     profileWorkspaceContainer,
     configuredDispatchesContainer,
   );
-  const operatorPanel = document.createElement('div');
-  operatorPanel.setAttribute('data-testid', 'agent-chat-live-panel');
-  const liveHeading = document.createElement('h3');
-  liveHeading.textContent = 'Live';
-  const listContainer = document.createElement('div');
-  listContainer.setAttribute('data-testid', 'agent-chat-subscription-list');
-  operatorPanel.append(liveHeading, listContainer);
   async function refreshList() {
     setupCardsContainer.replaceChildren();
+    workspaceSelectorContainer.replaceChildren();
     configuredDispatchesContainer.replaceChildren();
     profileWorkspaceContainer.replaceChildren();
-    listContainer.replaceChildren();
 
     try {
       const {
@@ -150,9 +176,7 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
         agents,
         permissions,
         defaults,
-        chatSessions,
         dispatchRoutes,
-        allDispatchRoutes,
         selectedSubscription,
         selectedSubscriptionId: effectiveSelectedSubscriptionId,
         pipelineDefinitions,
@@ -173,6 +197,15 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
       };
       selectedSubscriptionId = effectiveSelectedSubscriptionId;
       const selectedAgent = getAgentForSubscription(agents, selectedSubscription);
+      workspaceSelectorContainer.append(createWorkspaceSelector(
+        subscriptions,
+        selectedSubscriptionId,
+        (subscription) => {
+          selectedSubscriptionId = subscription.subscriptionId;
+          statusLine.textContent = 'Loading selected workspace dispatch setup...';
+          void refreshList();
+        },
+      ));
       setupCardsContainer.append(createAgentDispatchSetupCards({
         subscription: selectedSubscription,
         primaryAgent: selectedAgent,
@@ -232,61 +265,6 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
               await refreshList();
           },
       }));
-      if (subscriptions.length === 0) {
-        const empty = document.createElement('p');
-        empty.className = 'wm-settings__port-note';
-        empty.textContent = 'No Flight Deck workspace onboarding events have been imported for this agent yet.';
-        listContainer.append(empty);
-        return;
-      }
-      const handlers = {
-        runAction: async (subscription, action) => {
-          statusLine.textContent = `Running ${action}...`;
-          try {
-            await runAgentChatSubscriptionAction(subscription.subscriptionId, action);
-            statusLine.textContent = `Action completed: ${action}.`;
-            await refreshList();
-          } catch (error) {
-            statusLine.textContent = error instanceof Error ? error.message : `Failed to run ${action}.`;
-          }
-        },
-        select: (subscription) => {
-          selectedSubscriptionId = subscription.subscriptionId;
-          statusLine.textContent = 'Loading selected workspace subscription...';
-          void refreshList();
-        },
-        edit: (subscription) => {
-          selectedSubscriptionId = subscription.subscriptionId;
-          subscriptionEditor.workspaceOwnerField.input.value = subscription?.workspaceOwnerNpub || '';
-          subscriptionEditor.backendUrlField.input.value = subscription?.backendBaseUrl || '';
-          subscriptionEditor.sourceAppField.input.value = subscription?.sourceAppNpub || '';
-          subscriptionEditor.card.style.display = '';
-          subscriptionEditor.workspaceOwnerField.input.focus();
-        },
-        remove: async (subscription) => {
-          statusLine.textContent = 'Removing workspace subscription...';
-          try {
-            await deleteAgentChatSubscription(subscription.subscriptionId);
-            if (selectedSubscriptionId === subscription.subscriptionId) {
-              selectedSubscriptionId = null;
-            }
-            statusLine.textContent = 'Workspace subscription removed.';
-            await refreshList();
-          } catch (error) {
-            statusLine.textContent = error instanceof Error ? error.message : 'Failed to remove workspace subscription.';
-          }
-        },
-        dispatchRoutes,
-        getDispatchRoutes: (subscription) => getRoutesForSubscription(allDispatchRoutes, subscription.subscriptionId),
-        hasDuplicateWorkspaceApp: (subscription) => hasDuplicateWorkspaceAppOnAnotherTower(subscriptions, subscription),
-        selectedSubscriptionId,
-        pipelineDefinitions,
-        allowConnectionManagement: true,
-      };
-
-      subscriptions.forEach((subscription) => {
-        listContainer.append(createSubscriptionCard(subscription, chatSessions, handlers));
-      });
     } catch (error) {
       statusLine.textContent = error instanceof Error ? error.message : 'Failed to load Agent Dispatch state.';
     }
@@ -320,7 +298,7 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
   subscriptionEditor.closeButton.addEventListener('click', () => {
     subscriptionEditor.card.style.display = 'none';
   });
-  container.append(operatorPanel, setupPanel);
+  container.append(setupPanel);
   container.append(connectImportModal.element, agentNameModal.element);
   void refreshList();
   return container;

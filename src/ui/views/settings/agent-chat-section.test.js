@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { describe, expect, mock, test } from "bun:test";
 
 import {
@@ -12,6 +14,8 @@ import {
 import { createAgentDispatchSetupCards } from "./agent-chat-setup-cards.js";
 import { createProfileWorkspaceSettingsCard } from "./agent-chat-profile-workspace-card.js";
 import { createConfiguredDispatchesPanel } from "./agent-chat-shared-ui.js";
+
+const agentChatSectionSource = readFileSync(new URL("./agent-chat-section.js", import.meta.url), "utf8");
 
 mock.module("../../pipelines/api.js", () => ({
   fetchPipelineRun: async () => null,
@@ -138,6 +142,12 @@ describe("agent chat settings subscription selection", () => {
       botNpub: "npub1bot2",
     },
   ];
+
+  test("keeps duplicated live subscription cards out of the Agents tab", () => {
+    expect(agentChatSectionSource).not.toContain("agent-chat-live-panel");
+    expect(agentChatSectionSource).not.toContain("agent-chat-subscription-list");
+    expect(agentChatSectionSource).not.toContain("createSubscriptionCard");
+  });
 
   test("keeps an explicit selected subscription instead of falling back to the first row", () => {
     expect(resolveSelectedSubscriptionId(subscriptions, "sub-secondary")).toBe("sub-secondary");
