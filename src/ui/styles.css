@@ -4973,7 +4973,7 @@ body[data-keyboard-open="true"] .wm-composer-shell {
 }
 
 .wm-scroll-pill.wm-scroll-pill--last-prompt {
-  bottom: 100%;
+  bottom: auto;
 }
 
 /* Archived session view styles */
