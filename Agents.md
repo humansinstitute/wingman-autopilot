@@ -172,6 +172,7 @@ Confirm agent binaries (`out/agentapi`, `codex`, `claude`, `goose`, `opencode`) 
 - Follow the existing patterns for authentication and session management
 - Use the existing logging infrastructure rather than console.log
 - Respect the Nostr identity system when implementing user features
+- Do not hide missing required state behind broad fallbacks or workarounds. If a required workspace, channel, thread, document, task, or dispatch context is missing, surface the problem clearly so the underlying bug can be fixed.
 
 ## UI Accessibility for Agent Testing
 
