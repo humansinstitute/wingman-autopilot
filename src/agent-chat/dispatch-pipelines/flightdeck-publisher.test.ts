@@ -2108,6 +2108,53 @@ describe('dispatch pipeline Flight Deck publisher', () => {
     expect(String((createdTask as any).workPlan.designDocumentAccessInstructions)).toContain('localPath');
   });
 
+  test('implementation review task ensurer extracts design doc mention from instructions before snapshotting', async () => {
+    const ensureTask = createDispatchImplementationReviewTaskEnsurer(buildChatPublisherContext({
+      subscription: {
+        subscriptionId: 'sub-pg-1',
+        workspaceOwnerNpub: 'npub1workspace',
+        sourceAppNpub: 'npub1source',
+        backendBaseUrl: 'https://tower.example.com',
+        workspaceId: 'workspace-pg-1',
+        botNpub: 'npub1bot',
+        wsKeyNpub: null,
+      },
+      runtime: {
+        mode: 'flightdeck_pg',
+        yokeStateDir: null,
+        commandPrefix: null,
+        commands: {},
+        error: null,
+      },
+    }));
+
+    const createdTask = await ensureTask({
+      implementationPrompt: 'Implement it.',
+      workingDirectory: '/repo/app',
+      workPlan: {
+        taskSummary: 'Implement Autopilot overview design',
+        instructions: 'Implement the Flight Deck Autopilot Overview design from @[Design for Autopilot Overview](mention:document:76ebf6ac-91ff-47e2-af36-b99d47a10d57) in main.',
+        reviewerNpub: 'npub1requester',
+      },
+    });
+
+    expect(yokeCommandCalls).toHaveLength(0);
+    expect(pgDocumentFetchCalls).toHaveLength(1);
+    expect(pgDocumentFetchCalls[0]).toMatchObject({
+      documentId: '76ebf6ac-91ff-47e2-af36-b99d47a10d57',
+      includeBody: true,
+    });
+    expect(createdTask).toMatchObject({
+      workPlan: {
+        designDocumentUrl: '@[Design for Autopilot Overview](mention:document:76ebf6ac-91ff-47e2-af36-b99d47a10d57)',
+        designDocument: {
+          status: 'loaded',
+          localPath: expect.stringContaining('76ebf6ac-91ff-47e2-af36-b99d47a10d57'),
+        },
+      },
+    });
+  });
+
   test('implementation review closeout leaves task in progress when manager review is not done', async () => {
     const closeTask = createDispatchTaskStateUpdater(buildChatPublisherContext({
       subscription: {

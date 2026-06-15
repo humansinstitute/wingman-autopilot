@@ -1783,7 +1783,7 @@ export function createDispatchImplementationReviewTaskEnsurer(
       commentError = error instanceof Error ? error.message : String(error);
     }
 
-    const designDocumentReference = getText(workPlan.designDocumentUrl) ?? getText(input.designDocumentUrl);
+    const designDocumentReference = resolveImplementationDesignDocumentReference(input, workPlan);
     const designDocument = await hydrateImplementationDesignDocument(context, designDocumentReference);
     const nextWorkPlan = {
       ...workPlan,
@@ -1952,6 +1952,34 @@ function extractFlightDeckDocumentId(reference: string): string | null {
   if (docPath?.[1]) return docPath[1];
   const bare = reference.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
   return bare?.[0] ?? null;
+}
+
+function resolveImplementationDesignDocumentReference(
+  input: JsonObject,
+  workPlan: Record<string, unknown>,
+): string | null {
+  const explicit = getText(workPlan.designDocumentUrl)
+    ?? getText(input.designDocumentUrl)
+    ?? getText(workPlan.documentUrl)
+    ?? getText(input.documentUrl);
+  if (explicit) return explicit;
+  return [
+    getText(workPlan.instructions),
+    getText(workPlan.taskSummary),
+    getText(workPlan.originalPrompt),
+    getText(input.implementationPrompt),
+    getText(input.taskTitle),
+  ].map((candidate) => candidate ? extractFlightDeckDocumentReference(candidate) : null).find(Boolean) ?? null;
+}
+
+function extractFlightDeckDocumentReference(text: string): string | null {
+  const mention = text.match(/@?\[[^\]\n]*\]\(mention:(?:document|doc):([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\)/i);
+  if (mention?.[0] && mention[1]) return mention[0].startsWith('@') ? mention[0] : `@${mention[0]}`;
+  const url = text.match(/https?:\/\/\S*\/docs?\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}(?:[/?#]\S*)?/i);
+  if (url?.[0]) return url[0];
+  const scheme = text.match(/flightdeck-(?:document|doc):\/\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i);
+  if (scheme?.[0]) return scheme[0];
+  return null;
 }
 
 async function writeImplementationDesignDocumentSnapshot(input: {
