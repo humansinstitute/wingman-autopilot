@@ -15,7 +15,9 @@ import {
   createFlightDeckPgChannelTask,
   createFlightDeckPgReaction,
   createFlightDeckPgTaskComment,
+  decodeFlightDeckPgDocumentBody,
   fetchFlightDeckPgChannelMessages,
+  fetchFlightDeckPgDocument,
   fetchFlightDeckPgTask,
   fetchFlightDeckPgWorkspaceMembers,
   uploadFlightDeckPgStorageObject,
@@ -1778,6 +1780,8 @@ export function createDispatchImplementationReviewTaskEnsurer(
       commentError = error instanceof Error ? error.message : String(error);
     }
 
+    const designDocumentReference = getText(workPlan.designDocumentUrl) ?? getText(input.designDocumentUrl);
+    const designDocument = await hydrateImplementationDesignDocument(context, designDocumentReference);
     const nextWorkPlan = {
       ...workPlan,
       taskId,
@@ -1793,10 +1797,18 @@ export function createDispatchImplementationReviewTaskEnsurer(
         ?? getText(input.workingDirectory)
         ?? context.agent?.workingDirectory
         ?? process.cwd(),
-      designDocumentUrl: getText(workPlan.designDocumentUrl) ?? getText(input.designDocumentUrl),
+      designDocumentUrl: designDocumentReference,
       designDocumentSource: getText(workPlan.designDocumentSource) ?? getText(input.designDocumentSource),
       designDocumentUnavailableReason: getText(workPlan.designDocumentUnavailableReason)
-        ?? getText(input.designDocumentUnavailableReason),
+        ?? getText(input.designDocumentUnavailableReason)
+        ?? (designDocument?.status === 'failed' ? getText(designDocument.error) : undefined),
+      ...(designDocument ? { designDocument } : {}),
+      designDocumentAccessInstructions: [
+        designDocument?.status === 'loaded'
+          ? 'Use workPlan.designDocument.body as the design baseline; refresh with flightdeck_doc_get if current state matters.'
+          : 'If the design reference is a Flight Deck document, read it with the flightdeck_doc_get helper.',
+        'Do not run Yoke or sync a Yoke workspace to read Flight Deck PG documents.',
+      ].join(' '),
       assignedToNpub: assignedTo,
       reviewerNpub: getText(workPlan.reviewerNpub) ?? resolveRequesterNpub(context, input),
       origin: {
@@ -1872,6 +1884,62 @@ export function createDispatchImplementationReviewProgressCommenter(
   };
 }
 
+async function hydrateImplementationDesignDocument(
+  context: DispatchPipelineFlightDeckPublisherContext,
+  reference: string | null,
+): Promise<Record<string, unknown> | null> {
+  if (!reference || !isFlightDeckPgPublisherContext(context) || !context.botIdentity) {
+    return null;
+  }
+  const documentId = extractFlightDeckDocumentId(reference);
+  if (!documentId) {
+    return {
+      status: 'not_applicable',
+      reference,
+      note: 'Reference is not a Flight Deck document id or mention.',
+    };
+  }
+  try {
+    const result = await fetchFlightDeckPgDocument({
+      backendBaseUrl: context.eventInput.subscription.backendBaseUrl,
+      workspaceId: context.eventInput.subscription.workspaceId!,
+      documentId,
+      appNpub: context.eventInput.subscription.sourceAppNpub,
+      botIdentity: context.botIdentity,
+      includeBody: true,
+    });
+    const document = objectValue(result.doc ?? result.document);
+    const body = decodeFlightDeckPgDocumentBody(result);
+    return {
+      status: 'loaded',
+      id: documentId,
+      title: getText(document.title),
+      rowVersion: document.row_version ?? document.rowVersion ?? null,
+      reference,
+      body: body ? truncateBlock(body, 30000) : '',
+      bodyTruncated: Boolean(body && body.length > 30000),
+    };
+  } catch (error) {
+    return {
+      status: 'failed',
+      id: documentId,
+      reference,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+function extractFlightDeckDocumentId(reference: string): string | null {
+  const mention = reference.match(/mention:(?:document|doc):([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})/i);
+  if (mention?.[1]) return mention[1];
+  const scheme = reference.match(/flightdeck-(?:document|doc):\/\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})/i);
+  if (scheme?.[1]) return scheme[1];
+  const docPath = reference.match(/\/docs?\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})(?:\b|[/?#])/i);
+  if (docPath?.[1]) return docPath[1];
+  const bare = reference.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  return bare?.[0] ?? null;
+}
+
 export function createDispatchTaskStateUpdater(
   context: DispatchPipelineFlightDeckPublisherContext,
   targetState: 'in_progress' | 'review',
@@ -1883,6 +1951,50 @@ export function createDispatchTaskStateUpdater(
     const taskId = resolveTaskId(context, input);
     if (!taskId) {
       throw new Error('Task update requires a task record id.');
+    }
+    const incompleteImplementationReview = targetState === 'review'
+      ? getIncompleteImplementationReviewCloseout(input)
+      : null;
+    if (incompleteImplementationReview) {
+      const commentBody = buildImplementationReviewIncompleteComment(input, incompleteImplementationReview);
+      const commentResult = isFlightDeckPgPublisherContext(context)
+        ? await createFlightDeckPgTaskCommentFromContext(
+          context,
+          taskId,
+          commentBody,
+          {
+            autopilot_dispatch: true,
+            notification_kind: 'implementation_review_incomplete',
+          },
+        )
+        : await runYokeJson(context, [
+          'tasks',
+          'comment',
+          taskId,
+          '--body',
+          commentBody,
+          '--json',
+        ]);
+      const chatNotification = await publishImplementationReviewIncompleteChatNotification(
+        context,
+        input,
+        taskId,
+        incompleteImplementationReview,
+      );
+      return {
+        published: true,
+        status: chatNotification.error ? 'partial' : 'ok',
+        operation: 'tasks.implementation-review-incomplete',
+        taskId,
+        state: 'in_progress',
+        updateSkipped: true,
+        skippedReviewReason: incompleteImplementationReview.reason,
+        commentResult,
+        chatNotified: chatNotification.notified,
+        chatResult: chatNotification.result,
+        chatError: chatNotification.error,
+        chatSkippedReason: chatNotification.skippedReason,
+      };
     }
     const reviewerNpub = targetState === 'review' ? resolveRequesterNpub(context, input) : null;
     const updateArgs = ['tasks', 'update', taskId, '--state', targetState];
@@ -2040,6 +2152,95 @@ async function publishReadyForReviewChatNotification(
       'reply-current',
       '--body',
       buildReadyForReviewChatReply(input, taskId, reviewerNpub),
+      '--skip-refresh',
+      '--channel',
+      channelId,
+      '--thread',
+      threadId,
+      '--format',
+      'json',
+    ]);
+    return {
+      notified: true,
+      result: {
+        ...(objectValue(result)),
+        createdNewThread: !existingThreadId,
+      },
+      error: null,
+      skippedReason: null,
+    };
+  } catch (error) {
+    return {
+      notified: false,
+      result: null,
+      error: error instanceof Error ? error.message : String(error),
+      skippedReason: null,
+    };
+  }
+}
+
+async function publishImplementationReviewIncompleteChatNotification(
+  context: DispatchPipelineFlightDeckPublisherContext,
+  input: JsonObject,
+  taskId: string,
+  closeout: { reason: string; remainingPickups: string[] },
+): Promise<{
+  notified: boolean;
+  result: unknown;
+  error: string | null;
+  skippedReason: string | null;
+}> {
+  const workPlan = objectValue(input.workPlan);
+  const origin = objectValue(workPlan.origin);
+  const reportTarget = objectValue(input.reportTarget);
+  const channelId = context.eventInput.channelId
+    ?? getText(origin.channelId)
+    ?? getText(reportTarget.flightDeckChannelId)
+    ?? getText(reportTarget.channelId);
+  const existingThreadId = context.eventInput.threadId
+    ?? getText(origin.threadId)
+    ?? getText(reportTarget.threadId);
+  if (!channelId) {
+    return {
+      notified: false,
+      result: null,
+      error: null,
+      skippedReason: 'missing_origin_chat_channel',
+    };
+  }
+  const threadId = existingThreadId ?? randomUUID();
+  const body = buildImplementationReviewIncompleteChatReply(input, taskId, closeout);
+  try {
+    if (isFlightDeckPgPublisherContext(context)) {
+      const result = await createFlightDeckPgChannelMessageFromContext(context, {
+        channelId,
+        body,
+        threadId,
+        metadata: {
+          autopilot_dispatch: true,
+          source_message_id: context.eventInput.recordId,
+          subscription_id: context.eventInput.subscription.subscriptionId,
+          notification_kind: 'implementation_review_incomplete',
+        },
+        speechTitle: 'Spoken implementation review update',
+        speechFilePrefix: 'flightdeck-implementation-review-incomplete-tts',
+        userPrompt: getText(objectValue(context.eventInput.payload)?.body),
+      });
+      return {
+        notified: true,
+        result: {
+          ...objectValue(result),
+          createdNewThread: !existingThreadId,
+        },
+        error: null,
+        skippedReason: null,
+      };
+    }
+    const result = await runYokeJson(context, [
+      'chat',
+      'reply-current',
+      '--body',
+      body,
       '--skip-refresh',
       '--channel',
       channelId,
@@ -3150,6 +3351,110 @@ function buildImplementationReviewProgressComment(input: JsonObject): string {
   const nextWorkerPrompt = getText(managerReview.nextWorkerPrompt);
   if (!done && nextWorkerPrompt) {
     lines.push(`Next worker prompt: ${compactSingleLine(nextWorkerPrompt, 500)}`);
+  }
+  return lines.join('\n');
+}
+
+function getIncompleteImplementationReviewCloseout(input: JsonObject): { reason: string; remainingPickups: string[] } | null {
+  const managerReview = objectValue(input.agentResponse ?? input.managerReview);
+  const workerResult = objectValue(input.workerResult);
+  const hasManagerDone = typeof managerReview.done === 'boolean';
+  const status = getText(workerResult.status)?.toLowerCase() ?? '';
+  if (hasManagerDone && managerReview.done !== true) {
+    return {
+      reason: 'manager_review_not_done',
+      remainingPickups: extractRemainingImplementationPickups(managerReview, workerResult),
+    };
+  }
+  if (!hasManagerDone && (status === 'incomplete' || status === 'max_iterations_reached')) {
+    return {
+      reason: status,
+      remainingPickups: extractRemainingImplementationPickups(managerReview, workerResult),
+    };
+  }
+  return null;
+}
+
+function extractRemainingImplementationPickups(
+  managerReview: Record<string, unknown>,
+  workerResult: Record<string, unknown>,
+): string[] {
+  const fromWorker = getStringArray(workerResult.remainingPickups);
+  if (fromWorker.length > 0) return fromWorker;
+  const pickups = Array.isArray(managerReview.pickups) ? managerReview.pickups : [];
+  return pickups
+    .map((pickup) => {
+      const record = objectValue(pickup);
+      const title = getText(record.title);
+      const action = getText(record.action);
+      if (title && action) return `${title}: ${action}`;
+      return title ?? action ?? null;
+    })
+    .filter((value): value is string => Boolean(value));
+}
+
+function buildImplementationReviewIncompleteComment(
+  input: JsonObject,
+  closeout: { reason: string; remainingPickups: string[] },
+): string {
+  const managerReview = objectValue(input.agentResponse ?? input.managerReview);
+  const workerResult = objectValue(input.workerResult);
+  const summary = getText(workerResult.summary)
+    ?? getText(workerResult.reportSummary)
+    ?? getText(managerReview.managerSummary)
+    ?? getText(managerReview.reviewSummary)
+    ?? 'Implementation review did not clear manager review.';
+  const lines = [
+    'Pipeline handoff: implementation review is not complete; task remains in progress.',
+    `Reason: ${closeout.reason}.`,
+    `Summary: ${summary}`,
+  ];
+  const managerSummary = getText(managerReview.managerSummary ?? managerReview.reviewSummary);
+  if (managerSummary && managerSummary !== summary) {
+    lines.push(`Manager review: ${managerSummary}`);
+  }
+  if (closeout.remainingPickups.length > 0) {
+    lines.push('Remaining pickups:');
+    for (const pickup of closeout.remainingPickups.slice(0, 8)) {
+      lines.push(`- ${compactSingleLine(pickup, 400)}`);
+    }
+  }
+  const taskUpdateComment = getText(workerResult.taskUpdateComment);
+  if (taskUpdateComment && taskUpdateComment !== summary) {
+    lines.push(taskUpdateComment);
+  }
+  return lines.join('\n');
+}
+
+function buildImplementationReviewIncompleteChatReply(
+  input: JsonObject,
+  _taskId: string,
+  closeout: { reason: string; remainingPickups: string[] },
+): string {
+  const finalThreadResponse = objectValue(input.finalThreadResponse);
+  const finalBody = getText(finalThreadResponse.body);
+  if (finalBody) {
+    return normalizeFinalThreadReplyBody(finalBody);
+  }
+  const managerReview = objectValue(input.agentResponse ?? input.managerReview);
+  const workerResult = objectValue(input.workerResult);
+  const summary = getText(workerResult.summary)
+    ?? getText(workerResult.reportSummary)
+    ?? getText(managerReview.managerSummary)
+    ?? 'The implementation pass ran, but manager review still has required pickups.';
+  const lines = [
+    summary,
+    `It did not clear manager review, so I left the task in progress instead of marking it ready for review.`,
+  ];
+  if (closeout.remainingPickups.length > 0) {
+    lines.push('Remaining pickups:');
+    for (const pickup of closeout.remainingPickups.slice(0, 5)) {
+      lines.push(`- ${compactSingleLine(pickup, 300)}`);
+    }
+  }
+  const taskUpdateComment = getText(workerResult.taskUpdateComment);
+  if (taskUpdateComment && taskUpdateComment !== summary) {
+    lines.push(taskUpdateComment);
   }
   return lines.join('\n');
 }

@@ -18,6 +18,8 @@
     "scopeId": "",
     "designDocumentUrl": "~/code/wingmen/docs/example-design.md",
     "designDocumentUnavailableReason": "",
+    "designDocument": null,
+    "designDocumentAccessInstructions": "",
     "implementationPrompt": "Implement the design document as a focused code change. Keep the work scoped and commit-ready.",
     "relevantContext": "",
     "workingDirectory": "/Users/mini/code/wingmen",
@@ -88,6 +90,8 @@
           "workPlan": "$.createdTask.workPlan",
           "designDocumentUrl": "$.createdTask.workPlan.designDocumentUrl",
           "designDocumentUnavailableReason": "$.createdTask.workPlan.designDocumentUnavailableReason",
+          "designDocument": "$.createdTask.workPlan.designDocument",
+          "designDocumentAccessInstructions": "$.createdTask.workPlan.designDocumentAccessInstructions",
           "implementationPrompt": "$.createdTask.workPlan.instructions",
           "relevantContext": "$.relevantContext",
           "workingDirectory": "$.createdTask.workPlan.workdir",
@@ -100,7 +104,7 @@
           "previousHandoffNotes": "$.implementation.handoffNotes"
         }
       },
-      "prompt": "You are the implementation worker in a Wingmen implementation-review pipeline.\n\nInputs:\n- createdTask/taskId identify the Flight Deck task for this loop.\n- designDocumentUrl points to the design. Read it directly; do not paste document text into JSON.\n- implementationPrompt is the starting goal for iteration 1.\n- On later iterations, nextWorkerPrompt and managerPickups are the focused worklist. Treat them as authoritative.\n- relevantContext is optional background only.\n\nWork rules:\n- Inspect the current git status before editing.\n- Preserve existing work and unrelated dirty files.\n- Make only scoped changes needed for the current worklist.\n- If a pickup names another repo, inspect or edit that repo only as needed and report paths with a repo prefix.\n- Run targeted validation, then broader validation when practical.\n- Do not update Flight Deck task state, post task comments, or reply to chat. Deterministic pipeline steps publish progress and closeout.\n\nCallback result object:\n{\n  \"workerSummary\": \"short summary of work performed\",\n  \"designDocumentUrl\": \"same reference\",\n  \"workingDirectory\": \"repo path\",\n  \"iteration\": 1,\n  \"changedFiles\": [\"repo/path.ext\"],\n  \"commandsRun\": [{\"command\":\"...\", \"status\":\"passed|failed|not_run\", \"notes\":\"...\"}],\n  \"git\": {\"branch\":\"\", \"status\":\"\", \"commits\":[], \"prUrl\":\"\"},\n  \"resolvedPickups\": [{\"title\":\"\", \"notes\":\"\"}],\n  \"openQuestions\": [],\n  \"handoffNotes\": \"specific points for manager review\"\n}\n\nReturn compact structured metadata only. Code changes stay in the repository.",
+      "prompt": "You are the implementation worker in a Wingmen implementation-review pipeline.\n\nInputs:\n- createdTask/taskId identify the Flight Deck task for this loop.\n- designDocumentUrl points to the design reference. If workPlan.designDocument.status is loaded, use workPlan.designDocument.body as the design baseline. If it is missing or stale and the reference is a Flight Deck document, read it with the flightdeck_doc_get helper. Do not run Yoke, sync a Yoke workspace, or use local Yoke caches for Flight Deck PG documents. Do not paste document text into JSON.\n- implementationPrompt is the starting goal for iteration 1.\n- On later iterations, nextWorkerPrompt and managerPickups are the focused worklist. Treat them as authoritative.\n- relevantContext is optional background only.\n\nWork rules:\n- Inspect the current git status before editing.\n- Preserve existing work and unrelated dirty files.\n- Make only scoped changes needed for the current worklist.\n- If a pickup names another repo, inspect or edit that repo only as needed and report paths with a repo prefix.\n- Run targeted validation, then broader validation when practical.\n- Do not update Flight Deck task state, post task comments, or reply to chat. Deterministic pipeline steps publish progress and closeout.\n\nCallback result object:\n{\n  \"workerSummary\": \"short summary of work performed\",\n  \"designDocumentUrl\": \"same reference\",\n  \"workingDirectory\": \"repo path\",\n  \"iteration\": 1,\n  \"changedFiles\": [\"repo/path.ext\"],\n  \"commandsRun\": [{\"command\":\"...\", \"status\":\"passed|failed|not_run\", \"notes\":\"...\"}],\n  \"git\": {\"branch\":\"\", \"status\":\"\", \"commits\":[], \"prUrl\":\"\"},\n  \"resolvedPickups\": [{\"title\":\"\", \"notes\":\"\"}],\n  \"openQuestions\": [],\n  \"handoffNotes\": \"specific points for manager review\"\n}\n\nReturn compact structured metadata only. Code changes stay in the repository.",
       "assign": "$.implementation",
       "timeoutMs": "$.workerTimeoutMs"
     },
@@ -118,6 +122,8 @@
           "workPlan": "$.createdTask.workPlan",
           "designDocumentUrl": "$.createdTask.workPlan.designDocumentUrl",
           "designDocumentUnavailableReason": "$.createdTask.workPlan.designDocumentUnavailableReason",
+          "designDocument": "$.createdTask.workPlan.designDocument",
+          "designDocumentAccessInstructions": "$.createdTask.workPlan.designDocumentAccessInstructions",
           "implementationPrompt": "$.createdTask.workPlan.instructions",
           "relevantContext": "$.relevantContext",
           "workingDirectory": "$.createdTask.workPlan.workdir",
@@ -127,7 +133,7 @@
           "previousPickups": "$.managerReview.pickups"
         }
       },
-      "prompt": "You are the managerial reviewer in a Wingmen implementation-review pipeline.\n\nReview scope:\n- Read designDocumentUrl and implementationPrompt.\n- Inspect current repository state, git status, relevant diff, tests, and worker handoff.\n- Judge whether the design is implemented well enough to close out.\n- Be strict about incomplete behavior, missing tests, unsafe changes, and unclear handoff.\n\nOutput contract:\n- Return a JSON object.\n- Set done true only when no important pickups remain.\n- If done is false, produce a compact nextWorkerPrompt with only the next actionable worklist.\n- Do not repeat full history, full file contents, or full design text.\n- Do not update Flight Deck task state, post task comments, or reply to chat. The next deterministic step publishes your manager progress comment.\n\nCallback result object:\n{\n  \"done\": false,\n  \"managerSummary\": \"short review summary\",\n  \"completed\": [\"what is complete\"],\n  \"pickups\": [{\"title\":\"\", \"priority\":\"high|medium|low\", \"reason\":\"\", \"action\":\"\", \"files\":[\"\"]}],\n  \"risks\": [],\n  \"validationFindings\": [{\"command\":\"...\", \"status\":\"passed|failed|not_run\", \"notes\":\"...\"}],\n  \"gitReview\": {\"branch\":\"\", \"status\":\"\", \"commits\":[], \"prUrl\":\"\"},\n  \"nextWorkerPrompt\": \"Only the specific next actions for the next worker. Leave empty when done is true.\"\n}",
+      "prompt": "You are the managerial reviewer in a Wingmen implementation-review pipeline.\n\nReview scope:\n- Read workPlan.designDocument.body when loaded, otherwise use flightdeck_doc_get for Flight Deck document references, plus implementationPrompt. Do not run Yoke, sync a Yoke workspace, or use local Yoke caches for Flight Deck PG documents.\n- Inspect current repository state, git status, relevant diff, tests, and worker handoff.\n- Judge whether the design is implemented well enough to close out.\n- Be strict about incomplete behavior, missing tests, unsafe changes, and unclear handoff.\n\nOutput contract:\n- Return a JSON object.\n- Set done true only when no important pickups remain.\n- If done is false, produce a compact nextWorkerPrompt with only the next actionable worklist.\n- Do not repeat full history, full file contents, or full design text.\n- Do not update Flight Deck task state, post task comments, or reply to chat. The next deterministic step publishes your manager progress comment.\n\nCallback result object:\n{\n  \"done\": false,\n  \"managerSummary\": \"short review summary\",\n  \"completed\": [\"what is complete\"],\n  \"pickups\": [{\"title\":\"\", \"priority\":\"high|medium|low\", \"reason\":\"\", \"action\":\"\", \"files\":[\"\"]}],\n  \"risks\": [],\n  \"validationFindings\": [{\"command\":\"...\", \"status\":\"passed|failed|not_run\", \"notes\":\"...\"}],\n  \"gitReview\": {\"branch\":\"\", \"status\":\"\", \"commits\":[], \"prUrl\":\"\"},\n  \"nextWorkerPrompt\": \"Only the specific next actions for the next worker. Leave empty when done is true.\"\n}",
       "assign": "$.managerReview",
       "timeoutMs": "$.managerTimeoutMs"
     },
@@ -195,6 +201,8 @@
           "workPlan": "$.createdTask.workPlan",
           "designDocumentUrl": "$.createdTask.workPlan.designDocumentUrl",
           "designDocumentUnavailableReason": "$.createdTask.workPlan.designDocumentUnavailableReason",
+          "designDocument": "$.createdTask.workPlan.designDocument",
+          "designDocumentAccessInstructions": "$.createdTask.workPlan.designDocumentAccessInstructions",
           "implementationPrompt": "$.createdTask.workPlan.instructions",
           "workingDirectory": "$.createdTask.workPlan.workdir",
           "implementation": "$.implementation",
@@ -204,7 +212,7 @@
           "reportTarget": "$.reportTarget"
         }
       },
-      "prompt": "You are closing out a Wingmen implementation-review pipeline.\n\nCreate a concise final implementation report from the worker outputs, manager reviews, git status, and current repository state. Do not run Flight Deck or Yoke commands, update task state, post task comments, or reply to chat. The next deterministic pipeline step will move the task to review and report back to chat.\n\nCallback result object:\n{\n  \"done\": true,\n  \"status\": \"complete|incomplete|max_iterations_reached\",\n  \"summary\": \"what was implemented and reviewed\",\n  \"taskUpdateComment\": \"short final task comment body for the deterministic closeout step\",\n  \"designDocumentUrl\": \"\",\n  \"workingDirectory\": \"\",\n  \"git\": {\"branch\":\"\", \"status\":\"\", \"commits\":[], \"prUrl\":\"\"},\n  \"validation\": [{\"command\":\"...\", \"status\":\"passed|failed|not_run\", \"notes\":\"...\"}],\n  \"remainingPickups\": [],\n  \"reviewIterations\": 1,\n  \"postedReport\": {\"attempted\": false, \"target\":\"deterministic-closeout\", \"notes\":\"reporting is handled by dispatch.markTaskReadyForReview\"},\n  \"nextActions\": []\n}\n\nSet status to complete only if managerReview.done is true. If maxReviewIterations was reached and managerReview.done is not true, set status to max_iterations_reached and include remaining pickups.",
+      "prompt": "You are closing out a Wingmen implementation-review pipeline.\n\nCreate a concise final implementation report from the worker outputs, manager reviews, git status, and current repository state. Do not run Flight Deck or Yoke commands, update task state, post task comments, or reply to chat. The next deterministic pipeline step will move the task to review only when managerReview.done is true; otherwise it will leave the task in progress and report the remaining pickups.\n\nCallback result object:\n{\n  \"done\": true,\n  \"status\": \"complete|incomplete|max_iterations_reached\",\n  \"summary\": \"what was implemented and reviewed\",\n  \"taskUpdateComment\": \"short final task comment body for the deterministic closeout step\",\n  \"designDocumentUrl\": \"\",\n  \"workingDirectory\": \"\",\n  \"git\": {\"branch\":\"\", \"status\":\"\", \"commits\":[], \"prUrl\":\"\"},\n  \"validation\": [{\"command\":\"...\", \"status\":\"passed|failed|not_run\", \"notes\":\"...\"}],\n  \"remainingPickups\": [],\n  \"reviewIterations\": 1,\n  \"postedReport\": {\"attempted\": false, \"target\":\"deterministic-closeout\", \"notes\":\"reporting is handled by dispatch.markTaskReadyForReview\"},\n  \"nextActions\": []\n}\n\nSet status to complete only if managerReview.done is true. If maxReviewIterations was reached and managerReview.done is not true, set status to max_iterations_reached and include remaining pickups.",
       "assign": "$.finalReport",
       "timeoutMs": "$.reporterTimeoutMs"
     },

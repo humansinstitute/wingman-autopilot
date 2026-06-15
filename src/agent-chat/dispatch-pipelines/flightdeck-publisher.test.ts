@@ -9,6 +9,7 @@ const pgMessageFetchCalls: Array<Record<string, unknown>> = [];
 const pgMessageCreateCalls: Array<Record<string, unknown>> = [];
 const pgStorageUploadCalls: Array<Record<string, unknown>> = [];
 const pgDocumentCreateCalls: Array<Record<string, unknown>> = [];
+const pgDocumentFetchCalls: Array<Record<string, unknown>> = [];
 const pgAudioNoteCreateCalls: Array<Record<string, unknown>> = [];
 const pgReactionCreateCalls: Array<Record<string, unknown>> = [];
 const pgTaskCreateCalls: Array<Record<string, unknown>> = [];
@@ -180,6 +181,26 @@ mock.module('../tower-client', () => ({
       },
     };
   }),
+  fetchFlightDeckPgDocument: mock(async (input: Record<string, unknown>) => {
+    pgDocumentFetchCalls.push(input);
+    return {
+      doc: {
+        id: input.documentId,
+        title: 'Design for Autopilot Overview',
+        row_version: 7,
+      },
+      body: {
+        encoding: 'base64',
+        base64_data: Buffer.from(JSON.stringify({
+          body: '# Design for Autopilot Overview\n\nBuild the Autopilot overview screen.',
+        }), 'utf8').toString('base64'),
+      },
+    };
+  }),
+  decodeFlightDeckPgDocumentBody: (result: any) => {
+    const raw = Buffer.from(result.body.base64_data, 'base64').toString('utf8');
+    return JSON.parse(raw).body;
+  },
   uploadFlightDeckPgStorageObject: mock(async (input: Record<string, unknown>) => {
     pgStorageUploadCalls.push(input);
     return {
@@ -377,6 +398,7 @@ describe('dispatch pipeline Flight Deck publisher', () => {
     pgMessageCreateCalls.length = 0;
     pgStorageUploadCalls.length = 0;
     pgDocumentCreateCalls.length = 0;
+    pgDocumentFetchCalls.length = 0;
     pgAudioNoteCreateCalls.length = 0;
     pgReactionCreateCalls.length = 0;
     pgTaskCreateCalls.length = 0;
@@ -2026,6 +2048,118 @@ describe('dispatch pipeline Flight Deck publisher', () => {
         status: 'ok',
         actorId: 'actor-bot',
       },
+    });
+  });
+
+  test('implementation review task ensurer hydrates Flight Deck PG design doc without Yoke', async () => {
+    const ensureTask = createDispatchImplementationReviewTaskEnsurer(buildChatPublisherContext({
+      subscription: {
+        subscriptionId: 'sub-pg-1',
+        workspaceOwnerNpub: 'npub1workspace',
+        sourceAppNpub: 'npub1source',
+        backendBaseUrl: 'https://tower.example.com',
+        workspaceId: 'workspace-pg-1',
+        botNpub: 'npub1bot',
+        wsKeyNpub: null,
+      },
+      runtime: {
+        mode: 'flightdeck_pg',
+        yokeStateDir: null,
+        commandPrefix: null,
+        commands: {},
+        error: null,
+      },
+    }));
+
+    const createdTask = await ensureTask({
+      implementationPrompt: 'Implement the Autopilot overview design.',
+      workingDirectory: '/repo/app',
+      designDocumentUrl: '@[Design for Autopilot Overview](mention:doc:76ebf6ac-91ff-47e2-af36-b99d47a10d57)',
+      workPlan: {
+        taskSummary: 'Implement Autopilot overview design',
+        reviewerNpub: 'npub1requester',
+      },
+    });
+
+    expect(yokeCommandCalls).toHaveLength(0);
+    expect(pgDocumentFetchCalls).toHaveLength(1);
+    expect(pgDocumentFetchCalls[0]).toMatchObject({
+      workspaceId: 'workspace-pg-1',
+      documentId: '76ebf6ac-91ff-47e2-af36-b99d47a10d57',
+      includeBody: true,
+    });
+    expect(createdTask).toMatchObject({
+      workPlan: {
+        designDocumentUrl: '@[Design for Autopilot Overview](mention:doc:76ebf6ac-91ff-47e2-af36-b99d47a10d57)',
+        designDocument: {
+          status: 'loaded',
+          id: '76ebf6ac-91ff-47e2-af36-b99d47a10d57',
+          title: 'Design for Autopilot Overview',
+          body: expect.stringContaining('Build the Autopilot overview screen.'),
+        },
+      },
+    });
+    expect(String((createdTask as any).workPlan.designDocumentAccessInstructions)).toContain('Do not run Yoke');
+  });
+
+  test('implementation review closeout leaves task in progress when manager review is not done', async () => {
+    const closeTask = createDispatchTaskStateUpdater(buildChatPublisherContext({
+      subscription: {
+        subscriptionId: 'sub-pg-1',
+        workspaceOwnerNpub: 'npub1workspace',
+        sourceAppNpub: 'npub1source',
+        backendBaseUrl: 'https://tower.example.com',
+        workspaceId: 'workspace-pg-1',
+        botNpub: 'npub1bot',
+        wsKeyNpub: null,
+      },
+      runtime: {
+        mode: 'flightdeck_pg',
+        yokeStateDir: null,
+        commandPrefix: null,
+        commands: {},
+        error: null,
+      },
+    }), 'review');
+
+    const closeout = await closeTask({
+      workPlan: {
+        taskId: 'pg-task-1',
+        reviewerNpub: 'npub1requester',
+      },
+      workerResult: {
+        status: 'max_iterations_reached',
+        summary: 'Implementation pass ran but did not clear review.',
+        remainingPickups: ['Apply Scope + Channel filters to files and document stats.'],
+      },
+      agentResponse: {
+        done: false,
+        managerSummary: 'Scope + Channel filters are still incomplete.',
+        pickups: [
+          {
+            title: 'Complete filters',
+            action: 'Apply filters to files, document stats, and unresolved comments.',
+          },
+        ],
+      },
+    });
+
+    expect(yokeCommandCalls).toHaveLength(0);
+    expect(pgTaskStateUpdateCalls).toHaveLength(0);
+    expect(pgTaskAssignmentCalls).toHaveLength(0);
+    expect(pgTaskCommentCreateCalls).toHaveLength(1);
+    expect(String(pgTaskCommentCreateCalls[0]?.body ?? '')).toContain('task remains in progress');
+    expect(pgMessageCreateCalls).toHaveLength(1);
+    expect(String(pgMessageCreateCalls[0]?.body ?? '')).toContain('did not clear manager review');
+    expect(closeout).toMatchObject({
+      published: true,
+      status: 'ok',
+      operation: 'tasks.implementation-review-incomplete',
+      taskId: 'pg-task-1',
+      state: 'in_progress',
+      updateSkipped: true,
+      skippedReviewReason: 'manager_review_not_done',
+      chatNotified: true,
     });
   });
 
