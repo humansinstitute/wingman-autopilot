@@ -11,7 +11,6 @@
 const THRESHOLD = 50;
 const USER_MESSAGE_SELECTOR = '.wm-message[data-role="user"]';
 const HEADER_OFFSET_FALLBACK = 12;
-const LAST_PROMPT_TOP_GAP = 12;
 
 function isDocumentScrollTarget(el) {
   return (
@@ -66,7 +65,6 @@ function scrollToElementAtTop(scrollElement, element) {
 function createPillState() {
   return {
     pillEl: null,
-    pillParent: null,
     scrollTarget: null,
     conversationElement: null,
     scrollListener: null,
@@ -116,7 +114,6 @@ function cleanupPillState(state) {
     state.pillEl.parentNode.removeChild(state.pillEl);
   }
   state.pillEl = null;
-  state.pillParent = null;
   state.scrollTarget = null;
   state.conversationElement = null;
   state.scrollListener = null;
@@ -188,20 +185,6 @@ function isMessageAboveView(messageElement, scrollElement) {
   return isMessageRectAboveView(messageRect, scrollRect, headerInset);
 }
 
-function positionLastPromptPill(state) {
-  if (
-    !state?.pillEl ||
-    !(state.pillParent instanceof HTMLElement) ||
-    !state.scrollTarget
-  ) {
-    return;
-  }
-  const scrollRect = getScrollContainerRect(state.scrollTarget);
-  const parentRect = state.pillParent.getBoundingClientRect();
-  const top = scrollRect.top - parentRect.top + getHeaderInset(state.scrollTarget) + LAST_PROMPT_TOP_GAP;
-  state.pillEl.style.top = `${top}px`;
-}
-
 function updateLastPromptPillVisibility(state) {
   if (!state || !state.pillEl) return;
   state.conversationElement = resolveConversationElement(state.scrollTarget, state.conversationElement);
@@ -214,9 +197,6 @@ function updateLastPromptPillVisibility(state) {
   const shouldShow = !isMessageInView(latestMessage, state.scrollTarget)
     && isMessageAboveView(latestMessage, state.scrollTarget);
   state.pillEl.style.display = shouldShow ? "" : "none";
-  if (shouldShow) {
-    positionLastPromptPill(state);
-  }
 }
 
 /**
@@ -233,7 +213,6 @@ export function attachScrollPill(parent, scrollElement) {
   if (!parent || !scrollElement) return;
 
   bottomPillState.scrollTarget = scrollElement;
-  bottomPillState.pillParent = parent;
 
   const button = document.createElement("button");
   button.className = "wm-scroll-pill";
@@ -267,7 +246,7 @@ export function attachScrollPill(parent, scrollElement) {
 /**
  * Create and attach a "last prompt" pill near the top of the visible chat area.
  *
- * @param {HTMLElement} parent  - element to append the pill into (e.g. composer shell)
+ * @param {HTMLElement} parent  - fallback element to append the pill into
  * @param {HTMLElement} scrollElement - the scrollable element to watch
  * @param {HTMLElement} conversationElement - optional conversation wrapper
  */
@@ -277,7 +256,6 @@ export function attachLastPromptPill(parent, scrollElement, conversationElement 
   if (!parent || !scrollElement) return;
 
   lastPromptPillState.scrollTarget = scrollElement;
-  lastPromptPillState.pillParent = parent;
   lastPromptPillState.conversationElement = resolveConversationElement(scrollElement, conversationElement);
 
   const button = document.createElement("button");
@@ -301,7 +279,9 @@ export function attachLastPromptPill(parent, scrollElement, conversationElement 
     hideLastPromptPill();
   });
 
-  parent.appendChild(button);
+  const pillParent = isDocumentScrollTarget(scrollElement) ? parent : scrollElement;
+  const firstChild = pillParent.firstElementChild || null;
+  pillParent.insertBefore(button, firstChild);
   lastPromptPillState.pillEl = button;
 
   lastPromptPillState.scrollListener = () => {

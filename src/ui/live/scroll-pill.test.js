@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 
 import {
   isMessageRectAboveView,
   isMessageRectInView,
 } from "./scroll-pill.js";
+
+const source = readFileSync(new URL("./scroll-pill.js", import.meta.url), "utf8");
 
 describe("last prompt pill visibility helpers", () => {
   const scrollRect = {
@@ -39,5 +42,10 @@ describe("last prompt pill visibility helpers", () => {
 
     expect(isMessageRectInView(visiblePromptRect, scrollRect, 12)).toBe(true);
     expect(isMessageRectAboveView(visiblePromptRect, scrollRect, 12)).toBe(false);
+  });
+
+  test("mounts the last prompt pill in the scroll container when available", () => {
+    expect(source).toContain("const pillParent = isDocumentScrollTarget(scrollElement) ? parent : scrollElement;");
+    expect(source).toContain("pillParent.insertBefore(button, firstChild);");
   });
 });
