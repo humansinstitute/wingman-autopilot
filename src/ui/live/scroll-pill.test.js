@@ -52,7 +52,7 @@ describe("last prompt pill visibility helpers", () => {
       left: 40,
       right: 1040,
     }, 16)).toEqual({
-      top: 108,
+      top: 140,
       left: 540,
     });
   });

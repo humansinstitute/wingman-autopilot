@@ -11,7 +11,7 @@
 const THRESHOLD = 50;
 const USER_MESSAGE_SELECTOR = '.wm-message[data-role="user"]';
 const HEADER_OFFSET_FALLBACK = 12;
-const LAST_PROMPT_TOP_GAP = 12;
+const LAST_PROMPT_TOP_CLEARANCE = 44;
 
 function isDocumentScrollTarget(el) {
   return (
@@ -195,7 +195,7 @@ function isMessageAboveView(messageElement, scrollElement) {
 
 export function getLastPromptPillPosition(scrollRect, headerInset = 0) {
   return {
-    top: scrollRect.top + headerInset + LAST_PROMPT_TOP_GAP,
+    top: scrollRect.top + headerInset + LAST_PROMPT_TOP_CLEARANCE,
     left: scrollRect.left + ((scrollRect.right - scrollRect.left) / 2),
   };
 }
