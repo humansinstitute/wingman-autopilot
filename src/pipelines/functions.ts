@@ -35,6 +35,7 @@ const DEFAULT_SETTINGS_SPEECH_FORMAT = "mp3";
 const DEFAULT_LOCAL_SPEECH_BASE_URL = "http://127.0.0.1:8880/v1";
 const DEFAULT_LOCAL_SPEECH_MODEL = "kokoro";
 const DEFAULT_LOCAL_SPEECH_VOICE = "am_onyx";
+const NO_SPECIFIC_CHANNEL_CONTEXT = "No Specific Channel Context";
 const pipelineModuleDirectory = dirname(fileURLToPath(import.meta.url));
 const autopilotRoot = normalize(join(pipelineModuleDirectory, "../.."));
 const pipelineAttachmentRoot = join(autopilotRoot, "tmp", "uploads", "attachments");
@@ -646,6 +647,7 @@ function resolveFlightDeckChannelContext(...sources: unknown[]): JsonObject {
     const sourceObject = objectValue(source);
     const channel = objectValue(sourceObject.channel ?? sourceObject.channelContext);
     const contextPrompt = getText(channel.contextPrompt ?? sourceObject.contextPrompt);
+    const hasSpecificContext = Boolean(contextPrompt && contextPrompt !== NO_SPECIFIC_CHANNEL_CONTEXT);
     if (
       getText(channel.id ?? channel.channelId ?? sourceObject.channelId)
       || getText(channel.name ?? sourceObject.name ?? sourceObject.channelName)
@@ -655,8 +657,8 @@ function resolveFlightDeckChannelContext(...sources: unknown[]): JsonObject {
         channelId: getText(channel.id ?? channel.channelId ?? sourceObject.channelId),
         scopeId: getText(channel.scopeId ?? sourceObject.scopeId),
         name: getText(channel.name ?? sourceObject.name ?? sourceObject.channelName),
-        contextPrompt: contextPrompt ?? "No Specific Channel Context",
-        hasSpecificContext: channel.hasSpecificContext === true || Boolean(contextPrompt),
+        contextPrompt: contextPrompt ?? NO_SPECIFIC_CHANNEL_CONTEXT,
+        hasSpecificContext,
       };
     }
   }
@@ -664,7 +666,7 @@ function resolveFlightDeckChannelContext(...sources: unknown[]): JsonObject {
     channelId: null,
     scopeId: null,
     name: null,
-    contextPrompt: "No Specific Channel Context",
+    contextPrompt: NO_SPECIFIC_CHANNEL_CONTEXT,
     hasSpecificContext: false,
   };
 }

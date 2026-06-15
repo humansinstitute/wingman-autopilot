@@ -93,6 +93,7 @@ export function displayPath(path) {
 
 function buildDisplayRow(step, direction, spec, options) {
   if (!isObjectLike(spec) || typeof spec.label !== "string" || typeof spec.path !== "string") return null;
+  if (!hasDisplaySource(step, direction, spec)) return null;
   const value = resolveDisplayValue(step, direction, spec);
   if (value === undefined || value === null || value === "") {
     if (typeof spec.empty !== "string") return null;
@@ -102,6 +103,14 @@ function buildDisplayRow(step, direction, spec, options) {
     name: spec.label,
     value: formatDisplayValue(value, spec, options),
   };
+}
+
+function hasDisplaySource(step, direction, spec) {
+  const source = typeof spec.source === "string" ? spec.source : direction === "in" ? "input" : "output";
+  if (source === "state") return Object.prototype.hasOwnProperty.call(Object(step), "result");
+  if (source === "input") return Object.prototype.hasOwnProperty.call(Object(step), "input");
+  return Object.prototype.hasOwnProperty.call(Object(step), "output")
+    || Object.prototype.hasOwnProperty.call(Object(step), "result");
 }
 
 function resolveDisplayValue(step, direction, spec) {

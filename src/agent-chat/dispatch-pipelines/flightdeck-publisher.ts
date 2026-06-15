@@ -3242,12 +3242,13 @@ function resolveHydratedChannelContext(input: JsonObject, fallbackChannelId: str
   const flightDeckContext = objectValue(input.flightDeckContext);
   const channel = objectValue(flightDeckContext.channel);
   const contextPrompt = getText(channel.contextPrompt);
+  const hasSpecificContext = Boolean(contextPrompt && contextPrompt !== 'No Specific Channel Context');
   return {
     channelId: getText(channel.id) ?? fallbackChannelId,
     scopeId: getText(channel.scopeId),
     name: getText(channel.name),
     contextPrompt: contextPrompt ?? 'No Specific Channel Context',
-    hasSpecificContext: channel.hasSpecificContext === true || Boolean(contextPrompt),
+    hasSpecificContext,
   };
 }
 

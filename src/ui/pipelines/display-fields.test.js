@@ -61,6 +61,20 @@ describe("pipeline display fields", () => {
     expect(rows).toEqual([{ name: "Thread", value: "No thread loaded" }]);
   });
 
+  test("does not render empty explicit fields when step payload was not loaded", () => {
+    const rows = buildExplicitDisplayRows({
+      metadata: {
+        display: {
+          in: [
+            { label: "Thread", path: "$.chatDispatchInput.latestThread", format: "messages", empty: "No thread messages" },
+          ],
+        },
+      },
+    }, "in");
+
+    expect(rows).toEqual([]);
+  });
+
   test("skips empty explicit fields unless empty text is configured", () => {
     const rows = buildExplicitDisplayRows({
       output: { pipelineDefinitionId: null, dispatchTask: false },

@@ -87,6 +87,30 @@ test("chat intent input includes Flight Deck channel context", async () => {
   expect(result.notes).toContain("Use channelContext.contextPrompt as channel-specific instructions for how this work should be handled.");
 });
 
+test("channel context sentinel is not treated as specific context", async () => {
+  const result = await builtinPipelineFunctions["dispatch.prepareChatIntentInput"]({
+    dispatch: { routeId: "route-1", triggerKind: "chat" },
+    workspace: { workspaceOwnerNpub: "npub1owner", sourceAppNpub: "npub1source" },
+    agent: { workingDirectory: "/repo", defaultAgent: "codex" },
+    record: { recordId: "message-1", payload: { body: "Hello", sender_npub: "npub1requester" } },
+    chat: { messageText: "Hello", senderNpub: "npub1requester", channelId: "channel-1", threadId: "thread-1" },
+    routing: { channelId: "channel-1", threadId: "thread-1" },
+    chatContext: {
+      shouldProceed: true,
+      channelContext: {
+        channelId: "channel-1",
+        contextPrompt: "No Specific Channel Context",
+        hasSpecificContext: true,
+      },
+    },
+  });
+
+  expect(result.channelContext).toMatchObject({
+    contextPrompt: "No Specific Channel Context",
+    hasSpecificContext: false,
+  });
+});
+
 test("task work plans preserve Flight Deck channel context for child sessions", async () => {
   const result = await builtinPipelineFunctions["dispatch.normaliseTaskWorkPlan"]({
     agentResponse: {

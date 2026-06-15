@@ -835,12 +835,13 @@ function buildFlightDeckChannelContext(
 ): DispatchFlightDeckChannelContext {
   const metadata = objectValue(channel.metadata);
   const contextPrompt = getText(metadata.basePrompt);
+  const hasSpecificContext = Boolean(contextPrompt && contextPrompt !== 'No Specific Channel Context');
   return {
     id: getText(channel.id) ?? '',
     scopeId: getText(channel.scope_id) ?? fallbackScopeId,
     name: getText(channel.name),
     contextPrompt: contextPrompt ?? 'No Specific Channel Context',
-    hasSpecificContext: Boolean(contextPrompt),
+    hasSpecificContext,
   };
 }
 

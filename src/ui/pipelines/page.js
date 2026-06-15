@@ -243,7 +243,7 @@ export function initPipelinesPage({ showToast, isFeatureEnabledForViewer = () =>
     if (shouldRefreshRun) {
       state.selectedRun = await fetchPipelineRun(route.id, {
         includeRunPayload: false,
-        includeStepPayload: false,
+        includeStepPayload: true,
         forceFresh: runIsActive,
       });
       if (runChanged) {
@@ -272,6 +272,7 @@ export function initPipelinesPage({ showToast, isFeatureEnabledForViewer = () =>
     try {
       state.selectedRun = await fetchPipelineRun(run.id, {
         includeRunPayload: true,
+        includeStepPayload: true,
         forceFresh: isActivePipelineRunStatus(run.status),
       });
     } catch (error) {
