@@ -104,6 +104,13 @@ mock.module('../yoke-runtime', () => ({
 }));
 
 mock.module('../../server/audio-speech', () => ({
+  normalizeSpeechText: (value: string) => value
+    .replace(/!?@?\[([^\]\n]+)\]\((?:mention:[^)]+|[^)]*[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}[^)]*)\)/gi, '$1')
+    .replace(/!?@?\[([^\]\n]+)\]\([^)]+\)/g, '$1')
+    .replace(/\s*\((?:mention:[^)]+|[^)]*[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}[^)]*)\)/gi, '')
+    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim(),
   generateSpeechAudio: mock(async () => ({
     audio: new Uint8Array([1, 2, 3]),
     mimeType: 'audio/mpeg',
@@ -905,6 +912,46 @@ describe('dispatch pipeline Flight Deck publisher', () => {
         audioNoteId: 'audio-note-tts-1',
       },
     });
+  });
+
+  test('chat reply full TTS strips Flight Deck reference UUIDs from the audio note transcript', async () => {
+    const rawBody = 'I reopened task @[Update Tower reaction schema for green check emoji](mention:task:e9479065-223b-488d-84c3-6b8824c64226) and started software-implementation-review-loop (9818e755-f921-400a-adf9-c934af46f02e).';
+    const publish = createDispatchFlightDeckPublisher(buildChatPublisherContext({
+      subscription: {
+        subscriptionId: 'sub-pg-1',
+        workspaceOwnerNpub: 'npub1workspace',
+        sourceAppNpub: 'npub1source',
+        backendBaseUrl: 'https://tower.example.com',
+        workspaceId: 'workspace-pg-1',
+        botNpub: 'npub1bot',
+        wsKeyNpub: null,
+      },
+      runtime: {
+        mode: 'flightdeck_pg',
+        yokeStateDir: null,
+        commandPrefix: null,
+        commands: {},
+        error: null,
+      },
+      userSettings: {
+        speech_chat_replies_enabled: 'true',
+        speech_chat_replies_mode: 'full',
+        speech_provider: 'openrouter',
+        speech_api_key: 'test-openrouter-key',
+      },
+    }));
+
+    await publish({
+      agentResponse: {
+        shouldRespond: true,
+        responseDraft: rawBody,
+      },
+    });
+
+    expect(pgMessageCreateCalls[0]?.body).toBe(rawBody);
+    expect(pgAudioNoteCreateCalls[0]?.transcriptText).toBe(
+      'I reopened task Update Tower reaction schema for green check emoji and started software-implementation-review-loop.',
+    );
   });
 
   test('task response publishing uses Flight Deck PG task state and comments without Yoke', async () => {

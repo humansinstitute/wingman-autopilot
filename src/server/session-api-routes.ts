@@ -25,7 +25,7 @@ import type { ForkToWorktreeInput } from "../sessions/fork-to-worktree";
 import { resolveSessionOwnerNpub } from "../sessions/session-ownership";
 import { deliverSessionAgentMessage } from "./session-agent-message";
 import { normalizeBusySessionMessageFailure } from "./session-message-failures";
-import { generateSpeechAudio, resolveSpeechExtension } from "./audio-speech";
+import { generateSpeechAudio, normalizeSpeechText as normalizeSharedSpeechText, resolveSpeechExtension } from "./audio-speech";
 import { generateSpeechSummary } from "./speech-summary";
 import type { PromptReadiness } from "../agents/agent-adapter";
 import {
@@ -2067,7 +2067,7 @@ function normalizeSpeechText(value: unknown): string {
   if (typeof value !== "string") {
     return "";
   }
-  return value.replace(/\s+/g, " ").trim().slice(0, MAX_SPEECH_TEXT_LENGTH);
+  return normalizeSharedSpeechText(value).slice(0, MAX_SPEECH_TEXT_LENGTH);
 }
 
 function sanitizeSpeechSummary(value: string): string {

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import type { DeclarativeFunction, DeclarativePipeline, DeclarativeStep } from '../../pipelines/declarative';
 import type { JsonObject } from '../../pipelines/pipeline-store';
-import { generateSpeechAudio, resolveSpeechExtension } from '../../server/audio-speech';
+import { generateSpeechAudio, normalizeSpeechText, resolveSpeechExtension } from '../../server/audio-speech';
 import { generateSpeechSummary } from '../../server/speech-summary';
 import type { SessionApiContext } from '../../server/session-api-routes';
 import type { AgentDefinitionRecord, RuntimeBotIdentity } from '../types';
@@ -86,7 +86,7 @@ function canUseFlightDeckRuntime(context: DispatchPipelineFlightDeckPublisherCon
 }
 
 function normaliseSpeechTranscript(value: string): string {
-  return value.replace(/\s+/g, ' ').trim().slice(0, CHAT_REPLY_TTS_MAX_TEXT_LENGTH);
+  return normalizeSpeechText(value).slice(0, CHAT_REPLY_TTS_MAX_TEXT_LENGTH);
 }
 
 function speechPreview(value: string): string {

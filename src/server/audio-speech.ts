@@ -4,6 +4,12 @@ const DEFAULT_SPEECH_MODEL = "tts-1";
 const DEFAULT_SPEECH_VOICE = "alloy";
 const DEFAULT_SPEECH_FORMAT = "mp3";
 const DEFAULT_SPEECH_BASE_URL = "https://api.openai.com/v1";
+const UUID_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
+const UUID_REGEX = new RegExp(UUID_PATTERN, "gi");
+const MARKDOWN_REFERENCE_LINK_REGEX = new RegExp(`!?@?\\[([^\\]\\n]+)\\]\\((?:mention:[^)]+|[^)]*${UUID_PATTERN}[^)]*)\\)`, "gi");
+const MARKDOWN_LINK_REGEX = /!?@?\[([^\]\n]+)\]\([^)]+\)/g;
+const PARENTHESIZED_REFERENCE_REGEX = new RegExp(`\\s*\\((?:mention:[^)]+|[^)]*${UUID_PATTERN}[^)]*)\\)`, "gi");
+const BARE_MENTION_REFERENCE_REGEX = new RegExp(`\\bmention:[\\w:-]*${UUID_PATTERN}\\b`, "gi");
 
 const speechConfigSchema = z.object({
   provider: z.enum(["openrouter", "local"]).default("openrouter"),
@@ -22,8 +28,15 @@ export type GenerateSpeechInput = {
   config?: Partial<AudioSpeechConfig> | null;
 };
 
-function normalizeSpeechText(value: string): string {
-  return value.replace(/\s+/g, " ").trim();
+export function normalizeSpeechText(value: string): string {
+  return value
+    .replace(MARKDOWN_REFERENCE_LINK_REGEX, "$1")
+    .replace(MARKDOWN_LINK_REGEX, "$1")
+    .replace(PARENTHESIZED_REFERENCE_REGEX, "")
+    .replace(BARE_MENTION_REFERENCE_REGEX, "")
+    .replace(UUID_REGEX, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function extractProviderErrorMessage(rawBody: string): string {
