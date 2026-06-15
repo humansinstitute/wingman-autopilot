@@ -732,7 +732,7 @@ export function initLiveView(deps) {
       const scrollTarget = splitScroll || docScroll;
       const conversationEl = scrollTarget?.querySelector?.(".wm-live-conversation") || document.querySelector(".wm-live-conversation");
       scrollPill.attachScrollPill(composerEl, scrollTarget);
-      scrollPill.attachLastPromptPill(conversationEl || composerEl, scrollTarget, conversationEl);
+      scrollPill.attachLastPromptPill(composerEl, scrollTarget, conversationEl);
     });
   };
 

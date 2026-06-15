@@ -4972,9 +4972,8 @@ body[data-keyboard-open="true"] .wm-composer-shell {
   background: var(--bg-tertiary, rgba(80, 80, 80, 0.9));
 }
 
-.wm-scroll-pill.wm-scroll-pill--top {
-  top: 0.35rem;
-  bottom: auto;
+.wm-scroll-pill.wm-scroll-pill--last-prompt {
+  bottom: 100%;
 }
 
 /* Archived session view styles */

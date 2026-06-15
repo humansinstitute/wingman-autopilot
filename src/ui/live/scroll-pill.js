@@ -4,8 +4,8 @@
  * Shows a small pill above the composer when new content arrives and the user
  * is scrolled up. Clicking it smooth-scrolls to the bottom.
  *
- * Also includes a second pill ("last prompt") that appears near the top of the
- * chat window and jumps to the latest user message.
+ * Also includes a second pill ("last prompt") that appears above the composer
+ * and jumps to the latest user message.
  */
 
 const THRESHOLD = 50;
@@ -154,6 +154,17 @@ function getLatestUserMessage(conversationElement) {
   return messages[messages.length - 1] || null;
 }
 
+export function isMessageRectInView(messageRect, scrollRect, headerInset = 0) {
+  return (
+    messageRect.top >= scrollRect.top + headerInset &&
+    messageRect.bottom <= scrollRect.bottom
+  );
+}
+
+export function isMessageRectAboveView(messageRect, scrollRect, headerInset = 0) {
+  return messageRect.bottom < scrollRect.top + headerInset;
+}
+
 function isMessageInView(messageElement, scrollElement) {
   if (!(messageElement instanceof Element) || !scrollElement) {
     return true;
@@ -161,10 +172,17 @@ function isMessageInView(messageElement, scrollElement) {
   const headerInset = getHeaderInset(scrollElement);
   const scrollRect = getScrollContainerRect(scrollElement);
   const messageRect = messageElement.getBoundingClientRect();
-  return (
-    messageRect.top >= scrollRect.top + headerInset &&
-    messageRect.bottom <= scrollRect.bottom
-  );
+  return isMessageRectInView(messageRect, scrollRect, headerInset);
+}
+
+function isMessageAboveView(messageElement, scrollElement) {
+  if (!(messageElement instanceof Element) || !scrollElement) {
+    return false;
+  }
+  const headerInset = getHeaderInset(scrollElement);
+  const scrollRect = getScrollContainerRect(scrollElement);
+  const messageRect = messageElement.getBoundingClientRect();
+  return isMessageRectAboveView(messageRect, scrollRect, headerInset);
 }
 
 function updateLastPromptPillVisibility(state) {
@@ -176,7 +194,10 @@ function updateLastPromptPillVisibility(state) {
     state.pillEl.style.display = "none";
     return;
   }
-  state.pillEl.style.display = isMessageInView(latestMessage, state.scrollTarget) ? "none" : "";
+  state.pillEl.style.display = !isMessageInView(latestMessage, state.scrollTarget)
+    && isMessageAboveView(latestMessage, state.scrollTarget)
+    ? ""
+    : "none";
 }
 
 /**
@@ -224,9 +245,9 @@ export function attachScrollPill(parent, scrollElement) {
 }
 
 /**
- * Create and attach a "last prompt" pill near the top of the chat window.
+ * Create and attach a "last prompt" pill above the composer.
  *
- * @param {HTMLElement} parent  - element to append the pill into (e.g. live conversation)
+ * @param {HTMLElement} parent  - element to append the pill into (e.g. composer shell)
  * @param {HTMLElement} scrollElement - the scrollable element to watch
  * @param {HTMLElement} conversationElement - optional conversation wrapper
  */
@@ -239,9 +260,10 @@ export function attachLastPromptPill(parent, scrollElement, conversationElement 
   lastPromptPillState.conversationElement = resolveConversationElement(scrollElement, conversationElement);
 
   const button = document.createElement("button");
-  button.className = "wm-scroll-pill wm-scroll-pill--top";
+  button.className = "wm-scroll-pill wm-scroll-pill--last-prompt";
   button.textContent = "last prompt";
   button.setAttribute("aria-label", "Scroll to last prompt");
+  button.dataset.testid = "scroll-to-last-prompt";
   button.style.display = "none";
 
   button.addEventListener("click", () => {
