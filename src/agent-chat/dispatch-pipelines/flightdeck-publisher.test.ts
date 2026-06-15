@@ -8,6 +8,7 @@ const yokeCommandCalls: string[][] = [];
 const pgMessageFetchCalls: Array<Record<string, unknown>> = [];
 const pgMessageCreateCalls: Array<Record<string, unknown>> = [];
 const pgStorageUploadCalls: Array<Record<string, unknown>> = [];
+const pgDocumentCreateCalls: Array<Record<string, unknown>> = [];
 const pgAudioNoteCreateCalls: Array<Record<string, unknown>> = [];
 const pgReactionCreateCalls: Array<Record<string, unknown>> = [];
 const pgTaskCreateCalls: Array<Record<string, unknown>> = [];
@@ -168,6 +169,17 @@ mock.module('../tower-client', () => ({
       },
     };
   }),
+  createFlightDeckPgChannelDocument: mock(async (input: Record<string, unknown>) => {
+    pgDocumentCreateCalls.push(input);
+    return {
+      doc: {
+        id: 'pg-doc-created-1',
+        channel_id: input.channelId,
+        title: input.title,
+        row_version: 1,
+      },
+    };
+  }),
   uploadFlightDeckPgStorageObject: mock(async (input: Record<string, unknown>) => {
     pgStorageUploadCalls.push(input);
     return {
@@ -304,6 +316,7 @@ function buildChatPublisherContext(eventInputPatch: Record<string, any> = {}) {
         backendBaseUrl: 'https://tower.example.com',
         botNpub: 'npub1bot',
         wsKeyNpub: 'npub1wskey',
+        ...(eventInputPatch.subscription ?? {}),
       },
       triggerKind: 'chat',
       capability: 'chat_intercept',
@@ -318,6 +331,15 @@ function buildChatPublisherContext(eventInputPatch: Record<string, any> = {}) {
       channelId: 'channel-1',
       threadId: 'thread-1',
       ...eventInputPatch,
+      subscription: {
+        subscriptionId: 'sub-1',
+        workspaceOwnerNpub: 'npub1workspace',
+        sourceAppNpub: 'npub1source',
+        backendBaseUrl: 'https://tower.example.com',
+        botNpub: 'npub1bot',
+        wsKeyNpub: 'npub1wskey',
+        ...(eventInputPatch.subscription ?? {}),
+      },
       payload: {
         ...payload,
         ...(eventInputPatch.payload ?? {}),
@@ -354,6 +376,7 @@ describe('dispatch pipeline Flight Deck publisher', () => {
     pgMessageFetchCalls.length = 0;
     pgMessageCreateCalls.length = 0;
     pgStorageUploadCalls.length = 0;
+    pgDocumentCreateCalls.length = 0;
     pgAudioNoteCreateCalls.length = 0;
     pgReactionCreateCalls.length = 0;
     pgTaskCreateCalls.length = 0;
@@ -792,6 +815,46 @@ describe('dispatch pipeline Flight Deck publisher', () => {
     expect(body).toContain('# Discuss discussion pipeline');
     expect(body).toContain('Can we discuss the discussion pipeline?');
     expect(body).toContain('@[discussion thread](mention:message:thread-1)');
+  });
+
+  test('discussion document ensurer creates a PG document without Yoke runtime', async () => {
+    const ensureDocument = createDispatchDiscussionDocumentEnsurer(buildChatPublisherContext({
+      runtime: {
+        mode: 'flightdeck_pg',
+        yokeStateDir: null,
+        commandPrefix: null,
+      },
+      subscription: {
+        workspaceId: 'workspace-pg-1',
+      },
+    }));
+
+    const result = await ensureDocument({
+      workPlan: {
+        taskSummary: 'Discuss PG document helpers',
+        originalPrompt: 'Please draft the doc.',
+        origin: {
+          channelId: 'channel-1',
+          threadId: 'thread-1',
+          messageId: 'chat-message-1',
+        },
+      },
+    });
+
+    expect(result).toMatchObject({
+      ensured: true,
+      status: 'created',
+      operation: 'docs.ensure-discussion-document',
+      documentId: 'pg-doc-created-1',
+      documentMention: '@[Discuss PG document helpers](mention:document:pg-doc-created-1)',
+    });
+    expect(pgDocumentCreateCalls).toHaveLength(1);
+    expect(pgDocumentCreateCalls[0]).toMatchObject({
+      workspaceId: 'workspace-pg-1',
+      channelId: 'channel-1',
+      title: 'Discuss PG document helpers',
+    });
+    expect(yokeCommandCalls.some((args) => args[0] === 'docs' && args[1] === 'create')).toBe(false);
   });
 
   test('chat reply publishing preserves Markdown newlines and storage image references', async () => {

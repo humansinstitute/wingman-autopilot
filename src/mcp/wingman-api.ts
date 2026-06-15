@@ -11,6 +11,22 @@
  */
 
 import type { SessionOrigin, SessionSnapshot } from "../agents/process-manager";
+import type { RuntimeBotIdentity } from "../agent-chat/types";
+import {
+  acquireFlightDeckPgEditLease,
+  createFlightDeckPgChannelDocument,
+  createFlightDeckPgChannelMessage,
+  createFlightDeckPgDocumentComment,
+  createFlightDeckPgTaskComment,
+  decodeFlightDeckPgDocumentBody,
+  fetchFlightDeckPgChannelMessages,
+  fetchFlightDeckPgDocument,
+  fetchFlightDeckPgDocumentComments,
+  fetchFlightDeckPgTask,
+  fetchFlightDeckPgTaskComments,
+  updateFlightDeckPgDocument,
+  updateFlightDeckPgTaskState,
+} from "../agent-chat/tower-client";
 import { AGENT_TYPES, AGENT_TYPE_LIST, type AgentType } from "../agent-types";
 import type { AppRecord, AppLifecycleAction } from "../apps/app-registry";
 import type { AppProcessStatus } from "../apps/app-process-manager";
@@ -23,6 +39,7 @@ import type { UserSettingsStore } from "../storage/user-settings-store";
 import type { ArtifactsStore, CreateArtifactInput } from "../storage/artifacts-store";
 import type { NpubProjectRecord } from "../projects/npub-project-store";
 import type { MemoryStore } from "./memory-store";
+import type { PipelineStore, JsonObject } from "../pipelines/pipeline-store";
 import { parseBody, jsonError } from "../utils/request-utils";
 import type { NightWatchStartOptions } from "../nightwatch/nightwatch-start-config";
 import { parseNightWatchStartOptions } from "../nightwatch/nightwatch-start-config";
@@ -74,6 +91,8 @@ export interface WingmanMcpApiDependencies {
     filePaths: string[],
     activeFilePath?: string | null,
   ) => SessionSnapshot | null | undefined;
+  pipelineStore?: PipelineStore;
+  getBotIdentityForSubscription?: (subscriptionId: string) => RuntimeBotIdentity | null;
 }
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -249,6 +268,11 @@ export function createWingmanMcpApiHandler(deps: WingmanMcpApiDependencies) {
       // GET /api/mcp/wingman/artifact/pin?sessionId=...
       if (segments.length === 5 && segments[3] === "artifact" && segments[4] === "pin" && method === "GET") {
         return handleGetPinnedArtifact(deps, url);
+      }
+
+      // POST /api/mcp/wingman/flightdeck
+      if (segments.length === 4 && segments[3] === "flightdeck" && method === "POST") {
+        return await handleFlightDeckHelper(deps, request);
       }
 
       return jsonError("Not found", 404);
@@ -1132,6 +1156,377 @@ function handleDeleteMemory(
 
   const deleted = deps.memoryStore.deleteMemory(memoryId);
   return jsonOk({ deleted });
+}
+
+// ---------------------------------------------------------------------------
+// Flight Deck helpers
+// ---------------------------------------------------------------------------
+
+interface FlightDeckMcpContext {
+  session: SessionSnapshot;
+  runId: string | null;
+  run: { input: JsonObject; current: JsonObject } | null;
+  root: JsonObject;
+  workspace: JsonObject;
+  chat: JsonObject;
+  routing: JsonObject;
+  record: JsonObject;
+  runtime: JsonObject;
+  botIdentity: RuntimeBotIdentity | null;
+  backendBaseUrl: string | null;
+  workspaceId: string | null;
+  appNpub: string | null;
+  subscriptionId: string | null;
+}
+
+function asObject(value: unknown): JsonObject {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as JsonObject : {};
+}
+
+function asString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function resolveFlightDeckRunId(session: SessionSnapshot): string | null {
+  const metadata = session.metadata ?? { AGENT: false, billingMode: "subscription" };
+  return asString(metadata.flowRunId) ?? (
+    metadata.bindingType === "flow_run" ? asString(metadata.bindingId) : null
+  );
+}
+
+function resolveFlightDeckMcpContext(
+  deps: WingmanMcpApiDependencies,
+  sessionId: string,
+): FlightDeckMcpContext | Response {
+  const denied = requireSessionId(deps, sessionId);
+  if (denied) return denied;
+  const session = deps.getSession(sessionId);
+  if (!session) return jsonError("Caller session not found", 404);
+  const runId = resolveFlightDeckRunId(session);
+  const run = runId && deps.pipelineStore ? deps.pipelineStore.getRun(runId) : null;
+  const root = asObject(run?.current ?? run?.input ?? {});
+  const workspace = asObject(root.workspace);
+  const subscriptionId = asString(workspace.subscriptionId);
+  const botIdentity = subscriptionId && deps.getBotIdentityForSubscription
+    ? deps.getBotIdentityForSubscription(subscriptionId)
+    : null;
+
+  return {
+    session,
+    runId,
+    run: run ? { input: run.input, current: run.current } : null,
+    root,
+    workspace,
+    chat: asObject(root.chat),
+    routing: asObject(root.routing),
+    record: asObject(root.record),
+    runtime: asObject(root.runtime),
+    botIdentity,
+    backendBaseUrl: asString(workspace.backendBaseUrl),
+    workspaceId: asString(workspace.workspaceId),
+    appNpub: asString(workspace.sourceAppNpub),
+    subscriptionId,
+  };
+}
+
+function requireFlightDeckPgContext(ctx: FlightDeckMcpContext): Response | null {
+  if (!ctx.run) return jsonError("No pipeline run context found for this session", 400);
+  if (!ctx.workspaceId) return jsonError("Flight Deck PG workspace id is missing from pipeline context", 400);
+  if (!ctx.backendBaseUrl) return jsonError("Flight Deck backend URL is missing from pipeline context", 400);
+  if (!ctx.appNpub) return jsonError("Flight Deck app npub is missing from pipeline context", 400);
+  if (!ctx.botIdentity) return jsonError("No runtime bot identity is available for this Flight Deck subscription", 400);
+  return null;
+}
+
+function resolveChannelId(ctx: FlightDeckMcpContext, body: JsonObject): string | null {
+  return asString(body.channelId)
+    ?? asString(body.channel_id)
+    ?? asString(ctx.chat.channelId)
+    ?? asString(ctx.routing.channelId)
+    ?? asString(asObject(ctx.record.payload).channel_id);
+}
+
+function resolveThreadId(ctx: FlightDeckMcpContext, body: JsonObject): string | null {
+  return asString(body.threadId)
+    ?? asString(body.thread_id)
+    ?? asString(ctx.chat.threadId)
+    ?? asString(ctx.routing.threadId)
+    ?? asString(asObject(ctx.record.payload).thread_id);
+}
+
+function resolveTaskId(ctx: FlightDeckMcpContext, body: JsonObject): string | null {
+  const routingBindingType = asString(ctx.routing.bindingType);
+  return asString(body.taskId)
+    ?? asString(body.task_id)
+    ?? (routingBindingType === "task" ? asString(ctx.routing.bindingId) : null)
+    ?? asString(asObject(ctx.root.createdTask).taskId)
+    ?? asString(asObject(ctx.root.createdTask).id)
+    ?? asString(ctx.record.recordId);
+}
+
+function resolveDocumentId(ctx: FlightDeckMcpContext, body: JsonObject): string | null {
+  const routingBindingType = asString(ctx.routing.bindingType);
+  return asString(body.documentId)
+    ?? asString(body.document_id)
+    ?? asString(asObject(ctx.root.discussionDocument).documentId)
+    ?? asString(asObject(ctx.root.ensuredDocument).documentId)
+    ?? (routingBindingType === "document" ? asString(ctx.routing.bindingId) : null)
+    ?? (asString(ctx.record.recordFamily) === "document" ? asString(ctx.record.recordId) : null);
+}
+
+async function handleFlightDeckHelper(
+  deps: WingmanMcpApiDependencies,
+  request: Request,
+): Promise<Response> {
+  const body = await parseBody(request);
+  const sessionId = asString(body.sessionId);
+  if (!sessionId) return jsonError("sessionId is required", 400);
+  const action = asString(body.action);
+  if (!action) return jsonError("action is required", 400);
+  const resolved = resolveFlightDeckMcpContext(deps, sessionId);
+  if (resolved instanceof Response) return resolved;
+
+  if (action === "context") {
+    return jsonOk({
+      ok: true,
+      mode: asString(resolved.runtime.mode),
+      runId: resolved.runId,
+      hasRunContext: Boolean(resolved.run),
+      workspace: {
+        workspaceId: resolved.workspaceId,
+        backendBaseUrl: resolved.backendBaseUrl,
+        sourceAppNpub: resolved.appNpub,
+        workspaceOwnerNpub: asString(resolved.workspace.workspaceOwnerNpub),
+        humanWorkspaceOwnerNpub: asString(resolved.workspace.humanWorkspaceOwnerNpub),
+        workspaceServiceNpub: asString(resolved.workspace.workspaceServiceNpub),
+        subscriptionId: resolved.subscriptionId,
+      },
+      chat: {
+        channelId: resolveChannelId(resolved, body),
+        threadId: resolveThreadId(resolved, body),
+        messageText: asString(resolved.chat.messageText),
+      },
+      routing: resolved.routing,
+      record: {
+        recordId: asString(resolved.record.recordId),
+        recordFamily: asString(resolved.record.recordFamily),
+      },
+      bot: {
+        npub: resolved.botIdentity?.botNpub ?? asString(asObject(resolved.root.agent).botNpub),
+        available: Boolean(resolved.botIdentity),
+      },
+    });
+  }
+
+  const missing = requireFlightDeckPgContext(resolved);
+  if (missing) return missing;
+  const pg = {
+    backendBaseUrl: resolved.backendBaseUrl!,
+    workspaceId: resolved.workspaceId!,
+    appNpub: resolved.appNpub!,
+    botIdentity: resolved.botIdentity!,
+  };
+
+  if (action === "doc_create") {
+    const channelId = resolveChannelId(resolved, body);
+    const title = asString(body.title);
+    const docBody = asString(body.body) ?? "";
+    if (!channelId) return jsonError("channelId is required", 400);
+    if (!title) return jsonError("title is required", 400);
+    const result = await createFlightDeckPgChannelDocument({
+      ...pg,
+      channelId,
+      title,
+      body: docBody,
+      summary: asString(body.summary),
+      metadata: {
+        autopilot_mcp_helper: true,
+        source_session_id: sessionId,
+        source_pipeline_run_id: resolved.runId,
+        source_record_id: asString(resolved.record.recordId),
+        ...asObject(body.metadata),
+      },
+    });
+    return jsonOk({ ok: true, result });
+  }
+
+  if (action === "doc_get") {
+    const documentId = resolveDocumentId(resolved, body);
+    if (!documentId) return jsonError("documentId is required", 400);
+    const result = await fetchFlightDeckPgDocument({
+      ...pg,
+      documentId,
+      includeBody: body.includeBody !== false && body.include_body !== false,
+    });
+    return jsonOk({
+      ok: true,
+      ...result,
+      body_text: decodeFlightDeckPgDocumentBody(result),
+    });
+  }
+
+  if (action === "doc_update") {
+    const documentId = resolveDocumentId(resolved, body);
+    const docBody = asString(body.body);
+    if (!documentId) return jsonError("documentId is required", 400);
+    if (!docBody && !asString(body.title) && body.metadata === undefined && body.summary === undefined) {
+      return jsonError("body, title, summary, or metadata is required", 400);
+    }
+    const current = await fetchFlightDeckPgDocument({ ...pg, documentId });
+    const rowVersion = Number(asObject(current.doc).row_version);
+    if (!Number.isFinite(rowVersion) || rowVersion <= 0) {
+      return jsonError(`Document ${documentId} did not include a valid row_version`, 409);
+    }
+    const lease = await acquireFlightDeckPgEditLease({
+      ...pg,
+      entityType: "document",
+      entityId: documentId,
+      ttlSeconds: 120,
+    });
+    const leaseToken = asString(asObject(lease.lease).lease_token);
+    if (!leaseToken) return jsonError(`Document ${documentId} edit lease did not include a token`, 409);
+    const result = await updateFlightDeckPgDocument({
+      ...pg,
+      documentId,
+      title: asString(body.title),
+      body: docBody,
+      summary: body.summary === undefined ? undefined : asString(body.summary),
+      metadata: body.metadata === undefined ? undefined : asObject(body.metadata),
+      rowVersion,
+      leaseToken,
+    });
+    return jsonOk({ ok: true, result });
+  }
+
+  if (action === "doc_comments") {
+    const documentId = resolveDocumentId(resolved, body);
+    if (!documentId) return jsonError("documentId is required", 400);
+    const result = await fetchFlightDeckPgDocumentComments({
+      ...pg,
+      documentId,
+      limit: Number(body.limit) > 0 ? Number(body.limit) : 200,
+    });
+    return jsonOk({ ok: true, ...result });
+  }
+
+  if (action === "doc_reply") {
+    const documentId = resolveDocumentId(resolved, body);
+    const parentCommentId = asString(body.commentId) ?? asString(body.comment_id);
+    const replyBody = asString(body.body);
+    if (!documentId) return jsonError("documentId is required", 400);
+    if (!parentCommentId) return jsonError("commentId is required", 400);
+    if (!replyBody) return jsonError("body is required", 400);
+    const result = await createFlightDeckPgDocumentComment({
+      ...pg,
+      documentId,
+      parentCommentId,
+      body: replyBody,
+      metadata: {
+        autopilot_mcp_helper: true,
+        source_session_id: sessionId,
+        source_pipeline_run_id: resolved.runId,
+        source_record_id: asString(resolved.record.recordId),
+        ...asObject(body.metadata),
+      },
+    });
+    return jsonOk({ ok: true, result });
+  }
+
+  if (action === "thread_read") {
+    const channelId = resolveChannelId(resolved, body);
+    if (!channelId) return jsonError("channelId is required", 400);
+    const result = await fetchFlightDeckPgChannelMessages({
+      ...pg,
+      channelId,
+      threadId: resolveThreadId(resolved, body),
+      limit: Number(body.limit) > 0 ? Number(body.limit) : 200,
+    });
+    return jsonOk({ ok: true, ...result });
+  }
+
+  if (action === "chat_reply") {
+    const channelId = resolveChannelId(resolved, body);
+    const replyBody = asString(body.body);
+    if (!channelId) return jsonError("channelId is required", 400);
+    if (!replyBody) return jsonError("body is required", 400);
+    const result = await createFlightDeckPgChannelMessage({
+      ...pg,
+      channelId,
+      body: replyBody,
+      threadId: resolveThreadId(resolved, body),
+      createThread: body.createThread === true,
+      metadata: {
+        autopilot_mcp_helper: true,
+        source_session_id: sessionId,
+        source_pipeline_run_id: resolved.runId,
+        source_record_id: asString(resolved.record.recordId),
+        ...asObject(body.metadata),
+      },
+    });
+    return jsonOk({ ok: true, result });
+  }
+
+  if (action === "task_comment") {
+    const taskId = resolveTaskId(resolved, body);
+    const commentBody = asString(body.body);
+    if (!taskId) return jsonError("taskId is required", 400);
+    if (!commentBody) return jsonError("body is required", 400);
+    const result = await createFlightDeckPgTaskComment({
+      ...pg,
+      taskId,
+      body: commentBody,
+      threadId: resolveThreadId(resolved, body),
+      metadata: {
+        autopilot_mcp_helper: true,
+        source_session_id: sessionId,
+        source_pipeline_run_id: resolved.runId,
+        source_record_id: asString(resolved.record.recordId),
+        ...asObject(body.metadata),
+      },
+    });
+    return jsonOk({ ok: true, result });
+  }
+
+  if (action === "task_comments") {
+    const taskId = resolveTaskId(resolved, body);
+    if (!taskId) return jsonError("taskId is required", 400);
+    const result = await fetchFlightDeckPgTaskComments({
+      ...pg,
+      taskId,
+      limit: Number(body.limit) > 0 ? Number(body.limit) : 200,
+    });
+    return jsonOk({ ok: true, ...result });
+  }
+
+  if (action === "task_state") {
+    const taskId = resolveTaskId(resolved, body);
+    const state = asString(body.state);
+    if (!taskId) return jsonError("taskId is required", 400);
+    if (!state) return jsonError("state is required", 400);
+    const taskResult = await fetchFlightDeckPgTask({ ...pg, taskId });
+    const rowVersion = Number(asObject(taskResult.task).row_version);
+    if (!Number.isFinite(rowVersion) || rowVersion <= 0) {
+      return jsonError(`Task ${taskId} did not include a valid row_version`, 409);
+    }
+    const lease = await acquireFlightDeckPgEditLease({
+      ...pg,
+      entityType: "task",
+      entityId: taskId,
+      ttlSeconds: 120,
+    });
+    const leaseToken = asString(asObject(lease.lease).lease_token);
+    if (!leaseToken) return jsonError(`Task ${taskId} edit lease did not include a token`, 409);
+    const result = await updateFlightDeckPgTaskState({
+      ...pg,
+      taskId,
+      state,
+      rowVersion,
+      leaseToken,
+    });
+    return jsonOk({ ok: true, result });
+  }
+
+  return jsonError(`Unsupported Flight Deck helper action: ${action}`, 400);
 }
 
 // ---------------------------------------------------------------------------

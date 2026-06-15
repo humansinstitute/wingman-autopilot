@@ -63,6 +63,7 @@ export type DeclarativeStep =
       assign?: string;
       when?: EqualsCondition;
       agent?: string;
+      model?: string;
       directory?: string;
       timeoutMs?: number | string;
     }

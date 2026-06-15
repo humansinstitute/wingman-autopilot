@@ -722,6 +722,19 @@ function isDocumentDiscussionIntent(rawIntent: string | null, text: string): boo
     || /\b(comment|comments|inline comment|review note|accepted plan)\b/i.test(text);
 }
 
+function isDocumentDiscussionChannelContext(value: unknown): boolean {
+  const channelContext = objectValue(value);
+  if (channelContext.hasSpecificContext === false) return false;
+  const text = getText(channelContext.contextPrompt) ?? "";
+  return /\b(feature|design|planning|discussion|discussing features)\b/i.test(text)
+    && /\b(doc|document|definition|comments?)\b/i.test(text)
+    && /\b(not trying to build|not build|before implementing|before implementation|iterate)\b/i.test(text);
+}
+
+function isImplementationRequestText(text: string): boolean {
+  return /\b(implement|build|code|fix|ship|deploy|migrate|wire up|integrate|add tests?|update the repo|make the change|make code changes?)\b/i.test(text);
+}
+
 function resolveDiscussionPipelineId(
   input: Record<string, unknown>,
   raw: Record<string, unknown>,
@@ -1236,7 +1249,7 @@ export const builtinPipelineFunctions: FunctionRegistry = {
         "Use referencedRecords only as supporting Flight Deck context.",
         "Classify as answer_now or create_task.",
         "Use answer_now only when chatResponse.body is the complete final reply.",
-        "Use create_task for durable output or any answer that requires inspecting sessions, logs, pipelines, files, projects, Tower/Yoke state, or Autopilot runtime state before reporting back.",
+        "Use create_task for durable output or any answer that requires inspecting sessions, logs, pipelines, files, projects, Tower/Flight Deck state, or Autopilot runtime state before reporting back.",
         "Do not use think_then_answer for future-action acknowledgements.",
         "Do not choose a child pipeline in this stage; task pipeline candidates are loaded only after create_task.",
       ],
@@ -1312,6 +1325,98 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     };
   },
 
+  async "dispatch.prepareDocumentDiscussionContext"(input) {
+    const dispatch = objectValue(input.dispatch);
+    const workspace = objectValue(input.workspace);
+    const agent = objectValue(input.agent);
+    const chat = objectValue(input.chat);
+    const record = objectValue(input.record);
+    const routing = objectValue(input.routing);
+    const runtime = objectValue(input.runtime);
+    const chatContext = objectValue(input.chatContext);
+    const originalChatContext = objectValue(input.originalChatContext);
+    const decision = objectValue(input.decision);
+    const workPlan = objectValue(input.workPlan ?? decision.discussionWorkPlan);
+    const parentDispatch = objectValue(input.parentDispatch);
+    const latestThread = latestThreadWithTrigger(chatContext, record, chat);
+    const channelContext = resolveFlightDeckChannelContext(chatContext.channelContext, originalChatContext.channelContext, input.flightDeckContext);
+    const referencedRecords = Array.isArray(chatContext.referencedRecords)
+      ? chatContext.referencedRecords.slice(0, 12).map(compactReferencedRecord)
+      : Array.isArray(originalChatContext.referencedRecords)
+        ? originalChatContext.referencedRecords.slice(0, 12).map(compactReferencedRecord)
+        : [];
+    const scopes = extractScopeRecords(chatContext.scopes)
+      .map(compactScope)
+      .filter((scope) => Boolean(scope.id));
+    const payload = objectValue(record.payload);
+    const requesterNpub = getText(chat.senderNpub ?? payload.sender_npub ?? record.updaterNpub);
+    const source = {
+      routeId: getText(dispatch.routeId),
+      triggerKind: getText(dispatch.triggerKind) ?? "chat",
+      channelId: getText(chat.channelId ?? routing.channelId ?? chatContext.channelId),
+      threadId: getText(chat.threadId ?? routing.threadId ?? chatContext.threadId),
+      messageId: getText(record.recordId ?? record.record_id ?? payload.record_id),
+      requesterNpub,
+    };
+    return {
+      objective: "Iterate a Flight Deck document from the latest chat thread without creating a task.",
+      source,
+      workspace: {
+        workspaceOwnerNpub: getText(workspace.workspaceOwnerNpub),
+        humanWorkspaceOwnerNpub: getText(workspace.humanWorkspaceOwnerNpub),
+        workspaceId: getText(workspace.workspaceId),
+        sourceAppNpub: getText(workspace.sourceAppNpub),
+        backendBaseUrl: getText(workspace.backendBaseUrl),
+      },
+      agent: {
+        botNpub: getText(agent.botNpub),
+        workdir: getText(agent.workingDirectory),
+        defaultAgent: getText(agent.defaultAgent),
+      },
+      runtime: {
+        mode: getText(runtime.mode),
+        error: getText(runtime.error),
+      },
+      selfCheck: {
+        shouldProceed: chatContext.shouldProceed !== false,
+        selfAuthored: chatContext.selfAuthored === true,
+        suppressionReason: getText(chatContext.suppressionReason),
+        matchedSelfNpub: getText(chatContext.matchedSelfNpub),
+      },
+      latestThread,
+      channelContext,
+      referencedRecords,
+      scopes,
+      decision: {
+        intent: getText(decision.intent),
+        recommendedPipelineId: getText(decision.recommendedPipelineId),
+        responseDraft: compactText(decision.responseDraft ?? objectValue(decision.chatResponse).body, 1000),
+        confidence: typeof decision.confidence === "number" ? decision.confidence : null,
+      },
+      workPlan: {
+        title: compactText(workPlan.title ?? workPlan.taskSummary, 240),
+        taskSummary: compactText(workPlan.taskSummary ?? workPlan.title, 500),
+        originalPrompt: compactText(workPlan.originalPrompt, 3000),
+        scopeId: getText(workPlan.scopeId),
+        channelId: getText(workPlan.channelId ?? objectValue(workPlan.origin).channelId ?? source.channelId),
+        threadId: getText(workPlan.threadId ?? objectValue(workPlan.origin).threadId ?? source.threadId),
+        messageId: getText(workPlan.messageId ?? objectValue(workPlan.origin).messageId ?? source.messageId),
+        acceptanceCriteria: Array.isArray(workPlan.acceptanceCriteria) ? workPlan.acceptanceCriteria.slice(0, 8).map((item) => compactText(item, 500)) : [],
+        executionPlan: Array.isArray(workPlan.executionPlan) ? workPlan.executionPlan.slice(0, 8).map((item) => compactText(item, 500)) : [],
+      },
+      parentDispatch: {
+        pipelineRunId: getText(parentDispatch.pipelineRunId ?? parentDispatch.runId),
+        pipelineName: getText(parentDispatch.pipelineName ?? parentDispatch.name),
+      },
+      notes: [
+        "Use latestThread as the authoritative current conversation.",
+        "Use channelContext.contextPrompt as the channel-specific instruction.",
+        "Use referencedRecords and document mentions to find the working Flight Deck document.",
+        "Do not create a task. Do not run Yoke for Flight Deck PG work.",
+      ],
+    };
+  },
+
   async "dispatch.detectChatReviewApproval"(input) {
     const chatContext = objectValue(input.chatContext);
     const text = latestThreadText(chatContext, objectValue(input.chat).messageText ?? objectValue(objectValue(input.record).payload).body);
@@ -1372,12 +1477,20 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const agent = objectValue(input.agent);
     const chatContext = objectValue(input.chatContext);
     const chatDispatchInput = objectValue(input.chatDispatchInput);
+    const channelContext = resolveFlightDeckChannelContext(chatDispatchInput.channelContext, chatContext.channelContext, input.flightDeckContext);
     const payload = objectValue(record.payload);
     const thread = Array.isArray(chatDispatchInput.latestThread) && chatDispatchInput.latestThread.length > 0
       ? chatDispatchInput.latestThread.slice(-12).map(compactThreadMessage)
       : getThreadMessages(chatContext).slice(-12).map(compactThreadMessage);
     const latest = thread[thread.length - 1] ?? {};
     const latestText = getText(latest.body) ?? getText(chat.messageText) ?? getText(payload.body) ?? "";
+    const taskDraftInstructions = getText(objectValue(raw.taskDraft).instructions) ?? "";
+    const taskLikeDecisionPending = decision.requestedDispatchTask === true
+      || decision.taskRoutingPending === true
+      || decision.dispatchTask === true;
+    if (taskLikeDecisionPending && isImplementationRequestText(`${latestText} ${taskDraftInstructions}`)) {
+      return decision;
+    }
     const rawIntent = getText(raw.intent ?? raw.classification ?? raw.action);
     const rawIntentKey = (rawIntent ?? "").toLowerCase();
     const chatResponseBody = getText(objectValue(raw.chatResponse).body)
@@ -1395,7 +1508,8 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     );
     const selectedDiscussionPipeline = isDiscussionPipelineIdentifier(selectedPipelineId);
     const documentDiscussion = isDocumentDiscussionPipelineIdentifier(selectedPipelineId)
-      || isDocumentDiscussionIntent(rawIntent, latestText);
+      || isDocumentDiscussionIntent(rawIntent, latestText)
+      || (isDocumentDiscussionChannelContext(channelContext) && isDocumentDiscussionIntent(rawIntent, `${latestText} ${taskDraftInstructions}`));
     const simpleDirectResponse = Boolean(chatResponseBody)
       && raw.dispatchTask !== true
       && !selectedPipelineId
@@ -1447,6 +1561,7 @@ export const builtinPipelineFunctions: FunctionRegistry = {
       workdir: null,
       dispatchDiscussion: true,
       discussionPipelineDefinitionId: pipelineDefinitionId,
+      taskRoutingPending: false,
       shouldRespond: true,
       responseDraft,
       reasoningSummary: `Starting ${pipelineDefinitionId} without creating a task, while preserving the immediate chat reply.`,
@@ -1932,7 +2047,7 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const taskAction = createdTask.reused === true ? "reopened task" : "created task";
     let responseDraft = getText(decision.responseDraft) ?? "Done.";
     if (taskCreationFailed) {
-      responseDraft = `I have the request, but I could not create the Flight Deck task yet: ${getText(createdTask.reason) ?? "unknown error"}. I am not dropping the request; please retry or check the dispatch/Yoke connection.`;
+      responseDraft = `I have the request, but I could not create the Flight Deck task yet: ${getText(createdTask.reason) ?? "unknown error"}. I am not dropping the request; please retry or check the Autopilot Flight Deck dispatch connection.`;
     } else if (decision.dispatchTask === true && taskId) {
       responseDraft = needsInput
         ? `I ${taskAction} ${taskMention} and started ${pipelineName ?? "the selected pipeline"}${pipelineRunId ? ` (${pipelineRunId})` : ""}, but it needs input before it can continue.${getText(needsInputUpdate.question) ? `\nQuestion: ${getText(needsInputUpdate.question)}` : ""}`

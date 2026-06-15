@@ -1,8 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
 
 import { createWingmanMcpApiHandler, type WingmanMcpApiDependencies } from "./wingman-api";
 import type { SessionSnapshot } from "../agents/process-manager";
 import type { AgentType } from "../config";
+import { PipelineStore } from "../pipelines/pipeline-store";
 
 function buildSession(input: Partial<SessionSnapshot> & { id: string }): SessionSnapshot {
   return {
@@ -20,7 +24,10 @@ function buildSession(input: Partial<SessionSnapshot> & { id: string }): Session
   };
 }
 
-function makeDeps(sessions: Map<string, SessionSnapshot>): WingmanMcpApiDependencies {
+function makeDeps(
+  sessions: Map<string, SessionSnapshot>,
+  overrides: Partial<WingmanMcpApiDependencies> = {},
+): WingmanMcpApiDependencies {
   return {
     getSession: (sessionId) => sessions.get(sessionId) ?? null,
     listSessions: () => Array.from(sessions.values()),
@@ -110,6 +117,7 @@ function makeDeps(sessions: Map<string, SessionSnapshot>): WingmanMcpApiDependen
       sessions.set(sessionId, updated);
       return updated;
     },
+    ...overrides,
   };
 }
 
@@ -280,5 +288,95 @@ describe("wingman-api pinned artifacts", () => {
       pinnedFile: "/tmp/three.md",
       pinnedFiles: ["/tmp/two.md", "/tmp/one.md", "/tmp/three.md"],
     });
+  });
+});
+
+describe("wingman-api Flight Deck helpers", () => {
+  test("flightdeck_context resolves pipeline workspace and thread context", async () => {
+    const sessions = new Map<string, SessionSnapshot>();
+    const store = new PipelineStore(join(tmpdir(), `wingman-mcp-fd-${randomUUID()}.sqlite`));
+    const run = store.createRun({
+      definitionId: "document-discussion",
+      name: "document-discussion",
+      scope: "shared",
+      input: {
+        workspace: {
+          workspaceId: "workspace-1",
+          backendBaseUrl: "http://tower.test",
+          sourceAppNpub: "npub-app",
+          workspaceOwnerNpub: "npub-owner",
+          subscriptionId: "sub-1",
+        },
+        chat: {
+          channelId: "channel-1",
+          threadId: "thread-1",
+          messageText: "Draft the doc",
+        },
+        routing: {
+          channelId: "channel-1",
+          threadId: "thread-1",
+        },
+        record: {
+          recordId: "message-1",
+          recordFamily: "chat_message",
+        },
+        runtime: {
+          mode: "flightdeck_pg",
+        },
+        agent: {
+          botNpub: "npub-bot",
+        },
+      },
+    });
+    sessions.set("caller-1", buildSession({
+      id: "caller-1",
+      metadata: {
+        AGENT: true,
+        bindingType: "flow_run",
+        bindingId: run.id,
+        flowRunId: run.id,
+      },
+    }));
+    const handler = createWingmanMcpApiHandler(makeDeps(sessions, { pipelineStore: store }));
+
+    const response = await handler(
+      new Request("http://localhost/api/mcp/wingman/flightdeck", {
+        method: "POST",
+        body: JSON.stringify({ sessionId: "caller-1", action: "context" }),
+      }),
+      new URL("http://localhost/api/mcp/wingman/flightdeck"),
+      "POST",
+    );
+
+    expect(response?.status).toBe(200);
+    const body = await response!.json();
+    expect(body.workspace.workspaceId).toBe("workspace-1");
+    expect(body.chat.channelId).toBe("channel-1");
+    expect(body.chat.threadId).toBe("thread-1");
+    expect(body.bot.npub).toBe("npub-bot");
+  });
+
+  test("document helpers require Flight Deck PG pipeline context", async () => {
+    const sessions = new Map<string, SessionSnapshot>();
+    sessions.set("caller-1", buildSession({ id: "caller-1", metadata: { AGENT: true } }));
+    const handler = createWingmanMcpApiHandler(makeDeps(sessions));
+
+    const response = await handler(
+      new Request("http://localhost/api/mcp/wingman/flightdeck", {
+        method: "POST",
+        body: JSON.stringify({
+          sessionId: "caller-1",
+          action: "doc_update",
+          documentId: "doc-1",
+          body: "Updated body",
+        }),
+      }),
+      new URL("http://localhost/api/mcp/wingman/flightdeck"),
+      "POST",
+    );
+
+    expect(response?.status).toBe(400);
+    const body = await response!.json();
+    expect(body.error).toContain("No pipeline run context");
   });
 });

@@ -10,6 +10,7 @@ import {
   acquireFlightDeckPgEditLease,
   assignFlightDeckPgTask,
   createFlightDeckPgAudioNote,
+  createFlightDeckPgChannelDocument,
   createFlightDeckPgChannelMessage,
   createFlightDeckPgChannelTask,
   createFlightDeckPgReaction,
@@ -827,7 +828,7 @@ export function createDispatchDiscussionDocumentEnsurer(
   context: DispatchPipelineFlightDeckPublisherContext,
 ): DeclarativeFunction {
   return async (input) => {
-    if (!context.botIdentity || !context.agent?.workingDirectory || !context.runtime.yokeStateDir) {
+    if (!canUseFlightDeckRuntime(context)) {
       return {
         ensured: false,
         status: 'failed',
@@ -851,6 +852,60 @@ export function createDispatchDiscussionDocumentEnsurer(
     const workPlan = objectValue(input.workPlan ?? objectValue(input.decision).discussionWorkPlan);
     const title = buildDiscussionDocumentTitle(input, workPlan);
     const body = buildDiscussionDocumentScaffold(input, workPlan, title);
+    if (isFlightDeckPgPublisherContext(context)) {
+      const channelId = resolveFlightDeckPgChannelId(context, getText(workPlan.channelId ?? objectValue(workPlan.origin).channelId));
+      if (!channelId) {
+        return {
+          ensured: false,
+          status: 'failed',
+          operation: 'docs.ensure-discussion-document',
+          reason: 'Flight Deck PG channel id was not available for discussion document creation.',
+        };
+      }
+      try {
+        const result = await createFlightDeckPgChannelDocument({
+          ...getFlightDeckPgPublishContext(context),
+          channelId,
+          title,
+          body,
+          summary: getText(workPlan.taskSummary),
+          metadata: {
+            autopilot_discussion_document: true,
+            source_record_id: context.eventInput.recordId,
+            source_channel_id: context.eventInput.channelId,
+            source_thread_id: context.eventInput.threadId,
+          },
+        });
+        const documentId = getText(objectValue(result.doc).id);
+        if (!documentId) {
+          return {
+            ensured: false,
+            status: 'failed',
+            operation: 'docs.ensure-discussion-document',
+            reason: 'Document creation succeeded but no document id was returned.',
+            createResult: result,
+          };
+        }
+        return {
+          ensured: true,
+          status: 'created',
+          operation: 'docs.ensure-discussion-document',
+          documentId,
+          documentTitle: title,
+          documentUrl: null,
+          documentMention: mention('document', documentId, title),
+          createResult: result,
+        };
+      } catch (error) {
+        return {
+          ensured: false,
+          status: 'failed',
+          operation: 'docs.ensure-discussion-document',
+          reason: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }
+
     const scopeId = getText(workPlan.scopeId ?? objectValue(input.decision).scopeId);
     const args = [
       'docs',

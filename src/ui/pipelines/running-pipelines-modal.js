@@ -42,6 +42,14 @@ export function getPipelineRunDisplayName(run) {
   return String(run?.id ?? "Pipeline run");
 }
 
+export function buildPipelineRunDetailFetchOptions({ forceFresh = false } = {}) {
+  return {
+    includeRunPayload: false,
+    includeStepPayload: true,
+    forceFresh,
+  };
+}
+
 export function getPipelineStepSessionId(step) {
   const sessionId = typeof step?.wingmanSessionId === "string" ? step.wingmanSessionId.trim() : "";
   return sessionId.length > 0 ? sessionId : null;
@@ -278,11 +286,7 @@ export function showRunningPipelinesModal({ showToast, agentOutputFormattingEnab
       renderContent();
     }
     try {
-      selectedRunDetail = await fetchPipelineRunDetail(selectedRunId, {
-        includeRunPayload: false,
-        includeStepPayload: false,
-        forceFresh,
-      });
+      selectedRunDetail = await fetchPipelineRunDetail(selectedRunId, buildPipelineRunDetailFetchOptions({ forceFresh }));
       if (selectedStepDetail) {
         const selectedStepId = selectedStepDetail?.step?.id;
         const nextStep = selectedRunDetail?.steps?.find((step) => step.id === selectedStepId);

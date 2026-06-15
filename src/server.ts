@@ -794,6 +794,9 @@ const wingmanMcpApiHandler = createWingmanMcpApiHandler({
   setPinnedFile: (sid, filePath) => manager.setPinnedFile(sid, filePath),
   removePinnedFile: (sid, filePath) => manager.removePinnedFile(sid, filePath),
   setPinnedFiles: (sid, filePaths, activeFilePath) => manager.setPinnedFiles(sid, filePaths, activeFilePath),
+  pipelineStore,
+  getBotIdentityForSubscription: (subscriptionId) =>
+    workspaceSubscriptionManager.getRuntimeBotIdentity(subscriptionId),
 });
 
 // Reconcile PM2 processes with app registry
@@ -1608,7 +1611,7 @@ workspaceSubscriptionManager.setChatRuntime(agentChatSessionRuntime);
 
 // Clean up any PM2 agent processes not reclaimed by rehydration
 try {
-  const agentCleanup = await cleanupOrphanedAgentProcesses(manager);
+  const agentCleanup = await cleanupOrphanedAgentProcesses(manager, messageStore);
   if (agentCleanup.cleaned > 0 || agentCleanup.failed > 0) {
     console.log(
       `[pm2] agent cleanup: ${agentCleanup.cleaned} removed, ${agentCleanup.failed} failed (of ${agentCleanup.checked} checked)`,

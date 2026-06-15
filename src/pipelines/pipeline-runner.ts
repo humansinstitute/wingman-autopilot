@@ -360,6 +360,7 @@ async function executePipelineStep(input: PipelineRunnerInput & {
             prompt: childStep.prompt,
             callbackToken: token,
             agent: resolveStringTemplate(input.current, childStep.agent),
+            model: resolveStringTemplate(input.current, childStep.model),
             directory: resolveStringTemplate(input.current, childStep.directory),
             callbackTimeoutMs: resolveDurationMs(input.current, childStep.timeoutMs, CALLBACK_TIMEOUT_MS),
           });
@@ -434,6 +435,7 @@ async function executePipelineStep(input: PipelineRunnerInput & {
       prompt: step.prompt,
       callbackToken: token,
       agent: resolveStringTemplate(input.current, step.agent),
+      model: resolveStringTemplate(input.current, step.model),
       directory: resolveStringTemplate(input.current, step.directory),
       callbackTimeoutMs: resolveDurationMs(input.current, step.timeoutMs, CALLBACK_TIMEOUT_MS),
     });
@@ -576,6 +578,7 @@ async function runOrResumeAgentStep(input: PipelineRunnerInput & {
   prompt: string;
   callbackToken: string;
   agent?: string;
+  model?: string;
   directory?: string;
   callbackTimeoutMs: number;
 }): Promise<JsonObject> {
@@ -602,6 +605,7 @@ async function runAgentStep(input: PipelineRunnerInput & {
   prompt: string;
   callbackToken: string;
   agent?: string;
+  model?: string;
   directory?: string;
   callbackTimeoutMs: number;
 }): Promise<JsonObject> {
@@ -653,6 +657,7 @@ async function runAgentStep(input: PipelineRunnerInput & {
           flowRunId: input.runId,
           retryAttempt: attempt,
         },
+        input.model,
       );
       input.store.setStepSession(input.stepId, session.id);
       await recordLiveSession(sessionCtx, session);

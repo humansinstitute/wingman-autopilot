@@ -125,7 +125,7 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
           chatDispatchInput: "$.chatDispatchInput",
         },
       },
-      prompt: "You are stage 1 of agent-dispatch-chat: Analyse Intent. The selected input contains chatDispatchInput, a compact decision packet. Use chatDispatchInput.latestThread as the authoritative latest conversation, chatDispatchInput.channelContext.contextPrompt as channel-specific instructions for how this work should be handled, referencedRecords as supporting Flight Deck context, and scopes only as immediate context. The pipeline catalog is intentionally unavailable at this stage. Classify as answer_now or create_task. Use answer_now only when the complete final reply can be written immediately in chatResponse.body: direct conversational answers, explanations, summaries, recommendations, status answers already known from the supplied context, quick drafts, or focused follow-up questions. Use create_task when the user asks for durable output such as code changes, docs/files/artifacts, WApp/system changes, migrations, operational changes, concrete work that needs task tracking and review, or any investigation that requires inspecting sessions, logs, pipelines, files, projects, Tower/Yoke state, Autopilot runtime state, or other external context before reporting back. Do not use think_then_answer for future-action acknowledgements; if the answer would be 'I will review/check/investigate and report back', classify create_task instead. Do not classify discussion, planning, design thinking, explanations, summaries, opinions, recommendations, or chat-only research as create_task unless the user asks for durable output or the answer requires external inspection before it can be completed. For answer_now, set dispatchTask false and put the complete chat reply or focused follow-up in chatResponse.body. For create_task, set dispatchTask true and provide taskDraft with title, instructions string, acceptanceCriteria, executionPlan, managerChecklist, assignerNpub, and reviewerNpub; do not choose a child pipeline or include recommendedPipelineId. Return JSON only with: intent string, dispatchTask boolean, taskDraft object|null, chatResponse object with body string, clarifyingQuestion string|null, confidence number from 0 to 1. Do not include responseOnly.",
+      prompt: "You are stage 1 of agent-dispatch-chat: Analyse Intent. The selected input contains chatDispatchInput, a compact decision packet. Use chatDispatchInput.latestThread as the authoritative latest conversation, chatDispatchInput.channelContext.contextPrompt as channel-specific instructions for how this work should be handled, referencedRecords as supporting Flight Deck context, and scopes only as immediate context. The pipeline catalog is intentionally unavailable at this stage. Classify as answer_now, document_discussion, or create_task. Use answer_now only when the complete final reply can be written immediately in chatResponse.body: direct conversational answers, explanations, summaries, recommendations, status answers already known from the supplied context, quick drafts, or focused follow-up questions. Use document_discussion for feature/design/planning/spec/document iteration where the expected output is a Flight Deck document plus an in-thread reply, especially when channelContext says to develop or iterate on a doc instead of building. For document_discussion set dispatchTask false, recommendedPipelineId document-discussion, and put a brief acknowledgement in chatResponse.body. Use create_task for code changes, implementation, WApp/system changes, migrations, operational changes, concrete work that needs task tracking and review, or any investigation that requires inspecting sessions, logs, pipelines, files, projects, Tower/Flight Deck state, Autopilot runtime state, or other external context before reporting back. Do not use think_then_answer for future-action acknowledgements; if the answer would be 'I will review/check/investigate and report back', classify create_task unless it is document_discussion. Do not classify discussion, planning, design thinking, explanations, summaries, opinions, document iteration, or chat-only research as create_task unless the user asks for implementation/operations or the answer requires external inspection before it can be completed. For answer_now, set dispatchTask false and put the complete chat reply or focused follow-up in chatResponse.body. For create_task, set dispatchTask true and provide taskDraft with title, instructions string, acceptanceCriteria, executionPlan, managerChecklist, assignerNpub, and reviewerNpub; do not choose a child task pipeline or include recommendedPipelineId. Return JSON only with: intent string, dispatchTask boolean, recommendedPipelineId string|null, taskDraft object|null, chatResponse object with body string, clarifyingQuestion string|null, confidence number from 0 to 1. Do not include responseOnly.",
       assign: "$.agentDecision",
       display: {
         in: [
@@ -173,6 +173,44 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
           { label: "Clarifying Question", path: "$.clarifyingQuestion", format: "text" },
         ],
       },
+    },
+    {
+      name: "route-discussion-chat",
+      description: "Turn document/design/planning chat into a no-task discussion child pipeline when channel context calls for document iteration.",
+      type: "code",
+      function: "dispatch.routeDiscussionChat",
+      when: { path: "$.chatContext.shouldProceed", equals: true },
+      input: {
+        pick: {
+          dispatch: "$.dispatch",
+          workspace: "$.workspace",
+          agent: "$.agent",
+          chat: "$.chat",
+          record: "$.record",
+          routing: "$.routing",
+          runtime: "$.runtime",
+          chatContext: "$.chatContext",
+          chatDispatchInput: "$.chatDispatchInput",
+          agentDecision: "$.agentDecision",
+          decision: "$.decision",
+          flightDeckContext: "$.flightDeckContext",
+        },
+      },
+      assign: "$.decision",
+    },
+    {
+      name: "start-discussion-pipeline",
+      type: "code",
+      function: "dispatch.startChildPipeline",
+      when: { path: "$.decision.dispatchDiscussion", equals: true },
+      input: {
+        pick: {
+          pipelineDefinitionId: "$.decision.discussionPipelineDefinitionId",
+          workPlan: "$.decision.discussionWorkPlan",
+          childInput: "$",
+        },
+      },
+      assign: "$.childPipeline",
     },
     {
       name: "prepare-task-pipeline-input",
@@ -497,7 +535,7 @@ const DO_AND_REVIEW_DEFINITION = {
           workPlan: "$.workPlan",
         },
       },
-      prompt: "You are the worker in a Wingman do-and-review pipeline. Use only the selected input: createdTask and workPlan. workPlan includes the task plan, originalPrompt, originThread, referencedRecords, instructions, acceptanceCriteria, executionPlan, and managerChecklist. For current-world facts, use internet research and record sources. The task is already in_progress; the final deterministic pipeline step will move it to review and publish any Flight Deck task comment or chat handoff. Always make the best effort possible from the available context. If required information is missing, do not return callback status needs_input; return callback status ok with completed false, state what you could and could not complete, list blockers, and write a concrete taskUpdateComment that asks for the missing information or states the limitation for the final chat/task feedback. Do not fabricate requirements. Do not run Flight Deck task update, task comment, chat reply, chat reply-current, or any command that changes task state, task comments, or chat messages. Document comment replies are allowed only when workPlan explicitly asks to answer or respond to existing document comments; in that case use the document comment thread surface, such as `bun mycode/yoke.js docs reply <comment-id> --body \"...\"`, and include evidence that child comments were created with parent_comment_id set to the original comment ids. Updating the document body does not satisfy an 'answer comments' request unless workPlan explicitly asks for a document-body response section. Return JSON fields: completed boolean, summary string, sources array, evidence array, result string, blockers array, taskUpdateComment string, confidence number.",
+      prompt: "You are the worker in a Wingman do-and-review pipeline. Use only the selected input: createdTask and workPlan. workPlan includes the task plan, originalPrompt, originThread, referencedRecords, instructions, acceptanceCriteria, executionPlan, and managerChecklist. For current-world facts, use internet research and record sources. The task is already in_progress; the final deterministic pipeline step will move it to review and publish any Flight Deck task comment or chat handoff. Always make the best effort possible from the available context. If required information is missing, do not return callback status needs_input; return callback status ok with completed false, state what you could and could not complete, list blockers, and write a concrete taskUpdateComment that asks for the missing information or states the limitation for the final chat/task feedback. Do not fabricate requirements. Do not run Flight Deck task update, task comment, chat reply, chat reply-current, or any command that changes task state, task comments, or chat messages. Do not run Yoke or sync a Yoke workspace for Flight Deck PG work. Document comment replies are allowed only when workPlan explicitly asks to answer or respond to existing document comments and a current Wingman/Autopilot Flight Deck helper is available for the document comment thread surface; include evidence that child comments were created with parent_comment_id set to the original comment ids. Updating the document body does not satisfy an 'answer comments' request unless workPlan explicitly asks for a document-body response section. Return JSON fields: completed boolean, summary string, sources array, evidence array, result string, blockers array, taskUpdateComment string, confidence number.",
       assign: "$.workerResult",
     },
     {
@@ -622,13 +660,12 @@ const RESEARCH_AND_REPORT_DEFINITION = {
       timeoutMs: 1800000,
       input: {
         pick: {
-          commandPrefix: "$.runtime.commandPrefix",
           createdTask: "$.createdTask",
           workPlan: "$.workPlan",
           researchResult: "$.researchResult",
         },
       },
-      prompt: "You are the report writer in a Wingman research-and-report pipeline. Use only the selected input: commandPrefix, createdTask, workPlan, and researchResult. Turn researchResult into a concise Flight Deck report. If commandPrefix is available, use it only for yoke docs create/show commands needed to create or verify the report document in the selected scope. Do not run task update, task comment, chat reply, chat reply-current, docs comment, or any command that changes task state, task comments, document comments, or chat messages. The final deterministic pipeline step owns all Flight Deck task state, task comment, and chat handoff publishing. Include source links/citations and limitations. Do not hide uncertainty. Return JSON fields: completed boolean, reportTitle string, reportSummary string, reportBody string, documentId string|null, sources array, blockers array, taskUpdateComment string, confidence number.",
+      prompt: "You are the report writer in a Wingman research-and-report pipeline. Use only the selected input: createdTask, workPlan, and researchResult. Turn researchResult into a concise Flight Deck report. Create or verify a report document only through current Wingman/Autopilot Flight Deck helpers exposed in the runtime. Do not run Yoke, do not sync a Yoke workspace, and do not use commandPrefix for Flight Deck PG work. Do not run task update, task comment, chat reply, chat reply-current, docs comment, or any command that changes task state, task comments, document comments, or chat messages. The final deterministic pipeline step owns all Flight Deck task state, task comment, and chat handoff publishing. Include source links/citations and limitations. Do not hide uncertainty. Return JSON fields: completed boolean, reportTitle string, reportSummary string, reportBody string, documentId string|null, sources array, blockers array, taskUpdateComment string, confidence number.",
       assign: "$.workerResult",
     },
     {
@@ -759,7 +796,7 @@ const AGENT_DISPATCH_COMMENT_DEFINITION = {
           flightDeckContext: "$.flightDeckContext",
         },
       },
-      prompt: "You are handling a Wingman comment dispatch. Read the comment payload and flightDeckContext.channel.contextPrompt, then draft a reply for the existing comment thread. Treat flightDeckContext.channel.contextPrompt as channel-specific instructions for how this document/task comment should be handled. Do not run any Flight Deck/Yoke CLI commands yourself; the next deterministic pipeline step will publish the reply. Return JSON fields: replyDraft string, targetNeedsWork boolean, blockers array, nextAction string, confidence number from 0 to 1.",
+      prompt: "You are handling a Wingman comment dispatch. Read the comment payload and flightDeckContext.channel.contextPrompt, then draft a reply for the existing comment thread. Treat flightDeckContext.channel.contextPrompt as channel-specific instructions for how this document/task comment should be handled. Do not run any Flight Deck or Yoke CLI commands yourself; the next deterministic pipeline step will publish the reply. Return JSON fields: replyDraft string, targetNeedsWork boolean, blockers array, nextAction string, confidence number from 0 to 1.",
       assign: "$.agentResponse",
       display: {
         in: [

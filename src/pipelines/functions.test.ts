@@ -185,6 +185,7 @@ async function runChatDispatchSpec(input: {
   agentDecision: JsonObject;
   taskPipelineDecision?: JsonObject;
   latestMessage: string;
+  channelContext?: JsonObject;
   referencedRecords?: unknown[];
 }) {
   const taskPipelineDecision = input.taskPipelineDecision ?? {
@@ -211,6 +212,7 @@ async function runChatDispatchSpec(input: {
       hydrated: true,
       status: "ok",
       shouldProceed: true,
+      channelContext: input.channelContext,
       thread: {
         recent_messages: [
           {
@@ -225,6 +227,7 @@ async function runChatDispatchSpec(input: {
         { id: "document-discussion", slug: "document-discussion", name: "document-discussion", scope: "shared" },
         { id: "discussion-chat-response", slug: "discussion-chat-response", name: "discussion-chat-response", scope: "shared" },
         { id: "do-and-review", slug: "do-and-review", name: "do-and-review", scope: "shared" },
+        { id: "software-implementation-review-loop", slug: "software-implementation-review-loop", name: "software-implementation-review-loop", scope: "shared" },
       ],
       scopes: [],
     }),
@@ -232,13 +235,17 @@ async function runChatDispatchSpec(input: {
       created: true,
       status: "ok",
       taskId: "task-created",
-      pipelineDefinitionId: "do-and-review",
-      workPlan: {
-        ...(((selected.decision as JsonObject | undefined)?.workPlan as JsonObject | undefined) ?? {}),
+      pipelineDefinitionId: String((selected.decision as JsonObject | undefined)?.pipelineDefinitionId ?? "do-and-review"),
+      workPlan: (() => {
+        const workPlan = ((selected.decision as JsonObject | undefined)?.workPlan as JsonObject | undefined) ?? {};
+        const pipelineDefinitionId = String((selected.decision as JsonObject | undefined)?.pipelineDefinitionId ?? "do-and-review");
+        return {
+          ...workPlan,
         taskId: "task-created",
-        pipelineDefinitionId: "do-and-review",
-        childPipelineDefinitionId: "do-and-review",
-      },
+          pipelineDefinitionId,
+          childPipelineDefinitionId: pipelineDefinitionId,
+        };
+      })(),
     }),
     "dispatch.startChildPipeline": async (selected: JsonObject) => ({
       started: true,
@@ -786,11 +793,118 @@ describe("memory pipeline functions", () => {
     ]);
   });
 
+  test("dispatch.prepareDocumentDiscussionContext compacts chat and runtime context", async () => {
+    const result = await builtinPipelineFunctions["dispatch.prepareDocumentDiscussionContext"]!({
+      dispatch: { routeId: "route-doc", triggerKind: "chat" },
+      workspace: {
+        workspaceOwnerNpub: "npub1service",
+        humanWorkspaceOwnerNpub: "npub1owner",
+        workspaceId: "workspace-1",
+        sourceAppNpub: "npub1app",
+        backendBaseUrl: "https://tower.example",
+      },
+      agent: {
+        botNpub: "npub1bot",
+        workingDirectory: "/repo",
+        defaultAgent: "codex",
+      },
+      chat: {
+        senderNpub: "npub1requester",
+        channelId: "channel-1",
+        threadId: "thread-1",
+      },
+      record: {
+        recordId: "message-2",
+        payload: {
+          sender_npub: "npub1requester",
+          body: "Please review the inline comments in @[Doc](mention:document:doc-1).",
+        },
+      },
+      routing: { channelId: "channel-1", threadId: "thread-1" },
+      runtime: {
+        mode: "flightdeck_pg",
+        commandPrefix: "do not pass this through",
+        availablePipelines: Array.from({ length: 40 }, (_, index) => ({
+          id: `pipeline-${index}`,
+          slug: `pipeline-${index}`,
+          description: "Large catalog entry".repeat(100),
+        })),
+      },
+      decision: {
+        intent: "document_discussion",
+        recommendedPipelineId: "document-discussion",
+        chatResponse: { body: "I'll review the document." },
+      },
+      workPlan: {
+        taskSummary: "Review feature doc",
+        originalPrompt: "Please review the inline comments.",
+        origin: { channelId: "channel-1", threadId: "thread-1", messageId: "message-2" },
+      },
+      chatContext: {
+        shouldProceed: true,
+        selfAuthored: false,
+        channelContext: {
+          channelId: "channel-1",
+          contextPrompt: "Features should be developed in a Flight Deck document.",
+        },
+        thread: {
+          recent_messages: [
+            {
+              message_id: "message-1",
+              sender_npub: "npub1requester",
+              body: "Here is the doc: https://example.invalid/docs?docid=doc-1",
+              updated_at: "2026-06-15T00:00:00.000Z",
+            },
+            {
+              message_id: "message-2",
+              sender_npub: "npub1requester",
+              body: "Please review the inline comments in @[Doc](mention:document:doc-1).",
+              updated_at: "2026-06-15T00:01:00.000Z",
+            },
+          ],
+        },
+        referencedRecords: [{
+          recordId: "doc-1",
+          recordFamily: "document",
+          payload: {
+            title: "Feature doc",
+            body: "Long body".repeat(5000),
+          },
+        }],
+      },
+    });
+
+    expect(result).toMatchObject({
+      source: {
+        routeId: "route-doc",
+        channelId: "channel-1",
+        threadId: "thread-1",
+        messageId: "message-2",
+      },
+      runtime: { mode: "flightdeck_pg", error: null },
+      latestThread: [
+        expect.objectContaining({ messageId: "message-1" }),
+        expect.objectContaining({ messageId: "message-2" }),
+      ],
+      referencedRecords: [
+        expect.objectContaining({
+          recordId: "doc-1",
+          family: "document",
+          title: "Feature doc",
+        }),
+      ],
+    });
+    expect(JSON.stringify(result)).not.toContain("availablePipelines");
+    expect(JSON.stringify(result)).not.toContain("commandPrefix");
+    expect(new TextEncoder().encode(JSON.stringify(result)).byteLength).toBeLessThan(250000);
+  });
+
   test("shared document-discussion definition loads thread, document/comments, updates, reviews, asks, and publishes", () => {
     const spec = loadSharedPipelineSpec("document-discussion.json");
     expect(spec.name).toBe("document-discussion");
     expect(spec.steps.map((step) => step.name)).toEqual([
       "reload-thread",
+      "compact-document-discussion-context",
       "load-document-and-comments",
       "ensure-discussion-document",
       "update-document",
@@ -879,7 +993,7 @@ describe("memory pipeline functions", () => {
       },
     ]);
     expect(result).not.toHaveProperty("validChildPipelines");
-    expect(result.notes).toContain("Use create_task for durable output or any answer that requires inspecting sessions, logs, pipelines, files, projects, Tower/Yoke state, or Autopilot runtime state before reporting back.");
+    expect(result.notes).toContain("Use create_task for durable output or any answer that requires inspecting sessions, logs, pipelines, files, projects, Tower/Flight Deck state, or Autopilot runtime state before reporting back.");
   });
 
   test("dispatch.prepareChatTaskPipelineInput loads task pipeline candidates after create_task", async () => {
@@ -1071,6 +1185,8 @@ describe("memory pipeline functions", () => {
       "prepare-intent-input",
       "analyse-intent",
       "normalise-decision",
+      "route-discussion-chat",
+      "start-discussion-pipeline",
       "prepare-task-pipeline-input",
       "select-task-pipeline",
       "normalise-task-pipeline-selection",
@@ -1083,8 +1199,8 @@ describe("memory pipeline functions", () => {
     const functions = spec.steps.map((step) => step.type === "code" ? step.function : null).filter(Boolean);
     expect(functions).not.toContain("dispatch.detectChatReviewApproval");
     expect(functions).not.toContain("dispatch.completeReviewTaskFromChat");
-    expect(functions).not.toContain("dispatch.routeDiscussionChat");
     expect(functions).not.toContain("dispatch.blockTaskIfPipelineLaunchFailed");
+    expect(functions).toContain("dispatch.routeDiscussionChat");
     expect(functions).toContain("dispatch.prepareChatTaskPipelineInput");
     expect(functions).toContain("dispatch.normaliseChatTaskPipelineSelection");
 
@@ -1096,6 +1212,110 @@ describe("memory pipeline functions", () => {
         childPipeline: "$.childPipeline",
         closeoutContext: "$.closeoutContext",
       },
+    });
+  });
+
+  test("shared chat dispatch routes feature doc iteration to document discussion without task", async () => {
+    const execution = await runChatDispatchSpec({
+      latestMessage: "I would like to review the Flight Deck summary page. Use this as the next feature definition iteration.",
+      channelContext: {
+        channelId: "channel-1",
+        scopeId: "scope-1",
+        name: "Features",
+        contextPrompt: "When we are discussing features we are not trying to build them, we want to iterate on them and develop a doc. Each thread will be a new feature. We can create a Flight Deck doc to work on this feature definition. Post the Flight Deck Doc to the channel. Each new message should be treated as an iteration on this chat thread and the Flight Deck document.",
+        hasSpecificContext: true,
+      },
+      agentDecision: {
+        intent: "create_task",
+        dispatchTask: true,
+        taskDraft: {
+          title: "Define Flight Deck summary page redesign",
+          instructions: "Create or update the Flight Deck feature document for this thread and post the document link back to chat.",
+          acceptanceCriteria: ["A Flight Deck document exists or is updated."],
+        },
+        chatResponse: { body: "" },
+        confidence: 0.94,
+      },
+    });
+
+    const routed = currentAfterStep(execution, "route-discussion-chat").decision as JsonObject;
+    expect(routed).toMatchObject({
+      dispatchTask: false,
+      requestedDispatchTask: false,
+      dispatchDiscussion: true,
+      taskRoutingPending: false,
+      discussionPipelineDefinitionId: "document-discussion",
+    });
+    expect(currentAfterStep(execution, "prepare-task-pipeline-input").taskPipelineInput).toBeUndefined();
+    expect(currentAfterStep(execution, "create-in-progress-task").createdTask).toBeUndefined();
+    expect(currentAfterStep(execution, "start-discussion-pipeline").childPipeline).toMatchObject({
+      started: true,
+      pipelineDefinitionId: "document-discussion",
+    });
+  });
+
+  test("shared chat dispatch keeps implement-doc requests on software task routing", async () => {
+    const execution = await runChatDispatchSpec({
+      latestMessage: "Can you implement @[Design for Autopilot Overview](mention:doc:76ebf6ac-91ff-47e2-af36-b99d47a10d57)",
+      channelContext: {
+        channelId: "channel-1",
+        scopeId: "scope-1",
+        name: "Features",
+        contextPrompt: "When we are discussing features we are not trying to build them, we want to iterate on them and develop a doc. Each thread will be a new feature. We can create a Flight Deck doc to work on this feature definition. Post the Flight Deck Doc to the channel. Each new message should be treated as an iteration on this chat thread and the Flight Deck document.",
+        hasSpecificContext: true,
+      },
+      agentDecision: {
+        intent: "create_task",
+        dispatchTask: true,
+        taskDraft: {
+          title: "Implement Design for Autopilot Overview",
+          instructions: "Implement the referenced Flight Deck document @[Design for Autopilot Overview](mention:doc:76ebf6ac-91ff-47e2-af36-b99d47a10d57) for the Flight Deck project in ~/code/wingmanbefree/wm-fd-2.",
+          acceptanceCriteria: ["The referenced design document is implemented in wm-fd-2."],
+          executionPlan: ["Read the design document.", "Implement the scoped code changes.", "Run validation."],
+          managerChecklist: ["Confirm the design is implemented."],
+        },
+        chatResponse: { body: "I’ll turn the referenced design document into an implementation task and route it through the review loop." },
+        confidence: 0.95,
+      },
+      taskPipelineDecision: {
+        recommendedPipelineId: "software-implementation-review-loop",
+        workdir: "/Users/mini/code/wingmanbefree/wm-fd-2",
+        chatResponse: { body: "Starting the software implementation task." },
+        confidence: 0.93,
+      },
+    });
+
+    const normalised = currentAfterStep(execution, "normalise-decision").decision as JsonObject;
+    const routed = currentAfterStep(execution, "route-discussion-chat").decision as JsonObject;
+    const taskInput = currentAfterStep(execution, "prepare-task-pipeline-input").taskPipelineInput as JsonObject;
+    const result = currentAfterStep(execution, "prepare-chat-response");
+    expect(execution.run.status).toBe("ok");
+    expect(normalised).toMatchObject({
+      requestedDispatchTask: true,
+      taskRoutingPending: true,
+      intent: "create_task",
+    });
+    expect(routed).toMatchObject({
+      requestedDispatchTask: true,
+      taskRoutingPending: true,
+      intent: "create_task",
+    });
+    expect(routed.dispatchDiscussion).not.toBe(true);
+    expect(taskInput.validChildPipelines).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "software-implementation-review-loop",
+        slug: "software-implementation-review-loop",
+      }),
+    ]));
+    expect(result.createdTask).toMatchObject({ taskId: "task-created" });
+    expect(result.childPipeline).toMatchObject({
+      pipelineDefinitionId: "software-implementation-review-loop",
+    });
+    expect(result.decision).toMatchObject({
+      dispatchTask: true,
+      taskRoutingPending: false,
+      pipelineDefinitionId: "software-implementation-review-loop",
+      workdir: "/Users/mini/code/wingmanbefree/wm-fd-2",
     });
   });
 
@@ -1205,7 +1425,7 @@ describe("memory pipeline functions", () => {
     const taskInput = currentAfterStep(execution, "prepare-task-pipeline-input").taskPipelineInput as JsonObject;
     const result = currentAfterStep(execution, "prepare-chat-response");
     expect(execution.run.status).toBe("ok");
-    expect(taskInput.validChildPipelines).toEqual([
+    expect(taskInput.validChildPipelines).toEqual(expect.arrayContaining([
       {
         id: "do-and-review",
         slug: "do-and-review",
@@ -1213,7 +1433,7 @@ describe("memory pipeline functions", () => {
         scope: "shared",
         description: null,
       },
-    ]);
+    ]));
     expect(result.createdTask).toMatchObject({ taskId: "task-created" });
     expect(result.childPipeline).toMatchObject({ pipelineDefinitionId: "do-and-review" });
     expect(result.decision).toMatchObject({ dispatchTask: true, taskRoutingPending: false });

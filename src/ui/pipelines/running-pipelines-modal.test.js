@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  buildPipelineRunDetailFetchOptions,
   getActivePipelineRuns,
   getPipelineRunDisplayName,
   getPipelineStepSessionId,
@@ -12,6 +13,19 @@ import {
 } from "./running-pipelines-modal.js";
 
 describe("running pipelines modal helpers", () => {
+  test("requests step payloads for run detail display fields", () => {
+    expect(buildPipelineRunDetailFetchOptions()).toEqual({
+      includeRunPayload: false,
+      includeStepPayload: true,
+      forceFresh: false,
+    });
+    expect(buildPipelineRunDetailFetchOptions({ forceFresh: true })).toEqual({
+      includeRunPayload: false,
+      includeStepPayload: true,
+      forceFresh: true,
+    });
+  });
+
   test("identifies active pipeline run statuses", () => {
     expect(isActivePipelineRun({ status: "queued" })).toBe(true);
     expect(isActivePipelineRun({ status: "running" })).toBe(true);

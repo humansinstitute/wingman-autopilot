@@ -296,7 +296,7 @@ function resolveCodexExtraArgs(glovesValue: string | undefined): string[] {
 
 function resolveOpenCodeExtraArgs(modelValue: string | undefined): string[] {
   const model = modelValue?.trim();
-  const effectiveModel = model && model.length > 0 ? model : "big pickle";
+  const effectiveModel = model && model.length > 0 ? model : "opencode/big-pickle";
   return ["--model", effectiveModel];
 }
 

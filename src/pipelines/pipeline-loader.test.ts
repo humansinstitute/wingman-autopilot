@@ -76,6 +76,8 @@ describe("pipeline definition version paths", () => {
       "prepare-intent-input",
       "analyse-intent",
       "normalise-decision",
+      "route-discussion-chat",
+      "start-discussion-pipeline",
       "prepare-task-pipeline-input",
       "select-task-pipeline",
       "normalise-task-pipeline-selection",
@@ -89,7 +91,7 @@ describe("pipeline definition version paths", () => {
       when: { path: "$.chatContext.shouldProceed", equals: true },
     });
     expect(JSON.stringify(definition?.spec.steps.find((step) => step.name === "analyse-intent"))).toContain(
-      "Classify as answer_now or create_task",
+      "Classify as answer_now, document_discussion, or create_task",
     );
     expect(JSON.stringify(definition?.spec.steps.find((step) => step.name === "analyse-intent"))).toContain(
       "pipeline catalog is intentionally unavailable",
@@ -243,7 +245,6 @@ describe("pipeline definition version paths", () => {
     );
     expect(research?.spec.steps.find((step) => step.name === "report-writer")?.input).toEqual({
       pick: {
-        commandPrefix: "$.runtime.commandPrefix",
         createdTask: "$.createdTask",
         workPlan: "$.workPlan",
         researchResult: "$.researchResult",

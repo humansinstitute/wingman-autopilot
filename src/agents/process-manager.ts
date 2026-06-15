@@ -425,10 +425,10 @@ export class ProcessManager {
     // When the OpenCode native SDK flag is on, spawn opencode directly
     // instead of wrapping it with agentapi.  The OpenCodeAdapter SDK client
     // connects to OpenCode's own HTTP server on the allocated port.
+    if (resolvedModel.length > 0) {
+      command = withModelOverride(command, resolvedModel);
+    }
     if (agent === "opencode") {
-      if (resolvedModel.length > 0) {
-        command = withModelOverride(command, resolvedModel);
-      }
       const ocFlag = featureFlagStore.getFlag(OPENCODE_NATIVE_SDK_FLAG);
       if (ocFlag && resolveFeatureFlagEffectiveState(ocFlag.state, true) === "on") {
         command = resolveNativeOpenCodeCommand(command, port);

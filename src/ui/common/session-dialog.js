@@ -23,9 +23,9 @@ const MAPLE_MODELS = [
   "qwen3-coder-480b",
 ];
 const OPENCODE_ZEN_MODELS = [
-  "big pickle",
+  "opencode/big-pickle",
 ];
-const OPENCODE_DEFAULT_MODEL = "big pickle";
+const OPENCODE_DEFAULT_MODEL = "opencode/big-pickle";
 const DEFAULT_NON_OPENCODE_MODELS = [...MAPLE_MODELS, ...OPENCODE_ZEN_MODELS];
 
 const dedupeValues = (values) => {

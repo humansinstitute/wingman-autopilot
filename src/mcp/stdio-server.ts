@@ -209,6 +209,41 @@ import {
   gitMergeDescription,
   handleGitMerge,
 } from "./tools/git-merge";
+import {
+  flightdeckChatReplyDescription,
+  flightdeckChatReplySchema,
+  flightdeckContextDescription,
+  flightdeckContextSchema,
+  flightdeckDocCommentsDescription,
+  flightdeckDocCommentsSchema,
+  flightdeckDocCreateDescription,
+  flightdeckDocCreateSchema,
+  flightdeckDocGetDescription,
+  flightdeckDocGetSchema,
+  flightdeckDocReplyDescription,
+  flightdeckDocReplySchema,
+  flightdeckDocUpdateDescription,
+  flightdeckDocUpdateSchema,
+  flightdeckTaskCommentDescription,
+  flightdeckTaskCommentSchema,
+  flightdeckTaskCommentsDescription,
+  flightdeckTaskCommentsSchema,
+  flightdeckTaskStateDescription,
+  flightdeckTaskStateSchema,
+  flightdeckThreadReadDescription,
+  flightdeckThreadReadSchema,
+  handleFlightdeckChatReply,
+  handleFlightdeckContext,
+  handleFlightdeckDocComments,
+  handleFlightdeckDocCreate,
+  handleFlightdeckDocGet,
+  handleFlightdeckDocReply,
+  handleFlightdeckDocUpdate,
+  handleFlightdeckTaskComment,
+  handleFlightdeckTaskComments,
+  handleFlightdeckTaskState,
+  handleFlightdeckThreadRead,
+} from "./tools/flightdeck";
 
 // ---------------------------------------------------------------------------
 // Environment
@@ -369,6 +404,84 @@ server.tool(
   getPinnedArtifactDescription,
   getPinnedArtifactSchema,
   (_params) => handleGetPinnedArtifact({} as Record<string, never>, wingmanUrl, sessionId),
+);
+
+// ---- Flight Deck PG helpers ----
+server.tool(
+  "flightdeck_context",
+  flightdeckContextDescription,
+  flightdeckContextSchema,
+  (_params) => handleFlightdeckContext({} as Record<string, never>, wingmanUrl, sessionId),
+);
+
+server.tool(
+  "flightdeck_thread_read",
+  flightdeckThreadReadDescription,
+  flightdeckThreadReadSchema,
+  (params) => handleFlightdeckThreadRead(params, wingmanUrl, sessionId),
+);
+
+server.tool(
+  "flightdeck_chat_reply",
+  flightdeckChatReplyDescription,
+  flightdeckChatReplySchema,
+  (params) => handleFlightdeckChatReply(params, wingmanUrl, sessionId),
+);
+
+server.tool(
+  "flightdeck_task_comment",
+  flightdeckTaskCommentDescription,
+  flightdeckTaskCommentSchema,
+  (params) => handleFlightdeckTaskComment(params, wingmanUrl, sessionId),
+);
+
+server.tool(
+  "flightdeck_task_comments",
+  flightdeckTaskCommentsDescription,
+  flightdeckTaskCommentsSchema,
+  (params) => handleFlightdeckTaskComments(params, wingmanUrl, sessionId),
+);
+
+server.tool(
+  "flightdeck_task_state",
+  flightdeckTaskStateDescription,
+  flightdeckTaskStateSchema,
+  (params) => handleFlightdeckTaskState(params, wingmanUrl, sessionId),
+);
+
+server.tool(
+  "flightdeck_doc_create",
+  flightdeckDocCreateDescription,
+  flightdeckDocCreateSchema,
+  (params) => handleFlightdeckDocCreate(params, wingmanUrl, sessionId),
+);
+
+server.tool(
+  "flightdeck_doc_get",
+  flightdeckDocGetDescription,
+  flightdeckDocGetSchema,
+  (params) => handleFlightdeckDocGet(params, wingmanUrl, sessionId),
+);
+
+server.tool(
+  "flightdeck_doc_update",
+  flightdeckDocUpdateDescription,
+  flightdeckDocUpdateSchema,
+  (params) => handleFlightdeckDocUpdate(params, wingmanUrl, sessionId),
+);
+
+server.tool(
+  "flightdeck_doc_comments",
+  flightdeckDocCommentsDescription,
+  flightdeckDocCommentsSchema,
+  (params) => handleFlightdeckDocComments(params, wingmanUrl, sessionId),
+);
+
+server.tool(
+  "flightdeck_doc_reply",
+  flightdeckDocReplyDescription,
+  flightdeckDocReplySchema,
+  (params) => handleFlightdeckDocReply(params, wingmanUrl, sessionId),
 );
 
 // ---- save_memory ----

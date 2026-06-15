@@ -15,6 +15,7 @@ import {
 } from "../../agents/pm2-wrapper";
 import { PM2_NAMESPACE_AGENTS } from "../../agents/ecosystem-generator";
 import type { ProcessManager } from "../../agents/process-manager";
+import type { MessageStore } from "../../storage/message-store";
 
 export interface AgentCleanupOutcome {
   checked: number;
@@ -93,6 +94,7 @@ export function isWingmanAgentPm2Process(proc: PM2ProcessDescription): boolean {
  */
 export async function cleanupOrphanedAgentProcesses(
   manager: ProcessManager,
+  store?: MessageStore,
 ): Promise<AgentCleanupOutcome> {
   let pm2Processes: PM2ProcessDescription[];
   try {
@@ -114,6 +116,7 @@ export async function cleanupOrphanedAgentProcesses(
 
   let cleaned = 0;
   let failed = 0;
+  const cleanedSessionIds: string[] = [];
 
   for (const proc of agentProcesses) {
     const name = proc.name;
@@ -132,10 +135,16 @@ export async function cleanupOrphanedAgentProcesses(
     try {
       await deleteProcess(name);
       cleaned++;
+      const sessionId = String(getEnvValue(pm2Env, "SESSION_ID") ?? "").trim();
+      if (sessionId) cleanedSessionIds.push(sessionId);
     } catch (error) {
       console.warn(`[pm2-cleanup] failed to delete ${name}: ${(error as Error).message}`);
       failed++;
     }
+  }
+
+  if (store && cleanedSessionIds.length > 0) {
+    store.markSessionsRuntimeStatus(cleanedSessionIds, "stable");
   }
 
   const outcome: AgentCleanupOutcome = {

@@ -214,6 +214,19 @@ export class MessageStore {
     this.deleteSession.run(sessionId);
   }
 
+  markSessionsRuntimeStatus(sessionIds: string[], runtimeStatus: AgentRuntimeStatus | null) {
+    const ids = [...new Set(sessionIds.map((id) => id.trim()).filter(Boolean))];
+    if (ids.length === 0) return 0;
+    const update = this.db.prepare("UPDATE sessions SET runtime_status = ?1 WHERE id = ?2");
+    const tx = this.db.transaction(() => {
+      for (const id of ids) {
+        update.run(runtimeStatus, id);
+      }
+    });
+    tx();
+    return ids.length;
+  }
+
   replaceMessages(sessionId: string, messages: ReplaceMessageInput[]) {
     const tx = this.db.transaction(() => {
       this.clearMessages.run(sessionId);
