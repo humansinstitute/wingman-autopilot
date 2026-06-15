@@ -29,6 +29,7 @@ function makeSubscription(): WorkspaceSubscriptionRecord {
     backendBaseUrl: 'https://tower.example.com',
     botNpub: 'npub1bot',
     sourceAppNpub: 'npub1source',
+    onboardingSource: 'nostr_33357',
     wsKeyNpub: 'npub1wskey',
     wsKeyStatus: 'active',
     groupKeyStatus: 'active',
@@ -900,6 +901,173 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
     expect((runInputs[0]?.chat as any)?.threadId).toBe('thread-profile');
     expect((runInputs[0]?.profileRuntime as any)?.eventType).toBe('chat_mention');
     expect((runInputs[0]?.profileRuntime as any)?.appendedContext[0].contextText).toBe('Workspace chat context');
+  });
+
+  test('adds Flight Deck channel context to chat pipeline input', async () => {
+    const routeStore = new DispatchRouteStore(makeTempDb('flightdeck-channel-context-routes'));
+    const pipelineStore = new PipelineStore(makeTempDb('flightdeck-channel-context-runs'));
+    const subscription = {
+      ...makeSubscription(),
+      workspaceId: 'workspace-pg-1',
+    };
+    const route = routeStore.save({
+      managedByNpub: subscription.managedByNpub!,
+      subscriptionId: subscription.subscriptionId,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      botNpub: subscription.botNpub,
+      sourceAppNpub: subscription.sourceAppNpub,
+      triggerKind: 'chat',
+      capability: 'chat_intercept',
+      pipelineDefinitionId: 'chat-pipeline',
+    });
+    const runInputs: Record<string, unknown>[] = [];
+    const runtime = new DispatchPipelineRuntime({
+      routeStore,
+      pipelineStore,
+      getSessionApiContext: () => ({} as never),
+      callbackOrigin: 'http://localhost',
+      acknowledgeChatMessage: async () => ({
+        acknowledged: true,
+        status: 'ok',
+        operation: 'chat.acknowledge-message',
+      }),
+      resolveFlightDeckChannelContext: async () => ({
+        id: 'channel-features',
+        scopeId: 'scope-flightdeck',
+        name: 'Flight Deck Features',
+        contextPrompt: 'This is the features channel.',
+        hasSpecificContext: true,
+      }),
+      loadDefinition: async () => ({
+        id: route.pipelineDefinitionId,
+        slug: route.pipelineDefinitionId,
+        name: 'Chat Pipeline',
+        scope: 'user',
+        ownerAlias: 'manager',
+        path: '/tmp/chat-pipeline.json',
+        spec: { name: 'Chat Pipeline', input: {}, steps: [] },
+      }),
+      loadFunctions: async () => ({ registry: {}, records: [] }),
+      runPipeline: async (input: any) => {
+        runInputs.push(input.input);
+        return makePipelineRun('pipeline-run-channel-context', input.input);
+      },
+    });
+
+    const result = await runtime.dispatch({
+      subscription,
+      triggerKind: 'chat',
+      capability: 'chat_intercept',
+      recordId: 'chat-channel-context-1',
+      record: {},
+      payload: {
+        body: '@agent please review this',
+        channel_id: 'channel-features',
+        thread_id: 'thread-features',
+        sender_npub: 'npub1human',
+      },
+      recordFamily: 'chat',
+      recordState: 'active',
+      recordVersion: 1,
+      updaterNpub: 'npub1human',
+      bindingType: 'thread',
+      bindingId: 'thread-features',
+      scopeId: 'scope-flightdeck',
+      channelId: 'channel-features',
+      threadId: 'thread-features',
+      botIdentity: {
+        botNpub: 'npub1bot',
+        botPubkeyHex: 'ab'.repeat(32),
+        botSecret: new Uint8Array(32),
+      },
+    });
+
+    expect(result.handled).toBe(true);
+    expect(result.historyEntries[0]?.status).toBe('ok');
+    expect(runInputs).toHaveLength(1);
+    expect((runInputs[0]?.flightDeckContext as any)?.channel).toEqual({
+      id: 'channel-features',
+      scopeId: 'scope-flightdeck',
+      name: 'Flight Deck Features',
+      contextPrompt: 'This is the features channel.',
+      hasSpecificContext: true,
+    });
+  });
+
+  test('fails Flight Deck dispatch when channel context cannot be resolved', async () => {
+    const routeStore = new DispatchRouteStore(makeTempDb('flightdeck-channel-context-failed-routes'));
+    const pipelineStore = new PipelineStore(makeTempDb('flightdeck-channel-context-failed-runs'));
+    const subscription = {
+      ...makeSubscription(),
+      workspaceId: 'workspace-pg-1',
+    };
+    routeStore.save({
+      managedByNpub: subscription.managedByNpub!,
+      subscriptionId: subscription.subscriptionId,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      botNpub: subscription.botNpub,
+      sourceAppNpub: subscription.sourceAppNpub,
+      triggerKind: 'task',
+      capability: 'task_dispatch',
+      pipelineDefinitionId: 'task-pipeline',
+    });
+    let runPipelineCalls = 0;
+    const runtime = new DispatchPipelineRuntime({
+      routeStore,
+      pipelineStore,
+      getSessionApiContext: () => ({} as never),
+      callbackOrigin: 'http://localhost',
+      resolveFlightDeckChannelContext: async () => {
+        throw new Error('Flight Deck channel not found in Tower: channel-missing');
+      },
+      loadDefinition: async () => ({
+        id: 'task-pipeline',
+        slug: 'task-pipeline',
+        name: 'Task Pipeline',
+        scope: 'user',
+        ownerAlias: 'manager',
+        path: '/tmp/task-pipeline.json',
+        spec: { name: 'Task Pipeline', input: {}, steps: [] },
+      }),
+      loadFunctions: async () => ({ registry: {}, records: [] }),
+      runPipeline: async (input: any) => {
+        runPipelineCalls += 1;
+        return makePipelineRun('pipeline-run-should-not-start', input.input);
+      },
+    });
+
+    const result = await runtime.dispatch({
+      subscription,
+      triggerKind: 'task',
+      capability: 'task_dispatch',
+      recordId: 'task-channel-context-1',
+      record: {},
+      payload: {
+        task_id: 'task-channel-context-1',
+        title: 'Check channel context failure',
+        channel_id: 'channel-missing',
+      },
+      recordFamily: 'task',
+      recordState: 'active',
+      recordVersion: 1,
+      updaterNpub: 'npub1human',
+      bindingType: 'task',
+      bindingId: 'task-channel-context-1',
+      scopeId: 'scope-flightdeck',
+      channelId: 'channel-missing',
+      botIdentity: {
+        botNpub: 'npub1bot',
+        botPubkeyHex: 'ab'.repeat(32),
+        botSecret: new Uint8Array(32),
+      },
+    });
+
+    expect(result.handled).toBe(true);
+    expect(result.lastPipelineRunId).toBeNull();
+    expect(runPipelineCalls).toBe(0);
+    expect(result.historyEntries[0]?.status).toBe('failed');
+    expect(result.historyEntries[0]?.details?.diagnostic_summary).toContain('Flight Deck channel context could not be resolved');
+    expect(result.historyEntries[0]?.details?.diagnostic_summary).toContain('channel-missing');
   });
 
   test('starts profile policy task pipeline with saved runtime context and no route row', async () => {

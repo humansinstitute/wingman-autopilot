@@ -69,6 +69,19 @@ export interface FlightDeckPgMessage {
   updated_at?: string | null;
 }
 
+export interface FlightDeckPgChannel {
+  id: string;
+  workspace_id?: string;
+  scope_id?: string | null;
+  name?: string | null;
+  description?: string | null;
+  metadata?: Record<string, unknown> | null;
+  kind?: string | null;
+  row_version?: number | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
 export interface FlightDeckPgTask {
   id: string;
   workspace_id?: string;
@@ -129,6 +142,13 @@ export interface FlightDeckPgMessagesResult {
   channel_id?: string;
   thread_id?: string | null;
   messages: FlightDeckPgMessage[];
+  next_cursor: string | null;
+}
+
+export interface FlightDeckPgScopeChannelsResult {
+  identity?: Record<string, unknown>;
+  scope_id?: string;
+  channels: FlightDeckPgChannel[];
   next_cursor: string | null;
 }
 
@@ -375,6 +395,44 @@ export async function fetchFlightDeckPgWorkspaceMe(params: {
     throw Object.assign(new Error(error.message), error);
   }
   return await response.json() as FlightDeckPgWorkspaceMeResult;
+}
+
+export async function fetchFlightDeckPgScopeChannels(params: {
+  backendBaseUrl: string;
+  workspaceId: string;
+  scopeId: string;
+  appNpub: string;
+  botIdentity: RuntimeBotIdentity;
+  limit?: number;
+  signal?: AbortSignal;
+}): Promise<FlightDeckPgScopeChannelsResult> {
+  const path = `/api/v4/flightdeck-pg/workspaces/${encodeURIComponent(params.workspaceId)}/scopes/${encodeURIComponent(params.scopeId)}/channels`;
+  const url = buildFlightDeckPgUrl(params.backendBaseUrl, path, {
+    limit: params.limit ?? 200,
+  });
+  const authorization = await signFlightDeckPgBotRequest({
+    botIdentity: params.botIdentity,
+    url,
+    method: 'GET',
+  });
+  const response = await fetch(url, {
+    headers: {
+      Accept: 'application/json',
+      Authorization: authorization,
+      'x-flightdeck-pg-app-npub': params.appNpub,
+    },
+    signal: params.signal,
+  });
+  if (!response.ok) {
+    const error = await parseTowerError(response, 'flightdeck_pg_scope_channels');
+    throw Object.assign(new Error(error.message), error);
+  }
+  const payload = await response.json() as Partial<FlightDeckPgScopeChannelsResult>;
+  return {
+    ...payload,
+    channels: Array.isArray(payload.channels) ? payload.channels : [],
+    next_cursor: typeof payload.next_cursor === 'string' ? payload.next_cursor : null,
+  };
 }
 
 export async function fetchFlightDeckPgEvents(params: {

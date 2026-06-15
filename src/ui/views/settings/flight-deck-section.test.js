@@ -220,6 +220,7 @@ describe("flight deck settings panel", () => {
       expect(text).toContain("Visible channels");
       expect(text).toContain("Appended context");
       expect(text).toContain("Default Dispatch");
+      expect(text).toContain("Selected workspace: Swipeback");
       expect(text).toContain("Chat");
       expect(text).toContain("Docs");
       expect(text).toContain("Tasks");
@@ -233,6 +234,7 @@ describe("flight deck settings panel", () => {
       expect(queryByTestId(panel, "flight-deck-dispatch-row-chat")).not.toBeNull();
       expect(queryByTestId(panel, "flight-deck-dispatch-row-docs")).not.toBeNull();
       expect(queryByTestId(panel, "flight-deck-dispatch-row-tasks")).not.toBeNull();
+      expect(queryByTestId(panel, "flight-deck-default-dispatch-card")).not.toBeNull();
       expect(text).not.toContain("SSE Events");
       expect(text).not.toContain("flightdeck_pg.message.created");
       expect(text).not.toContain("Dispatches");
@@ -245,6 +247,84 @@ describe("flight deck settings panel", () => {
 
       queryByTestId(panel, "flight-deck-manage-sub-flightdeck").click();
       expect(managedSubscriptionId).toBe("sub-flightdeck");
+    });
+  });
+
+  test("keeps the selected workspace dispatch table visible without configured routes", () => {
+    withFakeDocument(() => {
+      const panel = createFlightDeckConnectionsPanel({
+        subscriptions: [
+          {
+            subscriptionId: "sub-empty-routes",
+            backendBaseUrl: "https://tower.example",
+            workspaceOwnerNpub: "npub1workspaceowner",
+            workspaceServiceNpub: "npub1workspaceservice",
+            workspaceId: "workspace-empty",
+            sourceAppNpub: "npub1flightdeckapp",
+            botNpub: "npub1agentbot",
+            onboardingSource: "nostr_33357",
+            healthStatus: "healthy",
+            sseStatus: "connected",
+            profileWorkspace: {
+              workspace: {
+                workspaceTitle: "Empty Routes",
+                relayOnboardingStatus: "ready",
+              },
+            },
+          },
+        ],
+        dispatchRoutes: [],
+      });
+
+      const text = collectText(panel);
+      expect(queryByTestId(panel, "flight-deck-default-dispatch-card")).not.toBeNull();
+      expect(queryByTestId(panel, "flight-deck-dispatch-row-chat")).not.toBeNull();
+      expect(queryByTestId(panel, "flight-deck-dispatch-row-docs")).not.toBeNull();
+      expect(queryByTestId(panel, "flight-deck-dispatch-row-tasks")).not.toBeNull();
+      expect(text).toContain("Selected workspace: Empty Routes");
+      expect(text).toContain("Not configured");
+      expect(text).toContain("Dispatch Setup Pending");
+    });
+  });
+
+  test("matches selected workspace dispatch routes with snake case fields", () => {
+    withFakeDocument(() => {
+      const panel = createFlightDeckConnectionsPanel({
+        subscriptions: [
+          {
+            subscriptionId: "sub-snake-routes",
+            backendBaseUrl: "https://tower.example",
+            workspaceOwnerNpub: "npub1workspaceowner",
+            workspaceServiceNpub: "npub1workspaceservice",
+            workspaceId: "workspace-snake",
+            sourceAppNpub: "npub1flightdeckapp",
+            botNpub: "npub1agentbot",
+            onboardingSource: "nostr_33357",
+            healthStatus: "healthy",
+            sseStatus: "connected",
+            profileWorkspace: {
+              workspace: {
+                workspaceTitle: "Snake Routes",
+                relayOnboardingStatus: "ready",
+              },
+            },
+          },
+        ],
+        dispatchRoutes: [
+          {
+            route_id: "route-chat",
+            subscriptionId: "sub-snake-routes",
+            trigger_kind: "chat",
+            capability: "chat_intercept",
+            pipeline_definition_id: "snake-chat-pipeline",
+            enabled: true,
+          },
+        ],
+      });
+
+      const text = collectText(panel);
+      expect(queryByTestId(panel, "flight-deck-default-dispatch-card")).not.toBeNull();
+      expect(text).toContain("snake-chat-pipeline");
     });
   });
 

@@ -23,6 +23,7 @@ import type {
   ResolvedPipelineSelection,
 } from '../agent-profile-policy-store';
 import { bootstrapAgentDefinitionWorkspace } from '../agent-workspace-bootstrap';
+import { fetchFlightDeckPgScopeChannels, type FlightDeckPgChannel } from '../tower-client';
 import {
   createDispatchFlightDeckPublisher,
   createDispatchChatContextHydrator,
@@ -74,6 +75,14 @@ export interface DispatchProfileRuntimeContext {
   appendedContext: ResolvedAppendedContext[];
 }
 
+export interface DispatchFlightDeckChannelContext {
+  id: string;
+  scopeId: string;
+  name: string | null;
+  contextPrompt: string;
+  hasSpecificContext: boolean;
+}
+
 export interface DispatchPipelineRuntimeResult {
   handled: boolean;
   historyEntries: AgentChatDispatchHistoryEntry[];
@@ -99,6 +108,7 @@ export interface DispatchPipelineRuntimeDependencies {
   listDefinitions?: typeof listLatestPipelineDefinitions;
   loadFunctions?: typeof loadPipelineFunctionRegistry;
   acknowledgeChatMessage?: (input: DispatchChatAcknowledgementInput) => Promise<JsonObject>;
+  resolveFlightDeckChannelContext?: (input: DispatchPipelineEventInput) => Promise<DispatchFlightDeckChannelContext | null>;
   requirePipelineRoutes?: boolean;
   defaultAgent?: string;
 }
@@ -116,6 +126,7 @@ export class DispatchPipelineRuntime {
   private readonly listDefinitions: typeof listLatestPipelineDefinitions;
   private readonly loadFunctions: typeof loadPipelineFunctionRegistry;
   private readonly acknowledgeChatMessage: (input: DispatchChatAcknowledgementInput) => Promise<JsonObject>;
+  private readonly resolveFlightDeckChannelContext: (input: DispatchPipelineEventInput) => Promise<DispatchFlightDeckChannelContext | null>;
   private readonly requirePipelineRoutes: boolean;
   private readonly defaultAgent: string;
   private readonly pendingDispatchDedupeKeys = new Set<string>();
@@ -133,6 +144,7 @@ export class DispatchPipelineRuntime {
     this.listDefinitions = deps.listDefinitions ?? listLatestPipelineDefinitions;
     this.loadFunctions = deps.loadFunctions ?? loadPipelineFunctionRegistry;
     this.acknowledgeChatMessage = deps.acknowledgeChatMessage ?? acknowledgeChatPipelineMessage;
+    this.resolveFlightDeckChannelContext = deps.resolveFlightDeckChannelContext ?? resolveFlightDeckChannelContextFromTower;
     this.requirePipelineRoutes = deps.requirePipelineRoutes ?? false;
     this.defaultAgent = normaliseDefaultAgent(deps.defaultAgent);
   }
@@ -326,6 +338,24 @@ export class DispatchPipelineRuntime {
       if (pipelineNeedsFlightDeckPublisher(definition.spec) && !flightDeckRuntime.yokeStateDir && input.triggerKind !== 'chat') {
         flightDeckRuntime = await prepareDispatchPipelineFlightDeckRuntime({ eventInput: input, agent });
       }
+      let flightDeckChannelContext: DispatchFlightDeckChannelContext | null = null;
+      try {
+        flightDeckChannelContext = await this.resolveFlightDeckChannelContext(input);
+      } catch (error) {
+        return {
+          handled: true,
+          historyEntries: [
+            this.buildHistoryEntry(input, route, {
+              action: `${input.triggerKind}_pipeline_failed`,
+              status: 'failed',
+              pipelineRunId: null,
+              acknowledgement: chatAcknowledgement,
+              diagnosticSummary: `Flight Deck channel context could not be resolved: ${error instanceof Error ? error.message : String(error)}`,
+            }),
+          ],
+          lastPipelineRunId: null,
+        };
+      }
       const availablePipelines = await this.listDefinitions(ownerAlias).catch(() => []);
       const envelope = buildDispatchEnvelope({
         route,
@@ -334,6 +364,7 @@ export class DispatchPipelineRuntime {
         dedupeKey,
         concurrencyKey,
         flightDeckRuntime,
+        flightDeckChannelContext,
         acknowledgement: chatAcknowledgement,
         defaultAgent: this.defaultAgent,
         availablePipelines,
@@ -748,6 +779,71 @@ async function acknowledgeChatPipelineMessage(input: DispatchChatAcknowledgement
   }, channelId);
 }
 
+async function resolveFlightDeckChannelContextFromTower(
+  input: DispatchPipelineEventInput,
+): Promise<DispatchFlightDeckChannelContext | null> {
+  if (!requiresFlightDeckChannelContext(input)) {
+    return null;
+  }
+  const workspaceId = getText(input.subscription.workspaceId);
+  const backendBaseUrl = getText(input.subscription.backendBaseUrl);
+  const appNpub = getText(input.subscription.sourceAppNpub);
+  const scopeId = getText(input.scopeId ?? input.payload.scope_id);
+  const channelId = getText(input.channelId ?? input.payload.channel_id);
+  if (!workspaceId) {
+    throw new Error('workspaceId is required for Flight Deck channel dispatch.');
+  }
+  if (!backendBaseUrl) {
+    throw new Error('backendBaseUrl is required for Flight Deck channel dispatch.');
+  }
+  if (!appNpub) {
+    throw new Error('sourceAppNpub is required for Flight Deck channel dispatch.');
+  }
+  if (!scopeId) {
+    throw new Error('scopeId is required for Flight Deck channel dispatch.');
+  }
+  if (!channelId) {
+    throw new Error('channelId is required for Flight Deck channel dispatch.');
+  }
+  if (!input.botIdentity) {
+    throw new Error('bot identity is required to read Flight Deck channel context.');
+  }
+  const result = await fetchFlightDeckPgScopeChannels({
+    backendBaseUrl,
+    workspaceId,
+    scopeId,
+    appNpub,
+    botIdentity: input.botIdentity,
+  });
+  const channel = result.channels.find((candidate) => getText(candidate.id) === channelId);
+  if (!channel) {
+    throw new Error(`Flight Deck channel not found in Tower: ${channelId}`);
+  }
+  return buildFlightDeckChannelContext(channel, scopeId);
+}
+
+function requiresFlightDeckChannelContext(input: DispatchPipelineEventInput): boolean {
+  if (input.triggerKind !== 'chat' && input.triggerKind !== 'comment' && input.triggerKind !== 'task') {
+    return false;
+  }
+  return Boolean(getText(input.subscription.workspaceId));
+}
+
+function buildFlightDeckChannelContext(
+  channel: FlightDeckPgChannel,
+  fallbackScopeId: string,
+): DispatchFlightDeckChannelContext {
+  const metadata = objectValue(channel.metadata);
+  const contextPrompt = getText(metadata.basePrompt);
+  return {
+    id: getText(channel.id) ?? '',
+    scopeId: getText(channel.scope_id) ?? fallbackScopeId,
+    name: getText(channel.name),
+    contextPrompt: contextPrompt ?? 'No Specific Channel Context',
+    hasSpecificContext: Boolean(contextPrompt),
+  };
+}
+
 function buildFailedChatAcknowledgement(input: DispatchPipelineEventInput, error: unknown): JsonObject {
   return {
     acknowledged: false,
@@ -794,6 +890,7 @@ function buildDispatchEnvelope(input: {
   dedupeKey: string;
   concurrencyKey: string;
   flightDeckRuntime: DispatchPipelineFlightDeckRuntime;
+  flightDeckChannelContext: DispatchFlightDeckChannelContext | null;
   acknowledgement: JsonObject | null;
   defaultAgent: string;
   availablePipelines: PipelineDefinitionRecord[];
@@ -851,6 +948,9 @@ function buildDispatchEnvelope(input: {
       channelId: eventInput.channelId ?? null,
       threadId: eventInput.threadId ?? null,
       changedFields: eventInput.changedFields ?? [],
+    },
+    flightDeckContext: {
+      channel: input.flightDeckChannelContext,
     },
     runtime: {
       mode: flightDeckRuntime.mode,
