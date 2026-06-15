@@ -97,9 +97,17 @@ describe("pipeline definition version paths", () => {
     expect(JSON.stringify(definition?.spec.steps.find((step) => step.name === "select-task-pipeline"))).toContain(
       "choose exactly one task-capable downstream pipeline",
     );
+    expect(JSON.stringify(definition?.spec.steps.find((step) => step.name === "analyse-intent"))).toContain(
+      "chatDispatchInput.channelContext.contextPrompt",
+    );
     expect(definition?.spec.steps.find((step) => step.name === "hydrate-chat-context")?.display?.out).toContainEqual({
       label: "Self Authored",
       path: "$.selfAuthored",
+    });
+    expect(definition?.spec.steps.find((step) => step.name === "prepare-intent-input")?.display?.out).toContainEqual({
+      label: "Channel Context",
+      path: "$.channelContext.contextPrompt",
+      format: "text",
     });
     expect(definition?.spec.steps.find((step) => step.name === "publish-chat-response")).toMatchObject({
       when: { path: "$.chatContext.shouldProceed", equals: true },
@@ -118,8 +126,14 @@ describe("pipeline definition version paths", () => {
     expect(chatDefinition?.spec.steps.map((step) => step.name)).toContain("publish-chat-response");
     expect(taskDefinition?.slug).toBe("fd-agent-dispatch-task-response");
     expect(taskDefinition?.spec.supersedes).toBe("agent-dispatch-task-response");
+    expect(JSON.stringify(taskDefinition?.spec.steps.find((step) => step.name === "investigate-and-route-task"))).toContain(
+      "flightDeckContext.channel.contextPrompt",
+    );
     expect(commentDefinition?.slug).toBe("fd-agent-dispatch-comment-response");
     expect(commentDefinition?.spec.supersedes).toBe("agent-dispatch-comment-response");
+    expect(JSON.stringify(commentDefinition?.spec.steps.find((step) => step.name === "draft-comment-response"))).toContain(
+      "flightDeckContext.channel.contextPrompt",
+    );
   });
 
   test("resolves stable user definition aliases to the latest version", async () => {

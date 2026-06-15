@@ -641,6 +641,34 @@ function compactReferencedRecord(value: unknown): JsonObject {
   };
 }
 
+function resolveFlightDeckChannelContext(...sources: unknown[]): JsonObject {
+  for (const source of sources) {
+    const sourceObject = objectValue(source);
+    const channel = objectValue(sourceObject.channel ?? sourceObject.channelContext);
+    const contextPrompt = getText(channel.contextPrompt ?? sourceObject.contextPrompt);
+    if (
+      getText(channel.id ?? channel.channelId ?? sourceObject.channelId)
+      || getText(channel.name ?? sourceObject.name ?? sourceObject.channelName)
+      || contextPrompt
+    ) {
+      return {
+        channelId: getText(channel.id ?? channel.channelId ?? sourceObject.channelId),
+        scopeId: getText(channel.scopeId ?? sourceObject.scopeId),
+        name: getText(channel.name ?? sourceObject.name ?? sourceObject.channelName),
+        contextPrompt: contextPrompt ?? "No Specific Channel Context",
+        hasSpecificContext: channel.hasSpecificContext === true || Boolean(contextPrompt),
+      };
+    }
+  }
+  return {
+    channelId: null,
+    scopeId: null,
+    name: null,
+    contextPrompt: "No Specific Channel Context",
+    hasSpecificContext: false,
+  };
+}
+
 function getThreadMessages(chatContext: Record<string, unknown>): unknown[] {
   const thread = objectValue(chatContext.thread);
   return Array.isArray(thread.recent_messages)
@@ -1160,6 +1188,7 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const runtime = objectValue(input.runtime);
     const chatContext = objectValue(input.chatContext);
     const latestThread = latestThreadWithTrigger(chatContext, record, chat);
+    const channelContext = resolveFlightDeckChannelContext(chatContext.channelContext, input.flightDeckContext);
     const scopes = extractScopeRecords(chatContext.scopes)
       .map(compactScope)
       .filter((scope) => Boolean(scope.id));
@@ -1196,10 +1225,12 @@ export const builtinPipelineFunctions: FunctionRegistry = {
         reviewerNpub: requesterNpub,
       },
       latestThread,
+      channelContext,
       referencedRecords,
       scopes,
       notes: [
         "Use latestThread as the authoritative current conversation.",
+        "Use channelContext.contextPrompt as channel-specific instructions for how this work should be handled.",
         "Use referencedRecords only as supporting Flight Deck context.",
         "Classify as answer_now or create_task.",
         "Use answer_now only when chatResponse.body is the complete final reply.",
@@ -1220,6 +1251,7 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const chatContext = objectValue(input.chatContext);
     const decision = objectValue(input.decision);
     const latestThread = latestThreadWithTrigger(chatContext, record, chat);
+    const channelContext = resolveFlightDeckChannelContext(chatContext.channelContext, input.flightDeckContext);
     const promptTokens = tokenizeForMatch([
       latestThread.map((message) => getText(message.body)).filter(Boolean).join(" "),
       getText(objectValue(decision.taskDraft).title),
@@ -1262,12 +1294,14 @@ export const builtinPipelineFunctions: FunctionRegistry = {
       intent: getText(decision.intent) ?? "create_task",
       taskDraft: objectValue(decision.taskDraft),
       latestThread,
+      channelContext,
       referencedRecords: Array.isArray(chatContext.referencedRecords)
         ? chatContext.referencedRecords.slice(0, 12).map(compactReferencedRecord)
         : [],
       validChildPipelines,
       notes: [
         "Choose only a task-capable pipeline listed in validChildPipelines.",
+        "Use channelContext.contextPrompt as channel-specific instructions for how this work should be handled.",
         "Use software-implementation-review-loop for code, repository, build, test, deployment, or implementation work.",
         "Use research-and-report when the requested durable output is explicitly research with a report or document.",
         "Use do-and-review for generic durable work when no specialised task pipeline fits.",
@@ -1513,6 +1547,7 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const response = objectValue(input.agentResponse ?? input.workPlan ?? input);
     const record = objectValue(input.record);
     const agent = objectValue(input.agent);
+    const channelContext = resolveFlightDeckChannelContext(input.flightDeckContext, input.channelContext);
     const payload = objectValue(record.payload ?? input.payload);
     const payloadData = objectValue(payload.data);
     const title = String(payload.title ?? payloadData.title ?? response.title ?? "").toLowerCase();
@@ -1568,6 +1603,7 @@ export const builtinPipelineFunctions: FunctionRegistry = {
         "Move the task to review or done only after manager review.",
       ],
       workdir: getText(response.workdir ?? response.workingDirectory ?? agent.workingDirectory),
+      channelContext,
       ...(designReference ? {
         designDocumentUrl: designReference.designDocumentUrl,
         designDocumentSource: designReference.designDocumentSource,
@@ -1675,6 +1711,7 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const record = objectValue(input.record);
     const payload = objectValue(record.payload);
     const agent = objectValue(input.agent);
+    const channelContext = resolveFlightDeckChannelContext(chatContext.channelContext, input.flightDeckContext);
     const requestedPipelineId = getText(
       raw.recommendedPipelineId
         ?? raw.recommendedPipelineDefinitionId
@@ -1781,6 +1818,7 @@ export const builtinPipelineFunctions: FunctionRegistry = {
         assignerNpub,
         reviewerNpub,
         originalPrompt,
+        channelContext,
         originThread,
         referencedRecords,
         origin: {

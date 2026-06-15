@@ -11,6 +11,7 @@ Wingman V2 is a TypeScript-based AI agent orchestration platform built on Bun th
 - Don't add functions directly - create well structured code, helpers, utils, routes etc and reference them
 - When you update code look for ways to refactor and simplify the code base into a cleaner structure
 - When adding or moving files under `src/ui`, make sure the static asset service serves them with the correct MIME type (`application/javascript` for modules) so browsers don't block them with `Loading module ... was blocked because of a disallowed MIME type ("text/plain")`
+- Do not favor workarounds or broad fallbacks that hide bugs. Prefer surfacing missing or inconsistent state clearly so the root problem can be fixed.
 
 > **Heads-up:** We've repeatedly hit runtime `ReferenceError` issues when arrow-function declarations are referenced before they're defined. When adding new helpers, make sure their definitions appear before any usage (or use function declarations) so the bundle doesn't fail during startup.
 

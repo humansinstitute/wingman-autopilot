@@ -695,6 +695,7 @@ export function createDispatchChatContextHydrator(
 
     const hydratedThread = await hydrateChatThreadWithFallback(context, channelId, threadId);
     const thread = hydratedThread.thread;
+    const channelContext = resolveHydratedChannelContext(input, channelId);
     const selfAuthored = detectSelfAuthoredChatDispatch(context, input, thread);
     const intakeAcknowledgement = objectValue(objectValue(input.runtime).acknowledgement);
     const acknowledgement = !selfAuthored.selfAuthored && operation === 'chat.hydrate-context'
@@ -735,6 +736,7 @@ export function createDispatchChatContextHydrator(
       matchedSelfNpub: selfAuthored.matchedSelfNpub,
       channelId,
       threadId,
+      channelContext,
       thread,
       acknowledgement,
       hydrationWarnings: hydratedThread.warnings,
@@ -3234,6 +3236,19 @@ function getRecordId(eventInput: DispatchPipelineEventInput): string | null {
     ?? getText(eventInput.payload.record_id)
     ?? eventInput.recordId
     ?? null;
+}
+
+function resolveHydratedChannelContext(input: JsonObject, fallbackChannelId: string): JsonObject {
+  const flightDeckContext = objectValue(input.flightDeckContext);
+  const channel = objectValue(flightDeckContext.channel);
+  const contextPrompt = getText(channel.contextPrompt);
+  return {
+    channelId: getText(channel.id) ?? fallbackChannelId,
+    scopeId: getText(channel.scopeId),
+    name: getText(channel.name),
+    contextPrompt: contextPrompt ?? 'No Specific Channel Context',
+    hasSpecificContext: channel.hasSpecificContext === true || Boolean(contextPrompt),
+  };
 }
 
 function getText(value: unknown): string | null {

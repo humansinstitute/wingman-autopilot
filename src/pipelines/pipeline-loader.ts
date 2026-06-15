@@ -40,6 +40,15 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
       threadId: "thread-demo",
     },
     routing: { channelId: "channel-demo", threadId: "thread-demo", bindingType: "thread" },
+    flightDeckContext: {
+      channel: {
+        id: "channel-demo",
+        scopeId: "scope-demo",
+        name: "Demo Channel",
+        contextPrompt: "No Specific Channel Context",
+        hasSpecificContext: false,
+      },
+    },
   },
   steps: [
     {
@@ -56,6 +65,7 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
           record: "$.record",
           routing: "$.routing",
           runtime: "$.runtime",
+          flightDeckContext: "$.flightDeckContext",
         },
       },
       assign: "$.chatContext",
@@ -65,6 +75,7 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
         ],
         out: [
           { label: "Thread", path: "$.thread", format: "messages", limit: 6, empty: "No thread messages" },
+          { label: "Channel Context", path: "$.channelContext.contextPrompt", format: "text" },
           { label: "Self Authored", path: "$.selfAuthored" },
           { label: "Referenced Records", path: "$.referencedRecords", format: "records", limit: 4, empty: "No referenced records" },
         ],
@@ -86,6 +97,7 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
           routing: "$.routing",
           runtime: "$.runtime",
           chatContext: "$.chatContext",
+          flightDeckContext: "$.flightDeckContext",
         },
       },
       assign: "$.chatDispatchInput",
@@ -96,6 +108,7 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
         out: [
           { label: "Objective", path: "$.objective", format: "text" },
           { label: "Thread", path: "$.latestThread", format: "messages", limit: 6, empty: "No thread messages" },
+          { label: "Channel Context", path: "$.channelContext.contextPrompt", format: "text" },
           { label: "Referenced Records", path: "$.referencedRecords", format: "records", limit: 4, empty: "No referenced records" },
         ],
       },
@@ -112,11 +125,12 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
           chatDispatchInput: "$.chatDispatchInput",
         },
       },
-      prompt: "You are stage 1 of agent-dispatch-chat: Analyse Intent. The selected input contains chatDispatchInput, a compact decision packet. Use chatDispatchInput.latestThread as the authoritative latest conversation, referencedRecords as supporting Flight Deck context, and scopes only as immediate context. The pipeline catalog is intentionally unavailable at this stage. Classify as answer_now or create_task. Use answer_now only when the complete final reply can be written immediately in chatResponse.body: direct conversational answers, explanations, summaries, recommendations, status answers already known from the supplied context, quick drafts, or focused follow-up questions. Use create_task when the user asks for durable output such as code changes, docs/files/artifacts, WApp/system changes, migrations, operational changes, concrete work that needs task tracking and review, or any investigation that requires inspecting sessions, logs, pipelines, files, projects, Tower/Yoke state, Autopilot runtime state, or other external context before reporting back. Do not use think_then_answer for future-action acknowledgements; if the answer would be 'I will review/check/investigate and report back', classify create_task instead. Do not classify discussion, planning, design thinking, explanations, summaries, opinions, recommendations, or chat-only research as create_task unless the user asks for durable output or the answer requires external inspection before it can be completed. For answer_now, set dispatchTask false and put the complete chat reply or focused follow-up in chatResponse.body. For create_task, set dispatchTask true and provide taskDraft with title, instructions string, acceptanceCriteria, executionPlan, managerChecklist, assignerNpub, and reviewerNpub; do not choose a child pipeline or include recommendedPipelineId. Return JSON only with: intent string, dispatchTask boolean, taskDraft object|null, chatResponse object with body string, clarifyingQuestion string|null, confidence number from 0 to 1. Do not include responseOnly.",
+      prompt: "You are stage 1 of agent-dispatch-chat: Analyse Intent. The selected input contains chatDispatchInput, a compact decision packet. Use chatDispatchInput.latestThread as the authoritative latest conversation, chatDispatchInput.channelContext.contextPrompt as channel-specific instructions for how this work should be handled, referencedRecords as supporting Flight Deck context, and scopes only as immediate context. The pipeline catalog is intentionally unavailable at this stage. Classify as answer_now or create_task. Use answer_now only when the complete final reply can be written immediately in chatResponse.body: direct conversational answers, explanations, summaries, recommendations, status answers already known from the supplied context, quick drafts, or focused follow-up questions. Use create_task when the user asks for durable output such as code changes, docs/files/artifacts, WApp/system changes, migrations, operational changes, concrete work that needs task tracking and review, or any investigation that requires inspecting sessions, logs, pipelines, files, projects, Tower/Yoke state, Autopilot runtime state, or other external context before reporting back. Do not use think_then_answer for future-action acknowledgements; if the answer would be 'I will review/check/investigate and report back', classify create_task instead. Do not classify discussion, planning, design thinking, explanations, summaries, opinions, recommendations, or chat-only research as create_task unless the user asks for durable output or the answer requires external inspection before it can be completed. For answer_now, set dispatchTask false and put the complete chat reply or focused follow-up in chatResponse.body. For create_task, set dispatchTask true and provide taskDraft with title, instructions string, acceptanceCriteria, executionPlan, managerChecklist, assignerNpub, and reviewerNpub; do not choose a child pipeline or include recommendedPipelineId. Return JSON only with: intent string, dispatchTask boolean, taskDraft object|null, chatResponse object with body string, clarifyingQuestion string|null, confidence number from 0 to 1. Do not include responseOnly.",
       assign: "$.agentDecision",
       display: {
         in: [
           { label: "Thread", path: "$.chatDispatchInput.latestThread", format: "messages", limit: 6, empty: "No thread messages" },
+          { label: "Channel Context", path: "$.chatDispatchInput.channelContext.contextPrompt", format: "text" },
         ],
         out: [
           { label: "Intent", path: "$.intent", format: "text" },
@@ -142,6 +156,7 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
           runtime: "$.runtime",
           chatContext: "$.chatContext",
           agentDecision: "$.agentDecision",
+          flightDeckContext: "$.flightDeckContext",
         },
       },
       assign: "$.decision",
@@ -175,6 +190,7 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
           runtime: "$.runtime",
           chatContext: "$.chatContext",
           decision: "$.decision",
+          flightDeckContext: "$.flightDeckContext",
         },
       },
       assign: "$.taskPipelineInput",
@@ -258,6 +274,7 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
           routing: "$.routing",
           runtime: "$.runtime",
           chatContext: "$.chatContext",
+          flightDeckContext: "$.flightDeckContext",
         },
       },
       assign: "$.closeoutContext",
@@ -319,6 +336,15 @@ const AGENT_DISPATCH_TASK_DEFINITION = {
       },
     },
     routing: { bindingId: "task-demo", bindingType: "task", changedFields: ["state"] },
+    flightDeckContext: {
+      channel: {
+        id: "channel-demo",
+        scopeId: "scope-demo",
+        name: "Demo Channel",
+        contextPrompt: "No Specific Channel Context",
+        hasSpecificContext: false,
+      },
+    },
   },
   steps: [
     {
@@ -333,10 +359,22 @@ const AGENT_DISPATCH_TASK_DEFINITION = {
           record: "$.record",
           routing: "$.routing",
           runtime: "$.runtime",
+          flightDeckContext: "$.flightDeckContext",
         },
       },
-      prompt: "You are stage 1 of a Wingman task intake pipeline. Do an initial investigation from the task payload and available runtime commands, then choose how the longer work should run. Choose workStyle as either software_implementation for repo/code/build/test work, or do_and_review for generic work such as internet research, planning, writing, booking research, or operational tasks. Return JSON fields: accepted boolean, workStyle string, taskSummary string, initialFindings array, executionPlan array, managerChecklist array, taskUpdatePlan array, risks array, confidence number from 0 to 1. The executionPlan must explicitly say when the child worker and manager should update the Flight Deck task.",
+      prompt: "You are stage 1 of a Wingman task intake pipeline. Do an initial investigation from the task payload, flightDeckContext.channel.contextPrompt, and available runtime commands, then choose how the longer work should run. Treat flightDeckContext.channel.contextPrompt as channel-specific instructions for how this task should be handled. Choose workStyle as either software_implementation for repo/code/build/test work, or do_and_review for generic work such as internet research, planning, writing, booking research, or operational tasks. Return JSON fields: accepted boolean, workStyle string, taskSummary string, initialFindings array, executionPlan array, managerChecklist array, taskUpdatePlan array, risks array, confidence number from 0 to 1. The executionPlan must explicitly say when the child worker and manager should update the Flight Deck task.",
       assign: "$.agentResponse",
+      display: {
+        in: [
+          { label: "Task", path: "$.record.payload.title", format: "text" },
+          { label: "Channel Context", path: "$.flightDeckContext.channel.contextPrompt", format: "text" },
+        ],
+        out: [
+          { label: "Accepted", path: "$.accepted" },
+          { label: "Work Style", path: "$.workStyle", format: "text" },
+          { label: "Summary", path: "$.taskSummary", format: "text" },
+        ],
+      },
     },
     {
       name: "normalise-work-plan",
@@ -348,6 +386,7 @@ const AGENT_DISPATCH_TASK_DEFINITION = {
           record: "$.record",
           routing: "$.routing",
           agent: "$.agent",
+          flightDeckContext: "$.flightDeckContext",
         },
       },
       assign: "$.workPlan",
@@ -695,6 +734,15 @@ const AGENT_DISPATCH_COMMENT_DEFINITION = {
       },
     },
     routing: { bindingId: "task-demo", bindingType: "task" },
+    flightDeckContext: {
+      channel: {
+        id: "channel-demo",
+        scopeId: "scope-demo",
+        name: "Demo Channel",
+        contextPrompt: "No Specific Channel Context",
+        hasSpecificContext: false,
+      },
+    },
   },
   steps: [
     {
@@ -708,10 +756,22 @@ const AGENT_DISPATCH_COMMENT_DEFINITION = {
           agent: "$.agent",
           record: "$.record",
           routing: "$.routing",
+          flightDeckContext: "$.flightDeckContext",
         },
       },
-      prompt: "You are handling a Wingman comment dispatch. Read the comment payload and draft a reply for the existing comment thread. Do not run any Flight Deck/Yoke CLI commands yourself; the next deterministic pipeline step will publish the reply. Return JSON fields: replyDraft string, targetNeedsWork boolean, blockers array, nextAction string, confidence number from 0 to 1.",
+      prompt: "You are handling a Wingman comment dispatch. Read the comment payload and flightDeckContext.channel.contextPrompt, then draft a reply for the existing comment thread. Treat flightDeckContext.channel.contextPrompt as channel-specific instructions for how this document/task comment should be handled. Do not run any Flight Deck/Yoke CLI commands yourself; the next deterministic pipeline step will publish the reply. Return JSON fields: replyDraft string, targetNeedsWork boolean, blockers array, nextAction string, confidence number from 0 to 1.",
       assign: "$.agentResponse",
+      display: {
+        in: [
+          { label: "Comment", path: "$.record.payload.body", format: "text" },
+          { label: "Channel Context", path: "$.flightDeckContext.channel.contextPrompt", format: "text" },
+        ],
+        out: [
+          { label: "Reply", path: "$.replyDraft", format: "text" },
+          { label: "Needs Work", path: "$.targetNeedsWork" },
+          { label: "Next Action", path: "$.nextAction", format: "text" },
+        ],
+      },
     },
     {
       name: "publish-comment-reply",

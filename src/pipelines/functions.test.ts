@@ -52,6 +52,76 @@ function loadSharedPipelineSpec(fileName: string): DeclarativePipeline {
   return structuredClone(spec) as DeclarativePipeline;
 }
 
+test("chat intent input includes Flight Deck channel context", async () => {
+  const result = await builtinPipelineFunctions["dispatch.prepareChatIntentInput"]({
+    dispatch: { routeId: "route-1", triggerKind: "chat" },
+    workspace: { workspaceOwnerNpub: "npub1owner", sourceAppNpub: "npub1source" },
+    agent: { workingDirectory: "/repo", defaultAgent: "codex" },
+    record: { recordId: "message-1", payload: { body: "Please update the feature doc.", sender_npub: "npub1requester" } },
+    chat: { messageText: "Please update the feature doc.", senderNpub: "npub1requester", channelId: "channel-1", threadId: "thread-1" },
+    routing: { channelId: "channel-1", threadId: "thread-1" },
+    chatContext: {
+      shouldProceed: true,
+      thread: {
+        recent_messages: [
+          { message_id: "message-1", sender_npub: "npub1requester", body: "Please update the feature doc." },
+        ],
+      },
+      channelContext: {
+        channelId: "channel-1",
+        scopeId: "scope-1",
+        name: "Features",
+        contextPrompt: "Iterate on the Flight Deck feature document before implementing.",
+        hasSpecificContext: true,
+      },
+    },
+  });
+
+  expect(result.channelContext).toEqual({
+    channelId: "channel-1",
+    scopeId: "scope-1",
+    name: "Features",
+    contextPrompt: "Iterate on the Flight Deck feature document before implementing.",
+    hasSpecificContext: true,
+  });
+  expect(result.notes).toContain("Use channelContext.contextPrompt as channel-specific instructions for how this work should be handled.");
+});
+
+test("task work plans preserve Flight Deck channel context for child sessions", async () => {
+  const result = await builtinPipelineFunctions["dispatch.normaliseTaskWorkPlan"]({
+    agentResponse: {
+      accepted: true,
+      workStyle: "do_and_review",
+      taskSummary: "Clarify the document request.",
+      confidence: 0.8,
+    },
+    record: {
+      payload: {
+        title: "Clarify docs",
+        description: "Review the latest document request.",
+      },
+    },
+    agent: { workingDirectory: "/repo" },
+    flightDeckContext: {
+      channel: {
+        id: "channel-1",
+        scopeId: "scope-1",
+        name: "Docs",
+        contextPrompt: "Use docs for iteration; do not create tasks for document-only work.",
+        hasSpecificContext: true,
+      },
+    },
+  });
+
+  expect(result.channelContext).toEqual({
+    channelId: "channel-1",
+    scopeId: "scope-1",
+    name: "Docs",
+    contextPrompt: "Use docs for iteration; do not create tasks for document-only work.",
+    hasSpecificContext: true,
+  });
+});
+
 function executableChatDispatchSpec(agentDecision: JsonObject, taskPipelineDecision: JsonObject): DeclarativePipeline {
   const spec = structuredClone(loadSharedPipelineSpec("agent-dispatch-chat.json")) as DeclarativePipeline;
   spec.steps = spec.steps.map((step) => {

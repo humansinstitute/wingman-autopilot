@@ -137,6 +137,19 @@ mock.module('../tower-client', () => ({
       next_cursor: null,
     };
   }),
+  fetchFlightDeckPgScopeChannels: mock(async () => ({
+    channels: [
+      {
+        id: 'channel-1',
+        scope_id: 'scope-1',
+        name: 'Features',
+        metadata: {
+          basePrompt: 'Iterate on feature docs before implementing.',
+        },
+      },
+    ],
+    next_cursor: null,
+  })),
   createFlightDeckPgChannelMessage: mock(async (input: Record<string, unknown>) => {
     pgMessageCreateCalls.push(input);
     return {
@@ -398,7 +411,18 @@ describe('dispatch pipeline Flight Deck publisher', () => {
       },
     } as never);
 
-    const result = await hydrate({ availablePipelines: [] });
+    const result = await hydrate({
+      availablePipelines: [],
+      flightDeckContext: {
+        channel: {
+          id: 'channel-1',
+          scopeId: 'scope-1',
+          name: 'Features',
+          contextPrompt: 'Iterate on feature docs before implementing.',
+          hasSpecificContext: true,
+        },
+      },
+    });
 
     expect(result).toMatchObject({
       hydrated: true,
@@ -416,6 +440,13 @@ describe('dispatch pipeline Flight Deck publisher', () => {
     expect((result.thread as any).recent_messages[0]).toMatchObject({
       message_id: 'chat-message-1',
       body: 'Fallback body from dispatch payload.',
+    });
+    expect(result.channelContext).toEqual({
+      channelId: 'channel-1',
+      scopeId: 'scope-1',
+      name: 'Features',
+      contextPrompt: 'Iterate on feature docs before implementing.',
+      hasSpecificContext: true,
     });
     expect(result.hydrationWarnings).toHaveLength(2);
     expect(yokeCommandCalls.filter((args) => args[0] === 'chat' && args[1] === 'context')).toHaveLength(2);
