@@ -30,6 +30,8 @@ export interface AdapterSessionContext {
   workingDirectory?: string;
   /** Environment variables for the agent process (used by native SDK adapters) */
   env?: Record<string, string>;
+  /** Optional model override selected for this session. */
+  model?: string;
   /** Codex thread ID for session resume (used by CodexAdapter) */
   codexThreadId?: string;
   /**

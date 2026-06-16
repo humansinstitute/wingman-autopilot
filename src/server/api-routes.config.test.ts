@@ -32,7 +32,7 @@ function createHandler(options: {
       connectRelays: [],
       agents: {
         claude: { label: "Claude" },
-        codex: { label: "Codex" },
+        codex: { label: "Codex", modelOptions: ["default", "gpt-5.5"] },
         goose: { label: "Goose" },
         opencode: { label: "OpenCode" },
         gemini: { label: "Gemini" },
@@ -158,8 +158,13 @@ describe("createApiRouteHandler config defaults", () => {
   test("returns hosted app routing config", async () => {
     const handler = createHandler();
     const url = new URL("http://localhost:3000/api/config");
-    const response = await handler(new Request(url), url, "GET", anonymousAuth);
-    const body = await response!.json();
+    const response = await handler(new Request(url.toString()), url, "GET", anonymousAuth);
+    const body = await response!.json() as {
+      baseUrl: string;
+      appRoutingMode: string;
+      subdomainBaseDomain: string | null;
+      subdomainProxyEnabled: boolean;
+    };
 
     expect(body).toMatchObject({
       baseUrl: "http://localhost:3000",
@@ -169,11 +174,32 @@ describe("createApiRouteHandler config defaults", () => {
     });
   });
 
+  test("returns agent model options", async () => {
+    const handler = createHandler();
+    const url = new URL("http://localhost:3000/api/config");
+    const response = await handler(new Request(url.toString()), url, "GET", anonymousAuth);
+    const body = await response!.json() as {
+      agents: Array<{ id: string; label: string; modelOptions: string[] }>;
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.agents).toContainEqual({
+      id: "codex",
+      label: "Codex",
+      modelOptions: ["default", "gpt-5.5"],
+    });
+    expect(body.agents).toContainEqual({
+      id: "claude",
+      label: "Claude",
+      modelOptions: ["default"],
+    });
+  });
+
   test("returns an empty agent list when agent config is unavailable", async () => {
     const handler = createHandler({ config: { agents: undefined } });
     const url = new URL("http://localhost:3000/api/config");
-    const response = await handler(new Request(url), url, "GET", anonymousAuth);
-    const body = await response!.json();
+    const response = await handler(new Request(url.toString()), url, "GET", anonymousAuth);
+    const body = await response!.json() as { agents: unknown[]; defaultAgent: string };
 
     expect(response.status).toBe(200);
     expect(body.agents).toEqual([]);
@@ -272,7 +298,7 @@ describe("createApiRouteHandler config defaults", () => {
     expect(saved).toEqual([{ npub: "npub1viewer", key: "speech_model", value: "gpt-4o-mini-tts" }]);
 
     const getUrl = new URL("http://localhost:3000/api/user/settings");
-    const getResponse = await handler(new Request(getUrl), getUrl, "GET", authContext);
+    const getResponse = await handler(new Request(getUrl.toString()), getUrl, "GET", authContext);
     const body = await getResponse.json() as { settings: Record<string, string> };
     expect(body.settings.speech_api_key).toBe("sk-t..7890");
     expect(body.settings.speech_provider).toBe("local");

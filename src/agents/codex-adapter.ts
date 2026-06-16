@@ -446,6 +446,9 @@ export class CodexAdapter implements AgentAdapter {
         approvalPolicy: "never",
         skipGitRepoCheck: true,
       };
+      if (this.context.model) {
+        threadOptions.model = this.context.model;
+      }
 
       // Resume existing thread if we have a stored ID, otherwise start fresh
       if (this.context.codexThreadId) {

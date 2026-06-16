@@ -14,19 +14,7 @@ const buildWorktreePathPreview = (root, name) => {
 };
 
 const FILES_FAVORITES_STORAGE_KEY = "wingman-files-favorites";
-const MAPLE_MODELS = [
-  "llama-3.3-70b",
-  "gpt-oss-120b",
-  "deepseek-r1-0528",
-  "kimi-k2-thinking",
-  "qwen3-vl-30b",
-  "qwen3-coder-480b",
-];
-const OPENCODE_ZEN_MODELS = [
-  "opencode/big-pickle",
-];
-const OPENCODE_DEFAULT_MODEL = "opencode/big-pickle";
-const DEFAULT_NON_OPENCODE_MODELS = [...MAPLE_MODELS, ...OPENCODE_ZEN_MODELS];
+const DEFAULT_MODEL_OPTION = "default";
 
 const dedupeValues = (values) => {
   const unique = new Set();
@@ -39,11 +27,14 @@ const dedupeValues = (values) => {
   return Array.from(unique);
 };
 
-const getModelOptionsForAgent = (agentId) => {
-  if (agentId === "opencode") {
-    return dedupeValues([OPENCODE_DEFAULT_MODEL, ...OPENCODE_ZEN_MODELS]);
-  }
-  return dedupeValues(DEFAULT_NON_OPENCODE_MODELS);
+const getModelOptionsForAgent = (config, agentId) => {
+  const configuredAgent = Array.isArray(config?.agents)
+    ? config.agents.find((agent) => agent?.id === agentId)
+    : null;
+  const configuredModels = Array.isArray(configuredAgent?.modelOptions)
+    ? configuredAgent.modelOptions
+    : [];
+  return dedupeValues([DEFAULT_MODEL_OPTION, ...configuredModels]);
 };
 
 export const createSessionDialogController = (options) => {
@@ -237,6 +228,7 @@ export const createSessionDialogController = (options) => {
     const workingDirectory = directoryInput?.value ?? "";
     const sessionName = sessionNameInput?.value ?? "";
     const model = typeof modelSelect?.value === "string" ? modelSelect.value.trim() : "";
+    const modelOverride = model && model !== DEFAULT_MODEL_OPTION ? model : "";
     const workspace =
       workspaceSelect?.value === "worktree"
         ? { mode: "worktree", name: (worktreeNameInput?.value ?? "").trim() }
@@ -261,7 +253,7 @@ export const createSessionDialogController = (options) => {
       workingDirectory,
       sessionName,
       workspace,
-      model: model.length > 0 ? model : null,
+      model: modelOverride.length > 0 ? modelOverride : null,
       targetFile,
       metadata: Object.keys(metadata).length > 0 ? metadata : null,
     };
@@ -270,7 +262,7 @@ export const createSessionDialogController = (options) => {
   const updateModelOptions = () => {
     if (!modelSelect) return;
     const agentId = (agentSelect?.value ?? "").trim().toLowerCase();
-    const availableModels = getModelOptionsForAgent(agentId);
+    const availableModels = getModelOptionsForAgent(getConfig?.(), agentId);
     const current = (modelSelect.value ?? "").trim();
     const nextValue = availableModels.includes(current) ? current : (availableModels[0] ?? "");
 

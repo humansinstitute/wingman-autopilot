@@ -62,7 +62,7 @@ export interface ApiRoutesContext {
     subdomainBaseDomain: string | null;
     subdomainProxyEnabled: boolean;
     connectRelays: string[];
-    agents: Record<string, { label: string }>;
+    agents: Record<string, { label: string; modelOptions?: string[] }>;
     defaultAgent: string;
     giteaUrl: string | null;
   };
@@ -572,6 +572,7 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
       const agents = Object.entries(ctx.config.agents ?? {}).map(([key, definition]) => ({
         id: key,
         label: definition.label,
+        modelOptions: Array.isArray(definition.modelOptions) ? definition.modelOptions : ["default"],
       }));
       return Response.json({
         port: ctx.config.port,

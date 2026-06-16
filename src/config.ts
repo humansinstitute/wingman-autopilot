@@ -27,6 +27,8 @@ export interface AgentDefinition {
   env?: Record<string, string>;
   /** Human readable label used in the UI. */
   label: string;
+  /** Selectable model overrides for this agent. "default" means no --model flag. */
+  modelOptions: string[];
 }
 
 export interface WingmanConfig {
@@ -96,6 +98,20 @@ const DEFAULT_STATUS_POLL_TIMEOUT_MS = 1000;
 const DEFAULT_SSE_KEEPALIVE_INTERVAL_MS = 30000;
 const DEFAULT_AGENTAPI_RELATIVE_PATH = "../out/agentapi";
 const DEFAULT_AGENT_TMUX_SESSION = "wm-ap-agents";
+const DEFAULT_MODEL_OPTION = "default";
+const CODEX_MODEL_OPTIONS = [
+  DEFAULT_MODEL_OPTION,
+  "gpt-5.5",
+  "gpt-5.4-mini",
+];
+const CLAUDE_MODEL_OPTIONS = [DEFAULT_MODEL_OPTION];
+const GOOSE_MODEL_OPTIONS = [DEFAULT_MODEL_OPTION];
+const OPENCODE_MODEL_OPTIONS = [
+  DEFAULT_MODEL_OPTION,
+  "opencode/big-pickle",
+];
+const GEMINI_MODEL_OPTIONS = [DEFAULT_MODEL_OPTION];
+const PI_MODEL_OPTIONS = [DEFAULT_MODEL_OPTION];
 
 type ConfigEnvironment = Record<string, string | undefined>;
 
@@ -259,11 +275,12 @@ function withAgentCommand(
   agentApiBinary: string,
   label: string,
   agentCli: string,
-  options?: { type?: string; extraArgs?: string[]; env?: Record<string, string> },
+  options?: { type?: string; extraArgs?: string[]; env?: Record<string, string>; modelOptions?: string[] },
 ): AgentDefinition {
   return {
     label,
     env: options?.env,
+    modelOptions: options?.modelOptions ?? [DEFAULT_MODEL_OPTION],
     command: (ctx) => {
       const args = baseCommand(agentApiBinary, ctx);
       if (options?.type) {
@@ -279,7 +296,7 @@ function withAgentCommand(
 }
 
 function resolveClaudeExtraArgs(glovesValue: string | undefined): string[] {
-  const normalized = glovesValue?.trim().toUpperCase();
+  const normalized = glovesValue?.trim().toUpperCase() ?? "";
   if (["OFF", "FALSE", "0", "NO"].includes(normalized)) {
     return ["--dangerously-skip-permissions"];
   }
@@ -287,7 +304,7 @@ function resolveClaudeExtraArgs(glovesValue: string | undefined): string[] {
 }
 
 function resolveCodexExtraArgs(glovesValue: string | undefined): string[] {
-  const normalized = glovesValue?.trim().toUpperCase();
+  const normalized = glovesValue?.trim().toUpperCase() ?? "";
   if (["OFF", "FALSE", "0", "NO"].includes(normalized)) {
     return ["--yolo"];
   }
@@ -296,8 +313,7 @@ function resolveCodexExtraArgs(glovesValue: string | undefined): string[] {
 
 function resolveOpenCodeExtraArgs(modelValue: string | undefined): string[] {
   const model = modelValue?.trim();
-  const effectiveModel = model && model.length > 0 ? model : "opencode/big-pickle";
-  return ["--model", effectiveModel];
+  return model && model.length > 0 ? ["--model", model] : [];
 }
 
 function createDefaultAgents(
@@ -317,23 +333,30 @@ function createDefaultAgents(
       type: "codex",
       extraArgs: codexExtraArgs,
       env: buildAgentCliUpdateEnv("codex", cliAutoUpdateEnabled),
+      modelOptions: CODEX_MODEL_OPTIONS,
     }),
     claude: withAgentCommand(agentApiBinary, "Claude", readEnvValue(env, "CLAUDE_CLI") ?? "claude", {
       type: "claude",
       extraArgs: claudeExtraArgs,
       env: buildAgentCliUpdateEnv("claude", cliAutoUpdateEnabled),
+      modelOptions: CLAUDE_MODEL_OPTIONS,
     }),
     goose: withAgentCommand(agentApiBinary, "Goose", readEnvValue(env, "GOOSE_CLI") ?? "goose", {
       type: "goose",
+      modelOptions: GOOSE_MODEL_OPTIONS,
     }),
     opencode: withAgentCommand(agentApiBinary, "OpenCode", readEnvValue(env, "OPENCODE_CLI") ?? "opencode", {
       type: "opencode",
       extraArgs: openCodeExtraArgs,
+      modelOptions: OPENCODE_MODEL_OPTIONS,
     }),
     gemini: withAgentCommand(agentApiBinary, "Gemini", readEnvValue(env, "GEMINI_CLI") ?? "gemini", {
       type: "gemini",
+      modelOptions: GEMINI_MODEL_OPTIONS,
     }),
-    pi: withAgentCommand(agentApiBinary, "Pi", readEnvValue(env, "PI_CLI") ?? "pi"),
+    pi: withAgentCommand(agentApiBinary, "Pi", readEnvValue(env, "PI_CLI") ?? "pi", {
+      modelOptions: PI_MODEL_OPTIONS,
+    }),
   };
 }
 

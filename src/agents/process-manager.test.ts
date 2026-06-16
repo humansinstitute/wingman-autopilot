@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
-import { ProcessManager, shouldCleanupMcpFiles, pm2StopShouldMarkStopped } from "./process-manager";
+import {
+  ProcessManager,
+  normalizeAgentModelOverride,
+  shouldCleanupMcpFiles,
+  pm2StopShouldMarkStopped,
+} from "./process-manager";
 import type { WingmanConfig } from "../config";
 
 describe("pm2StopShouldMarkStopped", () => {
@@ -50,6 +55,19 @@ describe("shouldCleanupMcpFiles", () => {
     expect(
       shouldCleanupMcpFiles(sessions, "stopping-session", ["/tmp/shared/.mcp.json"]),
     ).toBe(true);
+  });
+});
+
+describe("normalizeAgentModelOverride", () => {
+  test("treats default as no model override", () => {
+    expect(normalizeAgentModelOverride(undefined)).toBe("");
+    expect(normalizeAgentModelOverride("")).toBe("");
+    expect(normalizeAgentModelOverride(" default ")).toBe("");
+    expect(normalizeAgentModelOverride("Default")).toBe("");
+  });
+
+  test("keeps explicit model overrides", () => {
+    expect(normalizeAgentModelOverride("gpt-5.5")).toBe("gpt-5.5");
   });
 });
 

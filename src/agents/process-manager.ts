@@ -322,6 +322,11 @@ function withModelOverride(command: string[], modelValue: string): string[] {
   return nextCommand;
 }
 
+export function normalizeAgentModelOverride(model: string | undefined): string {
+  const normalizedModel = typeof model === "string" ? model.trim() : "";
+  return normalizedModel.toLowerCase() === "default" ? "" : normalizedModel;
+}
+
 export class ProcessManager {
   private readonly config: WingmanConfig;
   private readonly resolveBillingLaunchConfig?: (input: BillingLaunchInput) => Promise<BillingLaunchResult>;
@@ -420,7 +425,7 @@ export class ProcessManager {
     const sessionName = this.normaliseSessionName(name, agent, port);
     let command = definition.command({ port, agent, config: this.config });
 
-    const resolvedModel = typeof model === "string" ? model.trim() : "";
+    const resolvedModel = normalizeAgentModelOverride(model);
 
     // When the OpenCode native SDK flag is on, spawn opencode directly
     // instead of wrapping it with agentapi.  The OpenCodeAdapter SDK client
@@ -673,6 +678,7 @@ export class ProcessManager {
         pm2Name: session.pm2Name,
         workingDirectory: session.workingDirectory,
         env: session.definition.env as Record<string, string> | undefined,
+        model: session.model,
         codexThreadId: session.metadata.nativeAgentSession?.agent === "codex"
           ? session.metadata.nativeAgentSession.sessionId
           : undefined,
@@ -763,7 +769,7 @@ export class ProcessManager {
       targetFile: input.targetFile,
       pinnedFile: input.pinnedFile,
       metadata: normaliseSessionMetadata(input.metadata),
-      model: input.model,
+      model: normalizeAgentModelOverride(input.model) || undefined,
     };
 
     // Create protocol adapter for rehydrated session
@@ -776,6 +782,7 @@ export class ProcessManager {
       pm2Name: session.pm2Name,
       workingDirectory: session.workingDirectory,
       env: session.definition.env as Record<string, string> | undefined,
+      model: normalizeAgentModelOverride(session.model),
       codexThreadId: session.metadata.nativeAgentSession?.agent === "codex"
         ? session.metadata.nativeAgentSession.sessionId
         : undefined,
