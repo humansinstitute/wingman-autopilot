@@ -32,7 +32,11 @@ export class TerminalSessionManager {
   async checkAvailability(): Promise<{ available: boolean; error: string | null }> {
     if (this.availability) return this.availability;
     try {
-      await this.loadPtyModule();
+      if (this.config.ptyMode === "bridge") {
+        await this.checkBridgeAvailability();
+      } else {
+        await this.loadPtyModule();
+      }
       this.availability = { available: true, error: null };
     } catch (error) {
       this.availability = {
@@ -48,7 +52,7 @@ export class TerminalSessionManager {
     const cols = normalizeDimension(options.cols, 80, 20, 300);
     const rows = normalizeDimension(options.rows, 24, 8, 120);
 
-    if (process.platform === "darwin") {
+    if (this.config.ptyMode === "bridge") {
       await this.startBridgeSession(connectionId, socket, cols, rows);
       return;
     }
@@ -157,6 +161,35 @@ export class TerminalSessionManager {
       cols,
       rows,
     })}\n`);
+  }
+
+  private async checkBridgeAvailability(): Promise<void> {
+    await ensureNodePtyMacHelperExecutable();
+    const bridgePath = new URL("./node-pty-bridge.cjs", import.meta.url).pathname;
+    await new Promise<void>((resolve, reject) => {
+      const bridge = spawnChild(process.env.TMAN_NODE_BIN || "node", [bridgePath], {
+        cwd: this.config.cwd,
+        env: {
+          ...process.env,
+          TERM: "xterm-256color",
+        },
+        stdio: ["pipe", "ignore", "pipe"],
+      });
+      let stderr = "";
+      bridge.stderr.setEncoding("utf8");
+      bridge.stderr.on("data", (chunk) => {
+        stderr += chunk;
+      });
+      bridge.on("error", reject);
+      bridge.on("exit", (code, signal) => {
+        if (code === 0) {
+          resolve();
+          return;
+        }
+        reject(new Error(`Terminal PTY bridge unavailable: ${stderr.trim() || `exit ${code ?? "null"} signal ${signal ?? "null"}`}`));
+      });
+      bridge.stdin.end();
+    });
   }
 
   private async loadPtyModule(): Promise<NodePtyModule> {

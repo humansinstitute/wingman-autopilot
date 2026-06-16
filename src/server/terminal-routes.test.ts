@@ -28,6 +28,7 @@ function createContext(overrides: Partial<TerminalRoutesContext> = {}): Terminal
       pin: "44444",
       shell: "/bin/bash",
       cwd: "/tmp/autopilot",
+      ptyMode: "bridge",
       ticketTtlMs: 30000,
     },
     tickets: new TerminalTicketStore({ ttlMs: 30000, now: () => 100 }),

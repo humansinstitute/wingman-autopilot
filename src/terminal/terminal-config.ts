@@ -4,6 +4,7 @@ export interface TerminalConfig {
   pin: string;
   shell: string;
   cwd: string;
+  ptyMode: TerminalPtyMode;
   ticketTtlMs: number;
 }
 
@@ -14,6 +15,7 @@ export interface TerminalConfigInput {
 
 const DEFAULT_PIN = "44444";
 const DEFAULT_TICKET_TTL_MS = 30_000;
+export type TerminalPtyMode = "bridge" | "direct";
 
 function parsePin(value: string | undefined): string {
   const pin = value?.trim() || DEFAULT_PIN;
@@ -30,6 +32,13 @@ function parseTicketTtlMs(value: string | undefined): number {
     return DEFAULT_TICKET_TTL_MS;
   }
   return Math.min(parsed * 1000, 5 * 60 * 1000);
+}
+
+function parsePtyMode(value: string | undefined): TerminalPtyMode {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) return "bridge";
+  if (normalized === "bridge" || normalized === "direct") return normalized;
+  throw new Error('TMAN_PTY_MODE must be "bridge" or "direct"');
 }
 
 function expandHome(input: string, env: Record<string, string | undefined>): string {
@@ -52,6 +61,7 @@ export function resolveTerminalConfig({
     pin: parsePin(env.TMAN_PIN),
     shell,
     cwd: resolveCwd(env.TMAN_CWD, defaultCwd, env),
+    ptyMode: parsePtyMode(env.TMAN_PTY_MODE),
     ticketTtlMs: parseTicketTtlMs(env.TMAN_TICKET_TTL_SECONDS),
   };
 }
