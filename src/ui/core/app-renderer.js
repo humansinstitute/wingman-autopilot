@@ -5,7 +5,7 @@ import {
 } from "./auth-route-guard.js";
 
 export function shouldFullRenderOnSessionUpdate(route) {
-  return route !== "files" && route !== "live" && route !== "settings" && route !== "pipelines" && route !== "terminal";
+  return route !== "home" && route !== "files" && route !== "live" && route !== "settings" && route !== "pipelines" && route !== "terminal";
 }
 
 export function createAppRenderer({

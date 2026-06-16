@@ -5,6 +5,7 @@ import { shouldFullRenderOnSessionUpdate } from "./app-renderer.js";
 describe("shouldFullRenderOnSessionUpdate", () => {
   test("skips full rerenders for stable long-lived routes", () => {
     expect(shouldFullRenderOnSessionUpdate("files")).toBe(false);
+    expect(shouldFullRenderOnSessionUpdate("home")).toBe(false);
     expect(shouldFullRenderOnSessionUpdate("live")).toBe(false);
     expect(shouldFullRenderOnSessionUpdate("pipelines")).toBe(false);
     expect(shouldFullRenderOnSessionUpdate("settings")).toBe(false);
@@ -12,7 +13,6 @@ describe("shouldFullRenderOnSessionUpdate", () => {
   });
 
   test("keeps full rerenders for other routes", () => {
-    expect(shouldFullRenderOnSessionUpdate("home")).toBe(true);
     expect(shouldFullRenderOnSessionUpdate("jobs")).toBe(true);
   });
 });
