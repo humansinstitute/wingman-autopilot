@@ -430,6 +430,14 @@ function isDocumentDiscussionPipelineIdentifier(value: string | null): boolean {
     || normalized.includes("/document-discussion");
 }
 
+function isSoftwareImplementationPipelineIdentifier(value: string | null): boolean {
+  if (!value) return false;
+  const normalized = value.toLowerCase();
+  return normalized === "software-implementation-review-loop"
+    || normalized.startsWith("software-implementation-review-loop.v")
+    || normalized.includes("/software-implementation-review-loop");
+}
+
 const coreChatChildPipelineSlugs = new Set([
   "do-and-review",
   "software-implementation-review-loop",
@@ -615,6 +623,36 @@ function compactTriggerChatMessage(record: Record<string, unknown>, chat: Record
         : [],
     updatedAt: getText(payload.updated_at ?? payload.updatedAt ?? record.updatedAt),
   };
+}
+
+function collectVisualReferencesFromThread(messages: unknown[]): JsonObject[] {
+  const references: JsonObject[] = [];
+  for (const message of messages) {
+    const compact = compactThreadMessage(message);
+    const messageId = getText(compact.messageId);
+    const attachments = Array.isArray(compact.attachments) ? compact.attachments : [];
+    for (const attachment of attachments) {
+      const record = objectValue(attachment);
+      const mediaType = getText(record.mediaType ?? record.contentType ?? record.mimeType ?? record.type) ?? "";
+      const fileName = getText(record.fileName ?? record.filename ?? record.name ?? record.label);
+      const url = getText(record.url ?? record.href ?? record.storageUrl ?? record.downloadUrl);
+      const localPath = getText(record.localPath ?? record.path ?? record.filePath);
+      const looksVisual = /^image\//i.test(mediaType)
+        || /\.(png|jpe?g|gif|webp|avif)$/i.test(fileName ?? "")
+        || /\.(png|jpe?g|gif|webp|avif)(?:[?#].*)?$/i.test(url ?? localPath ?? "");
+      if (!looksVisual && !localPath && !url) continue;
+      references.push({
+        source: "thread_attachment",
+        messageId,
+        label: fileName ?? (mediaType || "attachment"),
+        mediaType: mediaType || null,
+        url: url ?? null,
+        localPath: localPath ?? null,
+        attachment: record,
+      });
+    }
+  }
+  return references.slice(0, 8);
 }
 
 function latestThreadWithTrigger(chatContext: Record<string, unknown>, record: Record<string, unknown>, chat: Record<string, unknown>): JsonObject[] {
@@ -1318,6 +1356,7 @@ export const builtinPipelineFunctions: FunctionRegistry = {
         "Choose only a task-capable pipeline listed in validChildPipelines.",
         "Use channelContext.contextPrompt as channel-specific instructions for how this work should be handled.",
         "Use software-implementation-review-loop for code, repository, build, test, deployment, or implementation work.",
+        "For software-implementation-review-loop, return targetSurface with the exact repo/workdir, route or surface, existing files/selectors to modify, forbidden surfaces, and visualReferences from thread attachments or linked Flight Deck files when present.",
         "Use research-and-report when the requested durable output is explicitly research with a report or document.",
         "Use do-and-review for generic durable work when no specialised task pipeline fits.",
         "Do not choose any agent-dispatch, intake, discussion, or chat-only pipeline.",
@@ -1650,6 +1689,55 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     };
   },
 
+  async "dispatch.validateImplementationContract"(input) {
+    const createdTask = objectValue(input.createdTask);
+    const workPlan = objectValue(input.workPlan ?? createdTask.workPlan);
+    const taskId = getText(input.taskId ?? createdTask.taskId ?? workPlan.taskId);
+    const workdir = getText(workPlan.workdir ?? workPlan.workingDirectory ?? input.workingDirectory);
+    const instructions = getText(workPlan.instructions ?? input.implementationPrompt);
+    const designDocumentUrl = getText(workPlan.designDocumentUrl ?? input.designDocumentUrl);
+    const targetSurface = objectValue(workPlan.targetSurface ?? input.targetSurface);
+    const targetSurfaceKeys = Object.keys(targetSurface);
+    const visualReferences = Array.isArray(workPlan.visualReferences)
+      ? workPlan.visualReferences
+      : Array.isArray(input.visualReferences)
+        ? input.visualReferences
+        : [];
+    const route = getText(targetSurface.route ?? targetSurface.url ?? targetSurface.path);
+    const surface = getText(targetSurface.surface ?? targetSurface.section ?? targetSurface.name ?? targetSurface.page);
+    const existingFiles = getStringArray(targetSurface.existingFiles ?? targetSurface.files);
+    const allowedFiles = getStringArray(targetSurface.allowedFiles);
+    const forbidden = getStringArray(targetSurface.forbidden ?? targetSurface.forbiddenSurfaces);
+    const missing = [
+      !taskId ? "taskId" : "",
+      !workdir ? "workdir" : "",
+      workdir === "/Users/mini/code/wingmen" ? "non-placeholder workdir" : "",
+      !instructions ? "instructions" : "",
+      !designDocumentUrl || designDocumentUrl === "~/code/wingmen/docs/example-design.md" ? "real designDocumentUrl" : "",
+      targetSurfaceKeys.length === 0 ? "targetSurface" : "",
+      targetSurfaceKeys.length > 0 && !route && !surface && existingFiles.length === 0 && allowedFiles.length === 0 ? "targetSurface route/surface/files" : "",
+    ].filter(Boolean);
+    if (missing.length > 0) {
+      throw new Error(`Implementation contract missing required field(s): ${missing.join(", ")}. Refuse to start worker until the caller supplies a Target Surface Contract.`);
+    }
+    return {
+      ok: true,
+      status: "ok",
+      operation: "implementation-contract.validate",
+      taskId,
+      workdir,
+      targetSurface: {
+        ...targetSurface,
+        route: route ?? null,
+        surface: surface ?? null,
+        existingFiles,
+        allowedFiles,
+        forbidden,
+      },
+      visualReferences: visualReferences.slice(0, 8),
+    };
+  },
+
   async "dispatch.commentImplementationReviewProgress"(input) {
     return {
       published: false,
@@ -1839,6 +1927,7 @@ export const builtinPipelineFunctions: FunctionRegistry = {
       ? intent
       : (raw.dispatchTask === true ? "create_task" : "answer_now");
     const originThread = getThreadMessages(chatContext).slice(-8).map(compactThreadMessage);
+    const visualReferences = collectVisualReferencesFromThread(originThread);
     const latestOriginMessage = originThread[originThread.length - 1] ?? {};
     const originalPrompt = getText(latestOriginMessage.body)
       ?? getText(chat.messageText)
@@ -1882,10 +1971,14 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const effectiveManagerChecklist = managerChecklist.length > 0 ? managerChecklist : (promotedDraft?.managerChecklist ?? []);
     const clarifyingQuestion = getText(raw.clarifyingQuestion);
     const selectedDispatchPipeline = isDispatchPipelineIdentifier(pipelineDefinitionId);
+    const selectedSoftwareImplementationPipeline = isSoftwareImplementationPipelineIdentifier(pipelineDefinitionId);
+    const targetSurface = objectValue(raw.targetSurface ?? taskDraft.targetSurface);
+    const hasTargetSurface = Object.keys(targetSurface).length > 0;
     const missing = dispatchTask && pipelineDefinitionId
       ? [
           !pipelineDefinitionId ? "pipeline" : "",
           selectedDispatchPipeline ? "downstream work pipeline" : "",
+          selectedSoftwareImplementationPipeline && !hasTargetSurface ? "targetSurface" : "",
           !workdir ? "workdir" : "",
           !instructions ? "instructions" : "",
         ].filter(Boolean)
@@ -1921,6 +2014,8 @@ export const builtinPipelineFunctions: FunctionRegistry = {
         managerChecklist: effectiveManagerChecklist,
         assignerNpub,
         reviewerNpub,
+        ...(hasTargetSurface ? { targetSurface } : {}),
+        ...(visualReferences.length > 0 ? { visualReferences } : {}),
       },
       workPlan: {
         childPipelineDefinitionId: shouldDispatchTask ? pipelineDefinitionId : null,
@@ -1938,6 +2033,8 @@ export const builtinPipelineFunctions: FunctionRegistry = {
         channelContext,
         originThread,
         referencedRecords,
+        ...(hasTargetSurface ? { targetSurface } : {}),
+        ...(visualReferences.length > 0 ? { visualReferences } : {}),
         origin: {
           triggerKind: getText(objectValue(input.dispatch).triggerKind) ?? "chat",
           channelId: getText(chat.channelId),
@@ -1976,13 +2073,24 @@ export const builtinPipelineFunctions: FunctionRegistry = {
       ?? requestedPipelineId;
     const selectedDispatchPipeline = isDispatchPipelineIdentifier(pipelineDefinitionId);
     const selectedDiscussionPipeline = isDiscussionPipelineIdentifier(pipelineDefinitionId);
+    const selectedSoftwareImplementationPipeline = isSoftwareImplementationPipelineIdentifier(pipelineDefinitionId);
     const taskDraft = objectValue(decision.taskDraft);
     const workPlan = objectValue(decision.workPlan);
     const workdir = getText(raw.workdir ?? taskDraft.workdir ?? decision.workdir ?? workPlan.workdir);
     const instructions = getText(taskDraft.instructions ?? raw.instructions);
+    const targetSurface = objectValue(raw.targetSurface ?? taskDraft.targetSurface ?? workPlan.targetSurface);
+    const hasTargetSurface = Object.keys(targetSurface).length > 0;
+    const visualReferences = Array.isArray(raw.visualReferences)
+      ? raw.visualReferences.slice(0, 8).map((item) => objectValue(item))
+      : Array.isArray(taskDraft.visualReferences)
+        ? taskDraft.visualReferences.slice(0, 8).map((item) => objectValue(item))
+        : Array.isArray(workPlan.visualReferences)
+          ? workPlan.visualReferences.slice(0, 8).map((item) => objectValue(item))
+          : [];
     const missing = [
       !pipelineDefinitionId ? "pipeline" : "",
       selectedDispatchPipeline || selectedDiscussionPipeline ? "task-capable downstream pipeline" : "",
+      selectedSoftwareImplementationPipeline && !hasTargetSurface ? "targetSurface" : "",
       !workdir ? "workdir" : "",
       !instructions ? "instructions" : "",
     ].filter(Boolean);
@@ -2012,6 +2120,8 @@ export const builtinPipelineFunctions: FunctionRegistry = {
         pipelineDefinitionId: shouldDispatchTask ? pipelineDefinitionId : null,
         scopeId: shouldDispatchTask ? getText(raw.scopeId ?? decision.scopeId) : null,
         workdir: shouldDispatchTask ? workdir : null,
+        ...(hasTargetSurface ? { targetSurface } : {}),
+        ...(visualReferences.length > 0 ? { visualReferences } : {}),
       },
       confidence: clampConfidence(raw.confidence ?? decision.confidence),
     };

@@ -439,12 +439,43 @@ describe("memory pipeline functions", () => {
       operation: "tasks.ensure-implementation-review-loop",
       taskId: "task-1",
     });
+    await expect(builtinPipelineFunctions["dispatch.validateImplementationContract"]!({
+      createdTask: {
+        taskId: "task-1",
+        workPlan: {
+          workdir: "/tmp/project",
+          instructions: "Implement the target surface.",
+          designDocumentUrl: "mention:document:11111111-1111-4111-8111-111111111111",
+          targetSurface: {
+            route: "/flight-deck",
+            existingFiles: ["index.html"],
+          },
+        },
+      },
+    })).resolves.toMatchObject({
+      ok: true,
+      status: "ok",
+      operation: "implementation-contract.validate",
+      taskId: "task-1",
+    });
     await expect(builtinPipelineFunctions["dispatch.commentImplementationReviewProgress"]!({ taskId: "task-1" })).resolves.toMatchObject({
       published: false,
       status: "not_configured",
       operation: "tasks.comment-implementation-review-progress",
       taskId: "task-1",
     });
+  });
+
+  test("dispatch.validateImplementationContract rejects placeholder implementation input", async () => {
+    await expect(builtinPipelineFunctions["dispatch.validateImplementationContract"]!({
+      createdTask: {
+        workPlan: {
+          workdir: "/Users/mini/code/wingmen",
+          instructions: "Implement the design.",
+          designDocumentUrl: "~/code/wingmen/docs/example-design.md",
+        },
+      },
+    })).rejects.toThrow(/taskId.*non-placeholder workdir.*real designDocumentUrl.*targetSurface/);
   });
 
   test("dispatch.normaliseTaskWorkPlan normalises list fields", async () => {
@@ -1280,6 +1311,12 @@ describe("memory pipeline functions", () => {
       taskPipelineDecision: {
         recommendedPipelineId: "software-implementation-review-loop",
         workdir: "/Users/mini/code/wingmanbefree/wm-fd-2",
+        targetSurface: {
+          route: "/flight-deck",
+          surface: "Flight Deck overview",
+          existingFiles: ["index.html", "src/app.js", "src/styles.css"],
+          forbidden: ["new top-level /autopilot page"],
+        },
         chatResponse: { body: "Starting the software implementation task." },
         confidence: 0.93,
       },

@@ -23,6 +23,8 @@
     "implementationPrompt": "Implement the design document as a focused code change. Keep the work scoped and commit-ready.",
     "relevantContext": "",
     "workingDirectory": "/Users/mini/code/wingmen",
+    "targetSurface": {},
+    "visualReferences": [],
     "workerAgent": "codex",
     "managerAgent": "codex",
     "reporterAgent": "codex",
@@ -70,11 +72,33 @@
           "designDocumentUnavailableReason": "$.designDocumentUnavailableReason",
           "implementationPrompt": "$.implementationPrompt",
           "workingDirectory": "$.workingDirectory",
+          "targetSurface": "$.targetSurface",
+          "visualReferences": "$.visualReferences",
           "maxReviewIterations": "$.maxReviewIterations",
           "reportTarget": "$.reportTarget"
         }
       },
       "assign": "$.createdTask"
+    },
+    {
+      "id": "validate-implementation-contract",
+      "name": "validate-implementation-contract",
+      "description": "Refuse to start a worker unless dispatch supplied a real target surface, workdir, task, and design reference.",
+      "type": "code",
+      "function": "dispatch.validateImplementationContract",
+      "input": {
+        "pick": {
+          "createdTask": "$.createdTask",
+          "taskId": "$.createdTask.taskId",
+          "workPlan": "$.createdTask.workPlan",
+          "implementationPrompt": "$.createdTask.workPlan.instructions",
+          "workingDirectory": "$.createdTask.workPlan.workdir",
+          "designDocumentUrl": "$.createdTask.workPlan.designDocumentUrl",
+          "targetSurface": "$.createdTask.workPlan.targetSurface",
+          "visualReferences": "$.createdTask.workPlan.visualReferences"
+        }
+      },
+      "assign": "$.implementationContract"
     },
     {
       "id": "implementation-worker",
@@ -85,15 +109,17 @@
       "directory": "$.createdTask.workPlan.workdir",
       "input": {
         "pick": {
-          "createdTask": "$.createdTask",
           "taskId": "$.createdTask.taskId",
-          "workPlan": "$.createdTask.workPlan",
+          "taskSummary": "$.createdTask.workPlan.taskSummary",
+          "origin": "$.createdTask.workPlan.origin",
           "designDocumentUrl": "$.createdTask.workPlan.designDocumentUrl",
           "designDocumentUnavailableReason": "$.createdTask.workPlan.designDocumentUnavailableReason",
           "designDocument": "$.createdTask.workPlan.designDocument",
           "designDocumentAccessInstructions": "$.createdTask.workPlan.designDocumentAccessInstructions",
           "designDocumentLocalPath": "$.createdTask.workPlan.designDocumentLocalPath",
           "implementationPrompt": "$.createdTask.workPlan.instructions",
+          "targetSurface": "$.implementationContract.targetSurface",
+          "visualReferences": "$.implementationContract.visualReferences",
           "relevantContext": "$.relevantContext",
           "workingDirectory": "$.createdTask.workPlan.workdir",
           "reviewLoop": "$.reviewLoop",
@@ -105,7 +131,7 @@
           "previousHandoffNotes": "$.implementation.handoffNotes"
         }
       },
-      "prompt": "You are the implementation worker in a Wingmen implementation-review pipeline.\n\nInputs:\n- createdTask/taskId identify the Flight Deck task for this loop.\n- designDocumentUrl points to the design reference. If workPlan.designDocument.status is loaded, read workPlan.designDocument.localPath as the design baseline. If the local snapshot is missing or stale and the reference is a Flight Deck document, read it with the flightdeck_doc_get helper. Do not run Yoke, sync a Yoke workspace, or use local Yoke caches for Flight Deck PG documents. Do not paste document text into JSON.\n- implementationPrompt is the starting goal for iteration 1.\n- On later iterations, nextWorkerPrompt and managerPickups are the focused worklist. Treat them as authoritative.\n- relevantContext is optional background only.\n\nWork rules:\n- Inspect the current git status before editing.\n- Preserve existing work and unrelated dirty files.\n- Make only scoped changes needed for the current worklist.\n- If a pickup names another repo, inspect or edit that repo only as needed and report paths with a repo prefix.\n- Run targeted validation, then broader validation when practical.\n- Do not update Flight Deck task state, post task comments, or reply to chat. Deterministic pipeline steps publish progress and closeout.\n\nCallback result object:\n{\n  \"workerSummary\": \"short summary of work performed\",\n  \"designDocumentUrl\": \"same reference\",\n  \"workingDirectory\": \"repo path\",\n  \"iteration\": 1,\n  \"changedFiles\": [\"repo/path.ext\"],\n  \"commandsRun\": [{\"command\":\"...\", \"status\":\"passed|failed|not_run\", \"notes\":\"...\"}],\n  \"git\": {\"branch\":\"\", \"status\":\"\", \"commits\":[], \"prUrl\":\"\"},\n  \"resolvedPickups\": [{\"title\":\"\", \"notes\":\"\"}],\n  \"openQuestions\": [],\n  \"handoffNotes\": \"specific points for manager review\"\n}\n\nReturn compact structured metadata only. Code changes stay in the repository.",
+      "prompt": "You are the implementation worker in a Wingmen implementation-review pipeline.\n\nInputs:\n- taskId identifies the Flight Deck task for this loop.\n- designDocumentUrl/designDocumentLocalPath identify the design baseline. If designDocument.status is loaded, read designDocument.localPath. If the local snapshot is missing or stale and the reference is a Flight Deck document, read it with the flightdeck_doc_get helper. Do not run Yoke, sync a Yoke workspace, or use local Yoke caches for Flight Deck PG documents. Do not paste document text into JSON.\n- targetSurface is the binding contract. Implement the named route/surface/files. Treat forbidden surfaces as out of bounds. Do not create a different page, route, repo, or nav destination to satisfy the work.\n- visualReferences are required inspection inputs when present. Open localPath items directly; download or fetch URL/storage references with the appropriate Flight Deck/storage helper before judging visual fidelity.\n- implementationPrompt is the starting goal for iteration 1.\n- On later iterations, nextWorkerPrompt and managerPickups are the focused worklist. Treat them as authoritative.\n- relevantContext is optional background only.\n\nWork rules:\n- Inspect the current git status before editing.\n- Preserve existing work and unrelated dirty files.\n- Make only scoped changes needed for the current worklist.\n- If targetSurface does not match the current repo or route, stop and return needs_input instead of guessing.\n- Run targeted validation, then broader validation when practical.\n- Do not update Flight Deck task state, post task comments, or reply to chat. Deterministic pipeline steps publish progress and closeout.\n\nCallback result object:\n{\n  \"workerSummary\": \"short summary of work performed\",\n  \"designDocumentUrl\": \"same reference\",\n  \"workingDirectory\": \"repo path\",\n  \"targetSurfaceChecked\": true,\n  \"visualReferencesChecked\": [\"label or path\"],\n  \"iteration\": 1,\n  \"changedFiles\": [\"repo/path.ext\"],\n  \"commandsRun\": [{\"command\":\"...\", \"status\":\"passed|failed|not_run\", \"notes\":\"...\"}],\n  \"git\": {\"branch\":\"\", \"status\":\"\", \"commits\":[], \"prUrl\":\"\"},\n  \"resolvedPickups\": [{\"title\":\"\", \"notes\":\"\"}],\n  \"openQuestions\": [],\n  \"handoffNotes\": \"specific points for manager review\"\n}\n\nReturn compact structured metadata only. Code changes stay in the repository.",
       "assign": "$.implementation",
       "timeoutMs": "$.workerTimeoutMs"
     },
@@ -118,15 +144,17 @@
       "directory": "$.createdTask.workPlan.workdir",
       "input": {
         "pick": {
-          "createdTask": "$.createdTask",
           "taskId": "$.createdTask.taskId",
-          "workPlan": "$.createdTask.workPlan",
+          "taskSummary": "$.createdTask.workPlan.taskSummary",
+          "origin": "$.createdTask.workPlan.origin",
           "designDocumentUrl": "$.createdTask.workPlan.designDocumentUrl",
           "designDocumentUnavailableReason": "$.createdTask.workPlan.designDocumentUnavailableReason",
           "designDocument": "$.createdTask.workPlan.designDocument",
           "designDocumentAccessInstructions": "$.createdTask.workPlan.designDocumentAccessInstructions",
           "designDocumentLocalPath": "$.createdTask.workPlan.designDocumentLocalPath",
           "implementationPrompt": "$.createdTask.workPlan.instructions",
+          "targetSurface": "$.implementationContract.targetSurface",
+          "visualReferences": "$.implementationContract.visualReferences",
           "relevantContext": "$.relevantContext",
           "workingDirectory": "$.createdTask.workPlan.workdir",
           "implementation": "$.implementation",
@@ -135,7 +163,7 @@
           "previousPickups": "$.managerReview.pickups"
         }
       },
-      "prompt": "You are the managerial reviewer in a Wingmen implementation-review pipeline.\n\nReview scope:\n- Read workPlan.designDocument.localPath when loaded, otherwise use flightdeck_doc_get for Flight Deck document references, plus implementationPrompt. Do not run Yoke, sync a Yoke workspace, or use local Yoke caches for Flight Deck PG documents.\n- Inspect current repository state, git status, relevant diff, tests, and worker handoff.\n- Judge whether the design is implemented well enough to close out.\n- Be strict about incomplete behavior, missing tests, unsafe changes, and unclear handoff.\n\nOutput contract:\n- Return a JSON object.\n- Set done true only when no important pickups remain.\n- If done is false, produce a compact nextWorkerPrompt with only the next actionable worklist.\n- Do not repeat full history, full file contents, or full design text.\n- Do not update Flight Deck task state, post task comments, or reply to chat. The next deterministic step publishes your manager progress comment.\n\nCallback result object:\n{\n  \"done\": false,\n  \"managerSummary\": \"short review summary\",\n  \"completed\": [\"what is complete\"],\n  \"pickups\": [{\"title\":\"\", \"priority\":\"high|medium|low\", \"reason\":\"\", \"action\":\"\", \"files\":[\"\"]}],\n  \"risks\": [],\n  \"validationFindings\": [{\"command\":\"...\", \"status\":\"passed|failed|not_run\", \"notes\":\"...\"}],\n  \"gitReview\": {\"branch\":\"\", \"status\":\"\", \"commits\":[], \"prUrl\":\"\"},\n  \"nextWorkerPrompt\": \"Only the specific next actions for the next worker. Leave empty when done is true.\"\n}",
+      "prompt": "You are the managerial reviewer in a Wingmen implementation-review pipeline.\n\nReview scope:\n- Read designDocument.localPath when loaded, otherwise use flightdeck_doc_get for Flight Deck document references, plus implementationPrompt. Do not run Yoke, sync a Yoke workspace, or use local Yoke caches for Flight Deck PG documents.\n- Review against targetSurface first: correct repo, route/surface, existing files/selectors, and forbidden surfaces.\n- Inspect visualReferences when present and verify the result against them.\n- Inspect current repository state, git status, relevant diff, tests, and worker handoff.\n- Judge whether the design is implemented well enough to close out.\n- Be strict about incomplete behavior, wrong target surface, missing visual inspection, missing tests, unsafe changes, and unclear handoff.\n\nOutput contract:\n- Return a JSON object.\n- Set done true only when no important pickups remain.\n- If done is false, produce a compact nextWorkerPrompt with only the next actionable worklist.\n- Do not repeat full history, full file contents, or full design text.\n- Do not update Flight Deck task state, post task comments, or reply to chat. The next deterministic step publishes your manager progress comment.\n\nCallback result object:\n{\n  \"done\": false,\n  \"managerSummary\": \"short review summary\",\n  \"completed\": [\"what is complete\"],\n  \"pickups\": [{\"title\":\"\", \"priority\":\"high|medium|low\", \"reason\":\"\", \"action\":\"\", \"files\":[\"\"]}],\n  \"risks\": [],\n  \"validationFindings\": [{\"command\":\"...\", \"status\":\"passed|failed|not_run\", \"notes\":\"...\"}],\n  \"targetSurfaceReview\": {\"correctSurface\": false, \"notes\":\"\"},\n  \"visualReferenceReview\": {\"checked\": [], \"notes\":\"\"},\n  \"gitReview\": {\"branch\":\"\", \"status\":\"\", \"commits\":[], \"prUrl\":\"\"},\n  \"nextWorkerPrompt\": \"Only the specific next actions for the next worker. Leave empty when done is true.\"\n}",
       "assign": "$.managerReview",
       "timeoutMs": "$.managerTimeoutMs"
     },
@@ -199,14 +227,17 @@
       "directory": "$.createdTask.workPlan.workdir",
       "input": {
         "pick": {
-          "createdTask": "$.createdTask",
-          "workPlan": "$.createdTask.workPlan",
+          "taskId": "$.createdTask.taskId",
+          "taskSummary": "$.createdTask.workPlan.taskSummary",
+          "origin": "$.createdTask.workPlan.origin",
           "designDocumentUrl": "$.createdTask.workPlan.designDocumentUrl",
           "designDocumentUnavailableReason": "$.createdTask.workPlan.designDocumentUnavailableReason",
           "designDocument": "$.createdTask.workPlan.designDocument",
           "designDocumentAccessInstructions": "$.createdTask.workPlan.designDocumentAccessInstructions",
           "designDocumentLocalPath": "$.createdTask.workPlan.designDocumentLocalPath",
           "implementationPrompt": "$.createdTask.workPlan.instructions",
+          "targetSurface": "$.implementationContract.targetSurface",
+          "visualReferences": "$.implementationContract.visualReferences",
           "workingDirectory": "$.createdTask.workPlan.workdir",
           "implementation": "$.implementation",
           "managerReview": "$.managerReview",
