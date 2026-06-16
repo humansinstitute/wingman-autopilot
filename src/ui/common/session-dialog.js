@@ -37,6 +37,23 @@ const getModelOptionsForAgent = (config, agentId) => {
   return dedupeValues([DEFAULT_MODEL_OPTION, ...configuredModels]);
 };
 
+const getModelOptionLabel = (model) => {
+  switch (model) {
+    case DEFAULT_MODEL_OPTION:
+      return "Default";
+    case "opus":
+      return "Opus";
+    case "sonnet":
+      return "Sonnet";
+    case "sonnet[1m]":
+      return "Sonnet (1M Cntx)";
+    case "haiku":
+      return "Haiku";
+    default:
+      return model;
+  }
+};
+
 export const createSessionDialogController = (options) => {
   const {
     dialog,
@@ -270,7 +287,7 @@ export const createSessionDialogController = (options) => {
     availableModels.forEach((model) => {
       const option = document.createElement("option");
       option.value = model;
-      option.textContent = model;
+      option.textContent = getModelOptionLabel(model);
       if (model === nextValue) {
         option.selected = true;
       }

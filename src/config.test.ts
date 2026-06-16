@@ -197,6 +197,25 @@ describe("loadConfig", () => {
     expect(geminiCommand).toContain("--type=gemini");
   });
 
+  test("exposes Claude model aliases for session launch overrides", () => {
+    applyEnv({
+      AGENTAPI_BIN: "/tmp/custom-agentapi",
+      AGENT_MODE: undefined,
+      AGENT_SPAWN_MODE: undefined,
+      GLOVES: undefined,
+    });
+
+    const config = loadConfig();
+
+    expect(config.agents.claude.modelOptions).toEqual([
+      "default",
+      "opus",
+      "sonnet",
+      "sonnet[1m]",
+      "haiku",
+    ]);
+  });
+
   test("uses GLOVES=OFF as the single approval bypass for Codex and Claude", () => {
     applyEnv({
       AGENTAPI_BIN: "/tmp/custom-agentapi",

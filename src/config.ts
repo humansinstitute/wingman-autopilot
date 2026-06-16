@@ -104,7 +104,13 @@ const CODEX_MODEL_OPTIONS = [
   "gpt-5.5",
   "gpt-5.4-mini",
 ];
-const CLAUDE_MODEL_OPTIONS = [DEFAULT_MODEL_OPTION];
+const CLAUDE_MODEL_OPTIONS = [
+  DEFAULT_MODEL_OPTION,
+  "opus",
+  "sonnet",
+  "sonnet[1m]",
+  "haiku",
+];
 const GOOSE_MODEL_OPTIONS = [DEFAULT_MODEL_OPTION];
 const OPENCODE_MODEL_OPTIONS = [
   DEFAULT_MODEL_OPTION,
