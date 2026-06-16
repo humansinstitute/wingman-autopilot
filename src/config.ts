@@ -109,6 +109,11 @@ const GOOSE_MODEL_OPTIONS = [DEFAULT_MODEL_OPTION];
 const OPENCODE_MODEL_OPTIONS = [
   DEFAULT_MODEL_OPTION,
   "opencode/big-pickle",
+  "maple/kimi-k2-thinking",
+  "maple/qwen3-coder-480b",
+  "maple/gpt-oss-120b",
+  "maple/llama-3.3-70b",
+  "ollama/gemma4:e4b",
 ];
 const GEMINI_MODEL_OPTIONS = [DEFAULT_MODEL_OPTION];
 const PI_MODEL_OPTIONS = [DEFAULT_MODEL_OPTION];

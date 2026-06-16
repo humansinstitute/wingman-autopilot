@@ -34,7 +34,18 @@ function createHandler(options: {
         claude: { label: "Claude" },
         codex: { label: "Codex", modelOptions: ["default", "gpt-5.5"] },
         goose: { label: "Goose" },
-        opencode: { label: "OpenCode" },
+        opencode: {
+          label: "OpenCode",
+          modelOptions: [
+            "default",
+            "opencode/big-pickle",
+            "maple/kimi-k2-thinking",
+            "maple/qwen3-coder-480b",
+            "maple/gpt-oss-120b",
+            "maple/llama-3.3-70b",
+            "ollama/gemma4:e4b",
+          ],
+        },
         gemini: { label: "Gemini" },
         pi: { label: "Pi" },
       },
@@ -192,6 +203,19 @@ describe("createApiRouteHandler config defaults", () => {
       id: "claude",
       label: "Claude",
       modelOptions: ["default"],
+    });
+    expect(body.agents).toContainEqual({
+      id: "opencode",
+      label: "OpenCode",
+      modelOptions: [
+        "default",
+        "opencode/big-pickle",
+        "maple/kimi-k2-thinking",
+        "maple/qwen3-coder-480b",
+        "maple/gpt-oss-120b",
+        "maple/llama-3.3-70b",
+        "ollama/gemma4:e4b",
+      ],
     });
   });
 
