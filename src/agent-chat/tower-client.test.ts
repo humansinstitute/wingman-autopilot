@@ -7,6 +7,8 @@ import {
   buildFlightDeckPgMessageInstructionSignature,
   createFlightDeckPgChannelDocument,
   decodeFlightDeckPgDocumentBody,
+  fetchFlightDeckPgDailyScope,
+  upsertFlightDeckPgDailyScope,
 } from './tower-client';
 
 describe('Flight Deck PG Tower client', () => {
@@ -127,5 +129,117 @@ describe('Flight Deck PG Tower client', () => {
     })).toString('base64');
 
     expect(decodeFlightDeckPgDocumentBody({ body: { encoding: 'base64', base64_data } })).toBe('# Existing\n\nBody');
+  });
+
+  test('reads and upserts Daily Scope through signed Flight Deck PG routes', async () => {
+    const botSecret = generateSecretKey();
+    const botPubkeyHex = getPublicKey(botSecret);
+    const botNpub = nip19.npubEncode(botPubkeyHex);
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      requests.push({ url, init });
+      if (init?.method === 'POST') {
+        return new Response(JSON.stringify({
+          daily_note: {
+            id: 'daily-1',
+            owner_actor_id: 'owner-1',
+            note_date: '2026-06-17',
+            items: JSON.parse(String(init.body)).items,
+            body: JSON.parse(String(init.body)).body,
+            row_version: 2,
+          },
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return new Response(JSON.stringify({
+        daily_notes: [{ id: 'daily-1', owner_actor_id: 'owner-1', note_date: '2026-06-17', row_version: 1 }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }) as typeof fetch;
+
+    try {
+      const read = await fetchFlightDeckPgDailyScope({
+        backendBaseUrl: 'http://tower.test',
+        workspaceId: 'workspace-1',
+        appNpub: 'npub-app',
+        botIdentity: { botNpub, botPubkeyHex, botSecret },
+        ownerActorId: 'owner-1',
+        noteDate: '2026-06-17',
+      });
+      expect(read.daily_notes[0].id).toBe('daily-1');
+
+      const write = await upsertFlightDeckPgDailyScope({
+        backendBaseUrl: 'http://tower.test',
+        workspaceId: 'workspace-1',
+        appNpub: 'npub-app',
+        botIdentity: { botNpub, botPubkeyHex, botSecret },
+        ownerActorId: 'owner-1',
+        noteDate: '2026-06-17',
+        body: 'Morning narrative',
+        items: [
+          { text: 'One', completed: false },
+          { text: 'Two', completed: false },
+          { text: 'Three', completed: false },
+          { text: 'Four', completed: false },
+          { text: 'Five', completed: false },
+          { text: 'Six', completed: false },
+        ],
+      });
+      expect(write.daily_note.id).toBe('daily-1');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    const readRequest = requests.find((request) => request.init?.method !== 'POST');
+    expect(readRequest?.url).toContain('/api/v4/flightdeck-pg/workspaces/workspace-1/daily-notes');
+    expect(readRequest?.url).toContain('owner_actor_id=owner-1');
+    expect(readRequest?.url).toContain('note_date=2026-06-17');
+    expect(readRequest?.init?.headers).toMatchObject({
+      Accept: 'application/json',
+      'x-flightdeck-pg-app-npub': 'npub-app',
+    });
+
+    const writeRequest = requests.find((request) => request.init?.method === 'POST');
+    const writeBody = JSON.parse(String(writeRequest?.init?.body));
+    expect(writeBody).toMatchObject({
+      owner_actor_id: 'owner-1',
+      note_date: '2026-06-17',
+      title: 'Daily Scope',
+      body: 'Morning narrative',
+      metadata: { source: 'agent', autopilot_daily_scope_helper: true },
+    });
+    expect(writeBody.items).toHaveLength(5);
+  });
+
+  test('maps Daily Scope permission failures to daily_scope_forbidden', async () => {
+    const botSecret = generateSecretKey();
+    const botPubkeyHex = getPublicKey(botSecret);
+    const botNpub = nip19.npubEncode(botPubkeyHex);
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      error: 'Daily Scope access denied',
+      message: 'permission denied',
+    }), { status: 403, headers: { 'Content-Type': 'application/json' } })) as typeof fetch;
+
+    try {
+      let thrown: unknown;
+      try {
+        await fetchFlightDeckPgDailyScope({
+          backendBaseUrl: 'http://tower.test',
+          workspaceId: 'workspace-1',
+          appNpub: 'npub-app',
+          botIdentity: { botNpub, botPubkeyHex, botSecret },
+          ownerActorId: 'owner-1',
+          noteDate: '2026-06-17',
+        });
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(Error);
+      expect((thrown as Error).message).toContain('Daily Scope access');
+      expect((thrown as { detailCode?: string }).detailCode).toBe('daily_scope_forbidden');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

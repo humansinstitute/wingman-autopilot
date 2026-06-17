@@ -146,6 +146,39 @@ test("task work plans preserve Flight Deck channel context for child sessions", 
   });
 });
 
+test("morning Daily Scope extraction preserves completed items and caps checklist", async () => {
+  const result = await builtinPipelineFunctions["daily.extractMorningScope"]!({
+    ownerNpub: "npub-human",
+    noteDate: "2026-06-17",
+    existingDailyScope: {
+      body: "Earlier context",
+      items: [
+        { id: "done-1", text: "Already shipped the release notes", completed: true, source: "manual" },
+      ],
+    },
+    transcript: [
+      "Ship the Kindling pipeline updates.",
+      "Review the Flight Deck Daily Scope toggle.",
+      "Call Sam about Plantrite rollout.",
+      "Deploy the Tower contract changes.",
+      "Prepare the customer morning brief.",
+      "Fix the Autopilot helper tests.",
+    ].join(" "),
+  });
+
+  expect(result.ownerNpub).toBe("npub-human");
+  expect(result.noteDate).toBe("2026-06-17");
+  expect(result.items).toHaveLength(5);
+  expect(result.items[0]).toMatchObject({
+    id: "done-1",
+    text: "Already shipped the release notes",
+    completed: true,
+    source: "manual",
+  });
+  expect(result.items.every((item: any) => typeof item.text === "string" && item.text.length > 0)).toBe(true);
+  expect(result.parkedItems.length).toBeGreaterThan(0);
+});
+
 function executableChatDispatchSpec(agentDecision: JsonObject, taskPipelineDecision: JsonObject): DeclarativePipeline {
   const spec = structuredClone(loadSharedPipelineSpec("agent-dispatch-chat.json")) as DeclarativePipeline;
   spec.steps = spec.steps.map((step) => {

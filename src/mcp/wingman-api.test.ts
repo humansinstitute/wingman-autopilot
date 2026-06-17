@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
+import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
 
 import { createWingmanMcpApiHandler, type WingmanMcpApiDependencies } from "./wingman-api";
 import type { SessionSnapshot } from "../agents/process-manager";
@@ -378,5 +379,106 @@ describe("wingman-api Flight Deck helpers", () => {
     expect(response?.status).toBe(400);
     const body = await response!.json();
     expect(body.error).toContain("No pipeline run context");
+  });
+
+  test("daily scope helper routes owner/date upserts through Flight Deck PG", async () => {
+    const sessions = new Map<string, SessionSnapshot>();
+    const store = new PipelineStore(join(tmpdir(), `wingman-mcp-daily-scope-${randomUUID()}.sqlite`));
+    const run = store.createRun({
+      definitionId: "daily-scope",
+      name: "daily-scope",
+      scope: "shared",
+      input: {
+        workspace: {
+          workspaceId: "workspace-1",
+          backendBaseUrl: "http://tower.test",
+          sourceAppNpub: "npub-app",
+          humanWorkspaceOwnerNpub: "npub-human",
+          subscriptionId: "sub-1",
+        },
+        record: {
+          recordId: "message-1",
+        },
+      },
+    });
+    sessions.set("caller-1", buildSession({
+      id: "caller-1",
+      metadata: {
+        AGENT: true,
+        bindingType: "flow_run",
+        bindingId: run.id,
+        flowRunId: run.id,
+      },
+    }));
+    const botSecret = generateSecretKey();
+    const botPubkeyHex = getPublicKey(botSecret);
+    const botNpub = nip19.npubEncode(botPubkeyHex);
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      requests.push({ url, init });
+      return new Response(JSON.stringify({
+        daily_note: {
+          id: "daily-1",
+          owner_actor_id: "owner-1",
+          note_date: "2026-06-17",
+          items: JSON.parse(String(init?.body)).items,
+          body: JSON.parse(String(init?.body)).body,
+          row_version: 3,
+        },
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }) as typeof fetch;
+    const handler = createWingmanMcpApiHandler(makeDeps(sessions, {
+      pipelineStore: store,
+      getBotIdentityForSubscription: () => ({ botNpub, botPubkeyHex, botSecret }),
+    } as Partial<WingmanMcpApiDependencies>));
+
+    try {
+      const response = await handler(
+        new Request("http://localhost/api/mcp/wingman/flightdeck", {
+          method: "POST",
+          body: JSON.stringify({
+            sessionId: "caller-1",
+            action: "daily_scope_upsert",
+            ownerActorId: "owner-1",
+            noteDate: "2026-06-17",
+            body: "Morning note",
+            items: [
+              { text: "One" },
+              { text: "Two" },
+              { text: "Three" },
+              { text: "Four" },
+              { text: "Five" },
+              { text: "Six" },
+            ],
+          }),
+        }),
+        new URL("http://localhost/api/mcp/wingman/flightdeck"),
+        "POST",
+      );
+
+      expect(response?.status).toBe(200);
+      const payload = await response!.json();
+      expect(payload.result.daily_note.id).toBe("daily-1");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    const writeRequest = requests[0];
+    expect(writeRequest.url).toBe("http://tower.test/api/v4/flightdeck-pg/workspaces/workspace-1/daily-notes");
+    const body = JSON.parse(String(writeRequest.init?.body));
+    expect(body).toMatchObject({
+      owner_actor_id: "owner-1",
+      owner_npub: "npub-human",
+      note_date: "2026-06-17",
+      body: "Morning note",
+      metadata: {
+        source_session_id: "caller-1",
+        source_pipeline_run_id: run.id,
+        source_record_id: "message-1",
+      },
+    });
+    expect(body.items).toHaveLength(5);
   });
 });
