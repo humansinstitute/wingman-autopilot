@@ -83,12 +83,6 @@ export function createAutopilotCommandPalette({
   let activeId = "";
   let mode = "root";
   let launchProjectsLoading = false;
-  let pipelineStopRuns = [];
-  let pipelineStopLoading = false;
-
-  function isActivePipelineRun(run) {
-    return run?.status === "queued" || run?.status === "running";
-  }
 
   function getQuickItems() {
     return createCommandPaletteQuickItems();
@@ -100,25 +94,6 @@ export function createAutopilotCommandPalette({
 
   function getLaunchItems() {
     return createCommandPaletteLaunchItems(getLaunchProjects());
-  }
-
-  function getPipelineStopItems() {
-    return pipelineStopRuns.map((run) => createCommandItem({
-      group: "pipeline-stop",
-      groupLabel: "Active Pipeline Runs",
-      id: `pipeline-stop:${run.id}`,
-      title: run.name || run.id,
-      subtitle: `${run.definitionSlug ?? run.definitionId ?? "pipeline"} - ${run.status}`,
-      action: "cancel-pipeline-run",
-      targetId: run.id,
-      searchText: [
-        run.id,
-        run.name,
-        run.definitionSlug,
-        run.definitionId,
-        run.status,
-      ].filter(Boolean).join(" "),
-    }));
   }
 
   function getRecentSessionItems() {
@@ -161,9 +136,6 @@ export function createAutopilotCommandPalette({
   function getItems() {
     if (mode === "session-launch") {
       return getLaunchItems();
-    }
-    if (mode === "pipeline-stop") {
-      return getPipelineStopItems();
     }
     return [...getQuickItems(), ...getRecentSessionItems(), ...getRecentAppItems()];
   }
@@ -214,8 +186,6 @@ export function createAutopilotCommandPalette({
     activeId = "";
     mode = "root";
     launchProjectsLoading = false;
-    pipelineStopRuns = [];
-    pipelineStopLoading = false;
   }
 
   function open() {
@@ -269,30 +239,6 @@ export function createAutopilotCommandPalette({
     }
   }
 
-  async function enterPipelineStopMode() {
-    if (!isAuthenticated?.()) {
-      close();
-      openIdentityLoginDialog?.();
-      return;
-    }
-    mode = "pipeline-stop";
-    query = "";
-    activeId = "";
-    pipelineStopRuns = [];
-    pipelineStopLoading = true;
-    render();
-    try {
-      const { fetchPipelineRuns } = await import("../pipelines/api.js");
-      const payload = await fetchPipelineRuns();
-      pipelineStopRuns = (Array.isArray(payload?.runs) ? payload.runs : []).filter(isActivePipelineRun);
-    } catch (error) {
-      showToast?.(error instanceof Error ? error.message : "Failed to load active pipelines.", { type: "error" });
-    } finally {
-      pipelineStopLoading = false;
-      render();
-    }
-  }
-
   async function launchProjectFromItem(item) {
     const project = getLaunchProjects().find((entry) => entry?.id === item?.targetId);
     close();
@@ -311,25 +257,6 @@ export function createAutopilotCommandPalette({
     if (!item) return;
     if (item.action === "new-session") {
       await enterSessionLaunchMode();
-      return;
-    }
-    if (item.action === "stop-pipeline-run") {
-      await enterPipelineStopMode();
-      return;
-    }
-    if (item.action === "cancel-pipeline-run") {
-      const run = pipelineStopRuns.find((entry) => entry.id === item.targetId);
-      if (!run || !window.confirm(`Stop ${run.name || run.id}? The active pipeline agent session for the current step will be stopped.`)) {
-        return;
-      }
-      close();
-      try {
-        const { cancelPipelineRun } = await import("../pipelines/api.js");
-        await cancelPipelineRun(run.id);
-        showToast?.("Pipeline run stopped", { type: "success" });
-      } catch (error) {
-        showToast?.(error instanceof Error ? error.message : "Failed to stop pipeline run.", { type: "error" });
-      }
       return;
     }
     close();
@@ -437,17 +364,11 @@ export function createAutopilotCommandPalette({
     const groups = getGroupedItems(items);
     const placeholder = mode === "session-launch"
       ? "Choose a recent project or open the launch modal"
-      : mode === "pipeline-stop"
-        ? "Choose an active pipeline run to stop"
         : "Search sessions, apps, and commands";
     const shortcutLabel = mode === "session-launch" ? "0-9" : "Cmd K";
     const emptyMessage = mode === "session-launch" && launchProjectsLoading
       ? "Loading recent projects..."
-      : mode === "pipeline-stop" && pipelineStopLoading
-        ? "Loading active pipeline runs..."
-        : mode === "pipeline-stop"
-          ? "No active pipeline runs."
-          : "No commands match.";
+      : "No commands match.";
 
     return {
       groups,

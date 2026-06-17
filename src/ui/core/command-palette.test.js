@@ -53,7 +53,7 @@ describe("autopilot command palette helpers", () => {
       "3:Pipelines",
       "4:Files",
     ]);
-    expect(createCommandPaletteQuickItems().map((item) => item.title)).toContain("Stop Pipeline Run");
+    expect(createCommandPaletteQuickItems().map((item) => item.title)).not.toContain("Stop Pipeline Run");
   });
 
   test("passes existing file favourites into the command file browser", () => {
