@@ -281,6 +281,17 @@ export function initAppCards(deps) {
     webAppRow.append(webAppLabel, webAppValue);
     meta.append(webAppRow);
 
+    const autoStartRow = document.createElement("div");
+    autoStartRow.className = "wm-app-meta-row";
+    const autoStartLabel = document.createElement("span");
+    autoStartLabel.className = "wm-app-meta-label";
+    autoStartLabel.textContent = "Auto-start";
+    const autoStartValue = document.createElement("span");
+    autoStartValue.className = "wm-app-meta-value";
+    autoStartValue.textContent = app.autoStart ? "Yes" : "No";
+    autoStartRow.append(autoStartLabel, autoStartValue);
+    meta.append(autoStartRow);
+
     if (isWebApp) {
       const portRow = document.createElement("div");
       portRow.className = "wm-app-meta-row";

@@ -403,10 +403,14 @@
         </div>
 
         <label class="wm-checkbox" for="app-web-app">
-          <input id="app-web-app" type="checkbox" />
+          <input id="app-web-app" type="checkbox" aria-label="This app serves a web interface" data-testid="app-web-app" />
           <span>This app serves a web interface</span>
         </label>
         <p class="wm-field-note" id="app-web-app-port">Wingman will assign a dedicated port when you save.</p>
+        <label class="wm-checkbox" for="app-auto-start">
+          <input id="app-auto-start" type="checkbox" aria-label="Auto-start this app when Autopilot starts" data-testid="app-auto-start" />
+          <span>Auto-start when Autopilot starts</span>
+        </label>
 
         <details class="app-advanced" id="app-advanced">
           <summary>Advanced Options</summary>

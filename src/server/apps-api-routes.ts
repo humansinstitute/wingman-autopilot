@@ -123,6 +123,7 @@ export interface AppsApiContext {
       tmuxSession?: string;
       notes?: string;
       ownerNpub?: string | null;
+      autoStart?: boolean;
       webApp?: boolean;
       webAppPort?: number | null;
     }) => Promise<AppRecord>;
@@ -134,6 +135,7 @@ export interface AppsApiContext {
         scripts?: AppLifecycleScripts;
         tmuxSession?: string;
         notes?: string | null;
+        autoStart?: boolean;
         webApp?: boolean;
         webAppPort?: number | null;
       },
@@ -619,6 +621,8 @@ export async function handleAppsApi(
     const webAppInput =
       record.webApp !== undefined ? ctx.parseBooleanInput(record.webApp) : ctx.parseBooleanInput((record as Record<string, unknown>).isWebApp);
     const requestedWebApp = webAppInput ?? false;
+    const autoStartInput =
+      record.autoStart !== undefined ? ctx.parseBooleanInput(record.autoStart) : ctx.parseBooleanInput(record.auto_start);
     const requestedPort = ctx.parsePortInput(record.webAppPort);
     const ownerNpub = ctx.viewerNpub ?? (ctx.workspaceScope.isAdmin ? ctx.adminNpub : null);
     if (!ownerNpub) {
@@ -652,6 +656,7 @@ export async function handleAppsApi(
         tmuxSession: tmuxSession ?? undefined,
         notes: notes ?? undefined,
         ownerNpub,
+        autoStart: autoStartInput ?? false,
         webApp: requestedWebApp,
         webAppPort: requestedPort ?? undefined,
       });
@@ -773,6 +778,8 @@ export async function handleAppsApi(
       const overrides = ctx.parseAppScripts(record.scripts);
       const webAppRaw = record.webApp ?? (record as Record<string, unknown>).isWebApp;
       const webAppInput = ctx.parseBooleanInput(webAppRaw);
+      const autoStartRaw = record.autoStart ?? record.auto_start;
+      const autoStartInput = ctx.parseBooleanInput(autoStartRaw);
       const webAppPortInput = ctx.parsePortInput(record.webAppPort);
       const shouldDiscover =
         typeof record.discoverScripts === 'boolean'
@@ -823,6 +830,7 @@ export async function handleAppsApi(
           tmuxSession?: string;
           notes?: string | null;
           scripts?: AppLifecycleScripts;
+          autoStart?: boolean;
           webApp?: boolean;
           webAppPort?: number;
         } = {
@@ -834,6 +842,9 @@ export async function handleAppsApi(
         };
         if (webAppInput !== undefined) {
           updatePayload.webApp = webAppInput;
+        }
+        if (autoStartInput !== undefined) {
+          updatePayload.autoStart = autoStartInput;
         }
         if (webAppPortInput !== null) {
           updatePayload.webAppPort = webAppPortInput;

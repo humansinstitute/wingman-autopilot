@@ -31,6 +31,7 @@ export const initAppDialogs = ({
   const appDiscoverButton = document.getElementById("app-discover");
   const appWebAppToggle = document.getElementById("app-web-app");
   const appWebAppPortNote = document.getElementById("app-web-app-port");
+  const appAutoStartToggle = document.getElementById("app-auto-start");
   const appScriptInputs = {
     start: document.getElementById("app-script-start"),
     stop: document.getElementById("app-script-stop"),
@@ -325,6 +326,9 @@ export const initAppDialogs = ({
     if (appWebAppToggle) {
       appWebAppToggle.checked = false;
     }
+    if (appAutoStartToggle) {
+      appAutoStartToggle.checked = false;
+    }
     appDialogState.webAppEnabled = false;
     appDialogState.webAppPort = null;
     appDialogState.projectContext = null;
@@ -367,6 +371,9 @@ export const initAppDialogs = ({
     if (appWebAppToggle) {
       appWebAppToggle.checked = webAppEnabled;
     }
+    if (appAutoStartToggle) {
+      appAutoStartToggle.checked = Boolean(app.autoStart ?? app.auto_start);
+    }
     syncAppWebAppPortNote({ enabled: webAppEnabled, port: appDialogState.webAppPort });
     if (appAdvancedSection && !appAdvancedSection.hidden) {
       const hasScript = Object.values(app.scripts ?? {}).some(
@@ -395,7 +402,8 @@ export const initAppDialogs = ({
     }
     const discoverScripts = appDiscoverToggle ? appDiscoverToggle.checked : true;
     const webApp = appWebAppToggle ? appWebAppToggle.checked : false;
-    return { label, root, notesRaw, notesTrimmed, scripts, discoverScripts, webApp };
+    const autoStart = appAutoStartToggle ? appAutoStartToggle.checked : false;
+    return { label, root, notesRaw, notesTrimmed, scripts, discoverScripts, webApp, autoStart };
   };
 
   const handleAppFormSubmit = async (event) => {
@@ -431,6 +439,8 @@ export const initAppDialogs = ({
               : undefined,
         discoverScripts: values.discoverScripts,
         webApp: values.webApp,
+        autoStart: values.autoStart,
+        auto_start: values.autoStart,
       };
     } else {
       url = "/api/apps";
@@ -442,6 +452,8 @@ export const initAppDialogs = ({
         notes: values.notesTrimmed.length > 0 ? values.notesTrimmed : undefined,
         discoverScripts: values.discoverScripts,
         webApp: values.webApp,
+        autoStart: values.autoStart,
+        auto_start: values.autoStart,
       };
     }
 

@@ -27,6 +27,7 @@ export interface AppRecord {
   logsDir?: string;
   notes?: string;
   ownerNpub: string | null;
+  autoStart?: boolean;
   createdAt: string;
   updatedAt: string;
   webApp: boolean;
@@ -44,6 +45,7 @@ export interface RegisterAppInput {
   logsDir?: string;
   notes?: string;
   ownerNpub?: string | null;
+  autoStart?: boolean;
   webApp?: boolean;
   webAppPort?: number | null;
 }
@@ -58,6 +60,7 @@ export interface UpdateAppInput {
   logsDir?: string;
   notes?: string | null;
   ownerNpub?: string | null;
+  autoStart?: boolean;
   webApp?: boolean;
   webAppPort?: number | null;
 }
@@ -180,6 +183,7 @@ export class AppRegistry {
       logsDir: input.logsDir,
       notes: input.notes?.trim() || undefined,
       ownerNpub,
+      autoStart: Boolean(input.autoStart),
       createdAt: now,
       updatedAt: now,
       webApp: webAppEnabled,
@@ -241,6 +245,7 @@ export class AppRegistry {
       logsDir: input.logsDir !== undefined ? input.logsDir : existing.logsDir,
       notes: nextNotes,
       ownerNpub: nextOwnerNpub,
+      autoStart: input.autoStart !== undefined ? Boolean(input.autoStart) : existing.autoStart,
       updatedAt: new Date().toISOString(),
       webApp: nextWebApp,
       webAppPort: nextWebAppPort,
@@ -456,6 +461,7 @@ export class AppRegistry {
     const tmuxSession = normaliseWindowName(input.tmuxSession, label, root, input.id, ownerAlias);
     const scripts = this.normaliseScripts(input.scripts);
     const notes = input.notes?.trim() || undefined;
+    const autoStart = Boolean(input.autoStart);
     const webApp = Boolean(input.webApp);
     const storedPort =
       typeof input.webAppPort === "number" && Number.isFinite(input.webAppPort)
@@ -472,6 +478,7 @@ export class AppRegistry {
       logsDir: input.logsDir,
       notes,
       ownerNpub,
+      autoStart,
       createdAt,
       updatedAt,
       webApp,

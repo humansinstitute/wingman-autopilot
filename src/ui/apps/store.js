@@ -206,12 +206,13 @@ export function initAppsStore({
         typeof item?.webAppPort === "number" && Number.isFinite(item.webAppPort)
           ? Math.trunc(item.webAppPort)
           : null;
+      const autoStart = Boolean(item?.autoStart ?? item?.auto_start);
       let webAppUrl =
         typeof item?.webAppUrl === "string" && item.webAppUrl.length > 0 ? item.webAppUrl : null;
       if (!webAppUrl && webApp && webAppPort !== null && formatWebAppUrl) {
         webAppUrl = formatWebAppUrl(webAppPort);
       }
-      return { ...item, webApp, webAppPort, webAppUrl, logs, availableScripts };
+      return { ...item, autoStart, auto_start: autoStart, webApp, webAppPort, webAppUrl, logs, availableScripts };
     },
 
     /** Process filter options from API response. */

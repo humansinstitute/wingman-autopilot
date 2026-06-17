@@ -210,6 +210,7 @@ import { resolveTerminalConfig } from "./terminal/terminal-config";
 import { TerminalSessionManager } from "./terminal/terminal-session-manager";
 import { TerminalTicketStore } from "./terminal/terminal-ticket-store";
 import { reconcileAppsWithPM2 } from "./server/bootstrap/pm2-reconcile";
+import { autostartApps } from "./server/bootstrap/app-autostart";
 import { cleanupOrphanedAgentProcesses } from "./server/bootstrap/pm2-agent-cleanup";
 import { ensureWingmanCoreRegistration } from "./server/bootstrap/wingman-core-registry";
 import { connectPM2 } from "./agents/pm2-wrapper";
@@ -805,8 +806,9 @@ try {
   if (appReconcileResult.appsReconciled > 0 || appReconcileResult.appsCleared > 0) {
     console.log(`[pm2] reconciled apps: ${appReconcileResult.appsReconciled} running, ${appReconcileResult.appsCleared} cleared`);
   }
+  await autostartApps(appRegistry, appProcessManager);
 } catch (error) {
-  console.warn(`[pm2] app reconciliation failed: ${(error as Error).message}`);
+  console.warn(`[apps-bootstrap] app reconciliation or autostart failed: ${(error as Error).message}`);
 }
 const nightWatchDeps = {
   store: nightWatchStore,
@@ -1929,6 +1931,8 @@ const buildAppResponse = (app: AppRecord, status: AppProcessStatus, options: Bui
     logsDir: app.logsDir ?? null,
     notes: app.notes ?? null,
     ownerNpub: app.ownerNpub,
+    autoStart: Boolean(app.autoStart),
+    auto_start: Boolean(app.autoStart),
     createdAt: app.createdAt,
     updatedAt: app.updatedAt,
     webApp: app.webApp,
