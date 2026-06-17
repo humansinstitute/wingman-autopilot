@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1124,6 +1124,82 @@ export const builtinPipelineFunctions: FunctionRegistry = {
         channelIds,
         scopeIds,
       },
+    };
+  },
+
+  async "daily.extractMorningScope"(input) {
+    const transcript = getText(input.transcript ?? input.text ?? input.note) ?? "";
+    const existing = objectValue(input.existingDailyScope ?? input.existing_daily_scope ?? input.dailyNote);
+    const existingItems = Array.isArray(existing.items) ? existing.items.map((item) => objectValue(item)) : [];
+    const completed = existingItems
+      .filter((item) => item.completed === true && getText(item.text))
+      .map((item) => ({
+        id: getText(item.id) ?? crypto.randomUUID(),
+        text: getText(item.text)!,
+        completed: true,
+        source: getText(item.source) ?? "manual",
+      }));
+    const candidates = transcript
+      .split(/\n|[.;]/)
+      .map((line) => line.replace(/^[-*\d.)\s]+/, "").trim())
+      .filter((line) => line.length > 6)
+      .filter((line) => /\b(ship|finish|call|review|write|send|deploy|decide|plan|fix|meet|follow up|prepare|publish|test)\b/i.test(line))
+      .slice(0, 8);
+    const newItems = candidates.map((text) => ({
+      id: crypto.randomUUID(),
+      text: truncateText(text, 140),
+      completed: false,
+      source: "agent",
+    }));
+    const byText = new Map<string, Record<string, unknown>>();
+    for (const item of [...completed, ...newItems]) {
+      const key = String(item.text).toLowerCase();
+      if (!byText.has(key)) byText.set(key, item);
+    }
+    const items = Array.from(byText.values()).slice(0, 5);
+    return {
+      ownerNpub: getText(input.ownerNpub ?? input.owner_npub) ?? null,
+      noteDate: getText(input.noteDate ?? input.note_date) ?? new Date().toISOString().slice(0, 10),
+      body: transcript ? truncateText(transcript.replace(/\s+/g, " ").trim(), 2000) : getText(existing.body) ?? "",
+      items,
+      confidence: transcript ? 0.62 : 0.2,
+      parkedItems: candidates.slice(5),
+    };
+  },
+
+  async "daily.upsertTowerPgScope"(input) {
+    const towerBaseUrl = getText(input.towerBaseUrl ?? input.baseUrl ?? input.towerUrl);
+    const workspaceId = getText(input.workspaceId ?? input.workspace_id);
+    if (!towerBaseUrl || !workspaceId) {
+      return { status: "failed", error: "towerBaseUrl and workspaceId are required" };
+    }
+    const appNpub = getText(input.appNpub ?? input.app_npub);
+    const noteDate = getText(input.noteDate ?? input.note_date) ?? new Date().toISOString().slice(0, 10);
+    const body = {
+      note_date: noteDate,
+      title: getText(input.title) ?? "Daily Scope",
+      body: getText(input.body ?? input.narrative) ?? "",
+      focus: getText(input.focus) ?? "",
+      items: Array.isArray(input.items) ? input.items.slice(0, 5) : [],
+      status: "active",
+      ...(getText(input.ownerActorId ?? input.owner_actor_id) ? { owner_actor_id: getText(input.ownerActorId ?? input.owner_actor_id) } : {}),
+      ...(getText(input.ownerNpub ?? input.owner_npub) ? { owner_npub: getText(input.ownerNpub ?? input.owner_npub) } : {}),
+      metadata: {
+        source: "agent",
+        autopilot_pipeline_daily_scope: true,
+        ...objectValue(input.metadata),
+      },
+    };
+    const payload = await postTowerPgJson(
+      towerBaseUrl,
+      `/api/v4/flightdeck-pg/workspaces/${encodeURIComponent(workspaceId)}/daily-notes`,
+      body,
+      appNpub,
+    );
+    return {
+      status: "ok",
+      dailyNote: payload.daily_note ?? null,
+      noteDate,
     };
   },
 
@@ -2434,6 +2510,27 @@ async function fetchTowerPgJson(baseUrl: string, path: string, appNpub: string |
   if (!response.ok) {
     const text = await response.text().catch(() => "");
     throw new Error(`Tower PG request failed (${response.status}) ${path}${text ? `: ${truncateText(text, 240)}` : ""}`);
+  }
+  const payload = await response.json();
+  return objectValue(payload);
+}
+
+async function postTowerPgJson(baseUrl: string, path: string, body: Record<string, unknown>, appNpub: string | null = null): Promise<Record<string, unknown>> {
+  const url = joinUrl(baseUrl, path);
+  const serialized = JSON.stringify(body);
+  const bodyHash = createHash("sha256").update(serialized, "utf8").digest("hex");
+  const { token } = await signWithWingmanKey(url, "POST", bodyHash);
+  const headers: Record<string, string> = {
+    accept: "application/json",
+    authorization: token,
+    "content-type": "application/json",
+  };
+  if (appNpub) headers["x-flightdeck-pg-app-npub"] = appNpub;
+  const response = await fetch(url, { method: "POST", headers, body: serialized });
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    const forbidden = response.status === 403 ? " daily_scope_forbidden: human must enable Daily Scope access for this agent." : "";
+    throw new Error(`Tower PG request failed (${response.status}) ${path}${forbidden}${text ? `: ${truncateText(text, 240)}` : ""}`);
   }
   const payload = await response.json();
   return objectValue(payload);

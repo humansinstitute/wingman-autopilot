@@ -83,6 +83,32 @@ export const flightdeckDocReplySchema = {
 export const flightdeckDocReplyDescription =
   "Reply to a Flight Deck PG document comment using Tower typed document comment routes. Never falls back to Yoke.";
 
+export const flightdeckDailyScopeGetSchema = {
+  owner_npub: z.string().optional().describe("Human owner's npub; defaults to the current Flight Deck human owner when available"),
+  owner_actor_id: z.string().optional().describe("Human owner actor id if known"),
+  note_date: z.string().optional().describe("YYYY-MM-DD date; defaults to today"),
+};
+export const flightdeckDailyScopeGetDescription =
+  "Read a human's personal Daily Scope through Tower typed Flight Deck PG routes. Requires the human to enable Daily Scope access for this agent.";
+
+export const flightdeckDailyScopeUpsertSchema = {
+  owner_npub: z.string().optional().describe("Human owner's npub; defaults to the current Flight Deck human owner when available"),
+  owner_actor_id: z.string().optional().describe("Human owner actor id if known"),
+  note_date: z.string().optional().describe("YYYY-MM-DD date; defaults to today"),
+  title: z.string().optional().describe("Daily Scope title"),
+  body: z.string().optional().describe("Narrative Daily Scope body"),
+  narrative: z.string().optional().describe("Alias for body"),
+  focus: z.string().optional().describe("Compatibility focus summary"),
+  items: z.array(z.object({
+    id: z.string().optional(),
+    text: z.string().min(1),
+    completed: z.boolean().optional(),
+    source: z.string().optional(),
+  })).max(5).optional().describe("Three to five concrete checklist items; never more than five"),
+};
+export const flightdeckDailyScopeUpsertDescription =
+  "Create or update a human's personal Daily Scope checklist and narrative through Tower typed Flight Deck PG routes. Never uses Yoke.";
+
 async function callFlightDeck(
   wingmanUrl: string,
   sessionId: string,
@@ -168,3 +194,9 @@ export const handleFlightdeckDocComments = (params: Record<string, unknown>, win
 
 export const handleFlightdeckDocReply = (params: Record<string, unknown>, wingmanUrl: string, sessionId: string) =>
   callFlightDeck(wingmanUrl, sessionId, "doc_reply", mapIds(params));
+
+export const handleFlightdeckDailyScopeGet = (params: Record<string, unknown>, wingmanUrl: string, sessionId: string) =>
+  callFlightDeck(wingmanUrl, sessionId, "daily_scope_get", mapIds(params));
+
+export const handleFlightdeckDailyScopeUpsert = (params: Record<string, unknown>, wingmanUrl: string, sessionId: string) =>
+  callFlightDeck(wingmanUrl, sessionId, "daily_scope_upsert", mapIds(params));

@@ -102,6 +102,35 @@ export interface FlightDeckPgTask {
   updated_at?: string | null;
 }
 
+export interface FlightDeckPgDailyScopeItem {
+  id?: string | null;
+  text: string;
+  completed?: boolean;
+  source?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface FlightDeckPgDailyNote {
+  id: string;
+  workspace_id?: string;
+  owner_actor_id?: string | null;
+  owner_actor_npub?: string | null;
+  note_date?: string | null;
+  title?: string | null;
+  body?: string | null;
+  focus?: string | null;
+  items?: FlightDeckPgDailyScopeItem[];
+  status?: string | null;
+  metadata?: Record<string, unknown> | null;
+  row_version?: number | null;
+  created_by_actor_id?: string | null;
+  updated_by_actor_id?: string | null;
+  updated_by_actor_npub?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
 export interface FlightDeckPgTaskComment {
   id: string;
   workspace_id?: string;
@@ -116,6 +145,12 @@ export interface FlightDeckPgTaskComment {
   updated_by_actor_id?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
+}
+
+export interface FlightDeckPgDailyNotesResult {
+  identity?: Record<string, unknown>;
+  daily_notes: FlightDeckPgDailyNote[];
+  next_cursor?: string | null;
 }
 
 export interface FlightDeckPgDocument {
@@ -1164,6 +1199,111 @@ export async function fetchFlightDeckPgTask(params: {
   if (!response.ok) {
     const error = await parseTowerError(response, 'flightdeck_pg_task');
     throw Object.assign(new Error(error.message), error);
+  }
+  return await response.json() as FlightDeckPgWriteResult;
+}
+
+function dailyScopeError(error: TowerErrorDetails): Error & TowerErrorDetails {
+  const permissionDenied = error.status === 403 || error.detailCode === 'permission_denied';
+  const message = permissionDenied
+    ? 'Daily Scope access is not enabled for this agent. The human must enable Daily Scope access for this agent in My Agents settings.'
+    : error.message;
+  return Object.assign(new Error(message), {
+    ...error,
+    detailCode: permissionDenied ? 'daily_scope_forbidden' : error.detailCode,
+  });
+}
+
+export async function fetchFlightDeckPgDailyScope(params: {
+  backendBaseUrl: string;
+  workspaceId: string;
+  appNpub: string;
+  botIdentity: RuntimeBotIdentity;
+  ownerActorId?: string | null;
+  ownerNpub?: string | null;
+  noteDate?: string | null;
+  limit?: number;
+  signal?: AbortSignal;
+}): Promise<FlightDeckPgDailyNotesResult> {
+  const path = `/api/v4/flightdeck-pg/workspaces/${encodeURIComponent(params.workspaceId)}/daily-notes`;
+  const url = buildFlightDeckPgUrl(params.backendBaseUrl, path, {
+    owner_actor_id: params.ownerActorId,
+    owner_npub: params.ownerNpub,
+    note_date: params.noteDate,
+    limit: params.limit ?? 5,
+  });
+  const authorization = await signFlightDeckPgBotRequest({
+    botIdentity: params.botIdentity,
+    url,
+    method: 'GET',
+  });
+  const response = await fetch(url, {
+    headers: {
+      Accept: 'application/json',
+      Authorization: authorization,
+      'x-flightdeck-pg-app-npub': params.appNpub,
+    },
+    signal: params.signal,
+  });
+  if (!response.ok) {
+    const error = await parseTowerError(response, 'flightdeck_pg_daily_scope_get');
+    throw dailyScopeError(error);
+  }
+  return await response.json() as FlightDeckPgDailyNotesResult;
+}
+
+export async function upsertFlightDeckPgDailyScope(params: {
+  backendBaseUrl: string;
+  workspaceId: string;
+  appNpub: string;
+  botIdentity: RuntimeBotIdentity;
+  ownerActorId?: string | null;
+  ownerNpub?: string | null;
+  noteDate: string;
+  title?: string | null;
+  body?: string | null;
+  focus?: string | null;
+  items?: FlightDeckPgDailyScopeItem[];
+  metadata?: Record<string, unknown> | null;
+  signal?: AbortSignal;
+}): Promise<FlightDeckPgWriteResult> {
+  const path = `/api/v4/flightdeck-pg/workspaces/${encodeURIComponent(params.workspaceId)}/daily-notes`;
+  const url = buildFlightDeckPgUrl(params.backendBaseUrl, path);
+  const body = {
+    note_date: params.noteDate,
+    title: params.title ?? 'Daily Scope',
+    body: params.body ?? '',
+    focus: params.focus ?? '',
+    items: Array.isArray(params.items) ? params.items.slice(0, 5) : [],
+    status: 'active',
+    ...(params.ownerActorId ? { owner_actor_id: params.ownerActorId } : {}),
+    ...(params.ownerNpub ? { owner_npub: params.ownerNpub } : {}),
+    metadata: {
+      source: 'agent',
+      autopilot_daily_scope_helper: true,
+      ...(params.metadata ?? {}),
+    },
+  };
+  const authorization = await signFlightDeckPgBotRequest({
+    botIdentity: params.botIdentity,
+    url,
+    method: 'POST',
+    body,
+  });
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      Authorization: authorization,
+      'Content-Type': 'application/json',
+      'x-flightdeck-pg-app-npub': params.appNpub,
+    },
+    body: JSON.stringify(body),
+    signal: params.signal,
+  });
+  if (!response.ok) {
+    const error = await parseTowerError(response, 'flightdeck_pg_daily_scope_upsert');
+    throw dailyScopeError(error);
   }
   return await response.json() as FlightDeckPgWriteResult;
 }

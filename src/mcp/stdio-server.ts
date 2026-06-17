@@ -224,6 +224,10 @@ import {
   flightdeckDocReplySchema,
   flightdeckDocUpdateDescription,
   flightdeckDocUpdateSchema,
+  flightdeckDailyScopeGetDescription,
+  flightdeckDailyScopeGetSchema,
+  flightdeckDailyScopeUpsertDescription,
+  flightdeckDailyScopeUpsertSchema,
   flightdeckTaskCommentDescription,
   flightdeckTaskCommentSchema,
   flightdeckTaskCommentsDescription,
@@ -239,6 +243,8 @@ import {
   handleFlightdeckDocGet,
   handleFlightdeckDocReply,
   handleFlightdeckDocUpdate,
+  handleFlightdeckDailyScopeGet,
+  handleFlightdeckDailyScopeUpsert,
   handleFlightdeckTaskComment,
   handleFlightdeckTaskComments,
   handleFlightdeckTaskState,
@@ -482,6 +488,20 @@ server.tool(
   flightdeckDocReplyDescription,
   flightdeckDocReplySchema,
   (params) => handleFlightdeckDocReply(params, wingmanUrl, sessionId),
+);
+
+server.tool(
+  "flightdeck_daily_scope_get",
+  flightdeckDailyScopeGetDescription,
+  flightdeckDailyScopeGetSchema,
+  (params) => handleFlightdeckDailyScopeGet(params, wingmanUrl, sessionId),
+);
+
+server.tool(
+  "flightdeck_daily_scope_upsert",
+  flightdeckDailyScopeUpsertDescription,
+  flightdeckDailyScopeUpsertSchema,
+  (params) => handleFlightdeckDailyScopeUpsert(params, wingmanUrl, sessionId),
 );
 
 // ---- save_memory ----

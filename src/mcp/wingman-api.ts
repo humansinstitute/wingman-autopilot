@@ -19,6 +19,7 @@ import {
   createFlightDeckPgDocumentComment,
   createFlightDeckPgTaskComment,
   decodeFlightDeckPgDocumentBody,
+  fetchFlightDeckPgDailyScope,
   fetchFlightDeckPgChannelMessages,
   fetchFlightDeckPgDocument,
   fetchFlightDeckPgDocumentComments,
@@ -26,6 +27,7 @@ import {
   fetchFlightDeckPgTaskComments,
   updateFlightDeckPgDocument,
   updateFlightDeckPgTaskState,
+  upsertFlightDeckPgDailyScope,
 } from "../agent-chat/tower-client";
 import { AGENT_TYPES, AGENT_TYPE_LIST, type AgentType } from "../agent-types";
 import type { AppRecord, AppLifecycleAction } from "../apps/app-registry";
@@ -1407,6 +1409,49 @@ async function handleFlightDeckHelper(
       limit: Number(body.limit) > 0 ? Number(body.limit) : 200,
     });
     return jsonOk({ ok: true, ...result });
+  }
+
+  if (action === "daily_scope_get") {
+    const noteDate = asString(body.noteDate) ?? asString(body.note_date) ?? new Date().toISOString().slice(0, 10);
+    const result = await fetchFlightDeckPgDailyScope({
+      ...pg,
+      ownerActorId: asString(body.ownerActorId) ?? asString(body.owner_actor_id),
+      ownerNpub: asString(body.ownerNpub) ?? asString(body.owner_npub) ?? asString(resolved.workspace.humanWorkspaceOwnerNpub),
+      noteDate,
+      limit: Number(body.limit) > 0 ? Number(body.limit) : 5,
+    });
+    return jsonOk({ ok: true, noteDate, ...result, daily_note: result.daily_notes[0] ?? null });
+  }
+
+  if (action === "daily_scope_upsert") {
+    const noteDate = asString(body.noteDate) ?? asString(body.note_date) ?? new Date().toISOString().slice(0, 10);
+    const rawItems = Array.isArray(body.items) ? body.items : [];
+    const items = rawItems.slice(0, 5).map((item, index) => {
+      const row = typeof item === "object" && item !== null ? item as Record<string, unknown> : { text: item };
+      return {
+        id: asString(row.id) ?? `item-${index + 1}`,
+        text: asString(row.text) ?? asString(row.label) ?? "",
+        completed: Boolean(row.completed),
+        source: asString(row.source) ?? "agent",
+      };
+    }).filter((item) => item.text);
+    const result = await upsertFlightDeckPgDailyScope({
+      ...pg,
+      ownerActorId: asString(body.ownerActorId) ?? asString(body.owner_actor_id),
+      ownerNpub: asString(body.ownerNpub) ?? asString(body.owner_npub) ?? asString(resolved.workspace.humanWorkspaceOwnerNpub),
+      noteDate,
+      title: asString(body.title) ?? "Daily Scope",
+      body: asString(body.body) ?? asString(body.narrative) ?? "",
+      focus: asString(body.focus),
+      items,
+      metadata: {
+        source_session_id: sessionId,
+        source_pipeline_run_id: resolved.runId,
+        source_record_id: asString(resolved.record.recordId),
+        ...asObject(body.metadata),
+      },
+    });
+    return jsonOk({ ok: true, result });
   }
 
   if (action === "doc_reply") {
