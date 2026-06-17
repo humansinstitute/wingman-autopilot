@@ -1118,4 +1118,38 @@ describe("acceptAgentCallback", () => {
     expect(store.getStep(step.id)?.result).toEqual({ answer: "done" });
     expect(store.listCallbacksForStep(step.id).map((callback) => callback.accepted)).toEqual([0, 1]);
   });
+
+  test("rejects late callbacks after a step is cancelled", async () => {
+    const store = makeStore();
+    const run = store.createRun({
+      definitionId: "definition",
+      name: "definition",
+      ownerNpub: "npub-test",
+      ownerAlias: "alpha-beta-gamma",
+      scope: "user",
+      input: {},
+    });
+    const step = store.createStep({
+      runId: run.id,
+      stepIndex: 0,
+      name: "agent",
+      kind: "agent",
+      input: {},
+      callbackToken: "secret-token",
+    });
+    store.cancelRun(run.id, "Stopped by test");
+
+    const rejected = await acceptAgentCallback({
+      store,
+      runId: run.id,
+      stepId: step.id,
+      token: "secret-token",
+      payload: { runId: run.id, stepId: step.id, status: "ok", result: { answer: "late" } },
+    });
+
+    expect(rejected.status).toBe(409);
+    expect(store.getStep(step.id)?.status).toBe("cancelled");
+    expect(store.getStep(step.id)?.result).toBeNull();
+    expect(store.listCallbacksForStep(step.id).map((callback) => callback.accepted)).toEqual([0]);
+  });
 });

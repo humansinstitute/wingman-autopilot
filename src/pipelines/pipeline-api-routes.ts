@@ -333,6 +333,29 @@ export async function handlePipelineApi(
     }, { status: 202 });
   }
 
+  const runCancelMatch = pathname.match(/^\/api\/pipelines\/runs\/([^/]+)\/cancel$/);
+  if (runCancelMatch && method === "POST") {
+    const id = decodeURIComponent(runCancelMatch[1]!);
+    const run = ctx.store.getRun(id);
+    if (!run || !canAccessPipelineRun(run, ownerNpub, ctx)) {
+      return Response.json({ error: "Pipeline run not found" }, { status: 404 });
+    }
+    if (run.status !== "running") {
+      return Response.json({ error: "Only running pipeline runs can be stopped", run }, { status: 409 });
+    }
+    const runningSteps = ctx.store.listSteps(id).filter((step) => step.status === "running" || step.status === "queued");
+    const reason = readCancelReason(await request.json().catch(() => null));
+    const cancelled = ctx.store.cancelRun(id, reason);
+    await stopPipelineStepSessions(ctx, runningSteps.map((step) => step.wingmanSessionId));
+    const summary = ctx.store.getRunSummary(id);
+    const definitions = await listLatestPipelineDefinitions(ownerAlias);
+    return Response.json({
+      ok: true,
+      run: summary ? serializeRunSummary(summary, definitions) : cancelled,
+      steps: ctx.store.listStepSummaries(id),
+    });
+  }
+
   const runStepsMatch = pathname.match(/^\/api\/pipelines\/runs\/([^/]+)\/steps$/);
   if (runStepsMatch && method === "GET") {
     const run = ctx.store.getRun(decodeURIComponent(runStepsMatch[1]!));
@@ -458,6 +481,25 @@ async function getHttpTriggerPipelineDefinition(key: string, ownerAlias: string 
 
 function normaliseOptionalString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function readCancelReason(payload: unknown): string {
+  const reason = payload && typeof payload === "object" && !Array.isArray(payload)
+    ? (payload as Record<string, unknown>).reason
+    : null;
+  return typeof reason === "string" && reason.trim()
+    ? reason.trim()
+    : "Pipeline run stopped by user";
+}
+
+async function stopPipelineStepSessions(ctx: PipelineApiContext, sessionIds: Array<string | null>): Promise<void> {
+  const uniqueIds = [...new Set(sessionIds.filter((id): id is string => typeof id === "string" && id.trim().length > 0))];
+  await Promise.all(uniqueIds.map(async (sessionId) => {
+    const stopped = await ctx.sessionApiContext.manager.stopSession(sessionId).catch(() => false);
+    if (stopped) {
+      ctx.sessionApiContext.scheduleSessionArchive(sessionId, ctx.sessionApiContext.manager);
+    }
+  }));
 }
 
 function serializeDefinitionSummary(definition: PipelineDefinitionRecord): JsonObject {

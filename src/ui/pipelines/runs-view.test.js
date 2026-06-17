@@ -58,6 +58,14 @@ function makeErroredState() {
   return state;
 }
 
+function makeRunningState() {
+  const state = makeState();
+  state.selectedRun.run.status = "running";
+  state.selectedRun.run.completedAt = null;
+  state.cancellingRunId = null;
+  return state;
+}
+
 describe("pipeline run detail rendering", () => {
   test("renders selected step details in a full screen modal", () => {
     const html = renderRunsWorkspace(makeState());
@@ -108,6 +116,16 @@ describe("pipeline run detail rendering", () => {
     expect(okHtml).not.toContain('data-action="resume-run-from-failure"');
     expect(errorHtml).toContain('data-action="resume-run-from-failure"');
     expect(errorHtml).toContain("Resume from Failed Step");
+  });
+
+  test("offers stop only for active runs", () => {
+    const okHtml = renderRunsWorkspace(makeState());
+    const runningHtml = renderRunsWorkspace(makeRunningState());
+
+    expect(okHtml).not.toContain('data-action="cancel-run"');
+    expect(runningHtml).toContain('data-action="cancel-run"');
+    expect(runningHtml).toContain('data-testid="pipeline-cancel-run-action"');
+    expect(runningHtml).toContain("Stop Run");
   });
 
   test("formats agent transform text only when the flag is enabled", () => {

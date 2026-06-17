@@ -44,13 +44,16 @@ describe("autopilot command palette helpers", () => {
   });
 
   test("keeps fixed shortcut keys stable and adds home", () => {
-    expect(createCommandPaletteQuickItems().map((item) => `${item.shortcutKey}:${item.title}`)).toEqual([
+    expect(createCommandPaletteQuickItems()
+      .filter((item) => item.shortcutKey)
+      .map((item) => `${item.shortcutKey}:${item.title}`)).toEqual([
       "0:Home",
       "1:Sessions",
       "2:Apps",
       "3:Pipelines",
       "4:Files",
     ]);
+    expect(createCommandPaletteQuickItems().map((item) => item.title)).toContain("Stop Pipeline Run");
   });
 
   test("passes existing file favourites into the command file browser", () => {

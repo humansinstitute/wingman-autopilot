@@ -5,7 +5,7 @@ import { mkdirSync } from "node:fs";
 export type JsonObject = Record<string, unknown>;
 export type PipelineScope = "shared" | "user";
 export type StepKind = "code" | "agent" | "loop" | "block" | "parallel";
-export type PipelineStatus = "queued" | "running" | "ok" | "needs_input" | "error" | "skipped";
+export type PipelineStatus = "queued" | "running" | "ok" | "needs_input" | "error" | "skipped" | "cancelled";
 
 export interface PipelineRunRecord {
   id: string;
@@ -160,6 +160,45 @@ export class PipelineStore {
       [status, result ? encodeJson(result) : null, error ?? null, now(), id],
     );
     return this.getRun(id)!;
+  }
+
+  cancelRun(id: string, reason = "Pipeline run cancelled"): PipelineRunRecord | null {
+    const run = this.getRun(id);
+    if (!run || run.status !== "running") return run;
+    const completedAt = now();
+    const runningSteps = this.listSteps(id).filter((step) => step.status === "running" || step.status === "queued");
+    this.db.transaction(() => {
+      for (const step of runningSteps) {
+        this.db.run(
+          `UPDATE pipeline_steps SET status = 'cancelled', error = ?, completed_at = ? WHERE id = ? AND status IN ('running', 'queued')`,
+          [reason, completedAt, step.id],
+        );
+      }
+      this.db.run(
+        `UPDATE pipeline_runs
+         SET status = 'cancelled', result_json = ?, error = ?, active_step_id = NULL, completed_at = ?
+         WHERE id = ? AND status = 'running'`,
+        [encodeJson(run.current), reason, completedAt, id],
+      );
+    })();
+    for (const step of runningSteps) {
+      this.addEvent({
+        runId: step.runId,
+        stepId: step.id,
+        level: "warn",
+        type: "step_cancelled",
+        message: reason,
+        data: {},
+      });
+    }
+    this.addEvent({
+      runId: id,
+      level: "warn",
+      type: "run_cancelled",
+      message: reason,
+      data: { activeStepId: run.activeStepId },
+    });
+    return this.getRun(id);
   }
 
   reopenErroredRun(id: string): PipelineRunRecord | null {

@@ -32,6 +32,7 @@ describe("running pipelines modal helpers", () => {
     expect(isActivePipelineRun({ status: "needs_input" })).toBe(false);
     expect(isActivePipelineRun({ status: "ok" })).toBe(false);
     expect(isActivePipelineRun({ status: "error" })).toBe(false);
+    expect(isActivePipelineRun({ status: "cancelled" })).toBe(false);
   });
 
   test("lists only active pipeline runs", () => {
@@ -40,6 +41,7 @@ describe("running pipelines modal helpers", () => {
       { id: "run-2", status: "ok" },
       { id: "run-3", status: "needs_input" },
       { id: "run-4", status: "error" },
+      { id: "run-5", status: "cancelled" },
     ];
 
     expect(getActivePipelineRuns(runs).map((run) => run.id)).toEqual(["run-1"]);

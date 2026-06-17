@@ -42,10 +42,22 @@ function makeAuth(npub: string): RequestAuthContext {
   };
 }
 
-function makeContext(store: PipelineStore, sharedInstanceAccess: boolean): PipelineApiContext {
+function makeContext(
+  store: PipelineStore,
+  sharedInstanceAccess: boolean,
+  options: { stoppedSessions?: string[] } = {},
+): PipelineApiContext {
   return {
     store,
-    sessionApiContext: {} as SessionApiContext,
+    sessionApiContext: {
+      manager: {
+        async stopSession(sessionId: string) {
+          options.stoppedSessions?.push(sessionId);
+          return true;
+        },
+      },
+      scheduleSessionArchive() {},
+    } as unknown as SessionApiContext,
     sharedInstanceAccess,
     ensureApiAccess: async () => null,
     AccessActions: {
@@ -84,6 +96,16 @@ function writeSharedPipelineDefinition(slug: string, spec: Record<string, unknow
   const definitionsDir = join(process.env.WINGMEN_PIPELINES_ROOT!, "shared", "definitions");
   mkdirSync(definitionsDir, { recursive: true });
   writeFileSync(join(definitionsDir, `${slug}.json`), JSON.stringify(spec, null, 2));
+}
+
+async function waitForRunStatus(store: PipelineStore, runId: string, statuses: string[]): Promise<void> {
+  const expected = new Set(statuses);
+  const deadline = Date.now() + 1000;
+  while (Date.now() < deadline) {
+    const status = store.getRun(runId)?.status;
+    if (expected.has(String(status))) return;
+    await Bun.sleep(10);
+  }
 }
 
 describe("pipeline run API visibility", () => {
@@ -223,6 +245,7 @@ describe("pipeline run API visibility", () => {
     expect(response.status).toBe(202);
     expect(body.ok).toBe(true);
     expect(["running", "ok"]).toContain(body.run?.status);
+    await waitForRunStatus(store, run.id, ["ok"]);
     expect(["running", "ok"]).toContain(store.getRun(run.id)?.status);
   });
 
@@ -242,5 +265,58 @@ describe("pipeline run API visibility", () => {
 
     expect(response.status).toBe(409);
     expect(body.error).toContain("Only errored");
+  });
+
+  test("stops an accessible running pipeline run and linked step session", async () => {
+    const store = makeStore();
+    const stoppedSessions: string[] = [];
+    const run = store.createRun({
+      definitionId: "running-definition",
+      name: "running run",
+      ownerNpub: "npub1viewer",
+      ownerAlias: "viewer-alias",
+      scope: "user",
+      input: {},
+    });
+    const step = store.createStep({
+      runId: run.id,
+      stepIndex: 0,
+      name: "agent",
+      kind: "agent",
+      input: {},
+    });
+    store.setStepSession(step.id, "pipeline-session-1");
+    store.setRunActiveStep(run.id, step.id);
+
+    const response = await handlePost(
+      `/api/pipelines/runs/${encodeURIComponent(run.id)}/cancel`,
+      makeContext(store, true, { stoppedSessions }),
+    );
+    const body = await response.json() as { ok?: boolean; run?: { status?: string }; steps?: Array<{ status: string }> };
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.run?.status).toBe("cancelled");
+    expect(body.steps?.map((entry) => entry.status)).toEqual(["cancelled"]);
+    expect(stoppedSessions).toEqual(["pipeline-session-1"]);
+  });
+
+  test("rejects stopping terminal pipeline runs", async () => {
+    const store = makeStore();
+    const run = store.createRun({
+      definitionId: "done-definition",
+      name: "done run",
+      ownerNpub: "npub1viewer",
+      ownerAlias: "viewer-alias",
+      scope: "user",
+      input: {},
+    });
+    store.completeRun(run.id, "ok", {});
+
+    const response = await handlePost(`/api/pipelines/runs/${encodeURIComponent(run.id)}/cancel`, makeContext(store, true));
+    const body = await response.json() as { error?: string };
+
+    expect(response.status).toBe(409);
+    expect(body.error).toContain("Only running");
   });
 });

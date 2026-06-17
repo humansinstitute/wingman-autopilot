@@ -1,6 +1,6 @@
 import { cleanAgentOutputText } from "./agent-output-format.js";
 
-export const RUN_FILTERS = ["all", "default", "running", "ok", "needs_input", "error"];
+export const RUN_FILTERS = ["all", "default", "running", "ok", "needs_input", "error", "cancelled"];
 export const DEFINITION_FILTERS = ["all", "default", "user", "shared"];
 
 export function escapeHtml(value) {
@@ -25,6 +25,7 @@ export function statusLabel(value) {
   if (value === "ok") return "Complete";
   if (value === "error") return "Failed";
   if (value === "needs_input") return "Needs Input";
+  if (value === "cancelled") return "Stopped";
   return titleCase(value);
 }
 

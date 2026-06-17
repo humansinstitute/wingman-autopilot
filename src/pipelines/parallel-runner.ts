@@ -342,5 +342,5 @@ function objectOrWrappedParallel(value: unknown): JsonObject {
 }
 
 function isTerminalStatus(status: PipelineStatus): boolean {
-  return status === "ok" || status === "needs_input" || status === "error" || status === "skipped";
+  return status === "ok" || status === "needs_input" || status === "error" || status === "skipped" || status === "cancelled";
 }

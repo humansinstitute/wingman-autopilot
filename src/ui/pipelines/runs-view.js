@@ -16,6 +16,8 @@ import {
 import { hasRunPayload } from "./state.js";
 import { renderStateLedger, renderStepCardTimeline } from "./run-flow-view.js";
 
+const ACTIVE_RUN_STATUSES = new Set(["queued", "running"]);
+
 export function renderRunsWorkspace(state) {
   const runs = getFilteredRuns(state);
   return `
@@ -121,6 +123,8 @@ function renderRunDetail(state) {
   const steps = state.selectedRun.steps ?? [];
   const isErrored = run.status === "error";
   const isResuming = state.resumingRunId === run.id;
+  const isActive = ACTIVE_RUN_STATUSES.has(String(run.status ?? ""));
+  const isCancelling = state.cancellingRunId === run.id;
   return `
     <article class="wm-pipeline-run-detail" data-testid="pipeline-run-detail">
       <header class="wm-pipeline-detail-header">
@@ -130,6 +134,18 @@ function renderRunDetail(state) {
           ${renderTagPills(run.tags)}
         </div>
         <div class="wm-pipeline-run-actions">
+          ${isActive ? `
+            <button
+              type="button"
+              data-action="cancel-run"
+              data-id="${escapeAttribute(run.id)}"
+              data-testid="pipeline-cancel-run-action"
+              aria-label="Stop pipeline run ${escapeAttribute(run.name ?? run.id)}"
+              ${isCancelling ? "disabled" : ""}
+            >
+              ${isCancelling ? "Stopping..." : "Stop Run"}
+            </button>
+          ` : ""}
           ${isErrored ? `
             <button
               type="button"

@@ -125,6 +125,11 @@ async function startPipelineRun(definitionId, input) {
   return runPipelineDefinition(definitionId, input);
 }
 
+async function stopPipelineRun(runId) {
+  const { cancelPipelineRun } = await import("./api.js");
+  return cancelPipelineRun(runId);
+}
+
 export function showRunningPipelinesModal({ showToast, agentOutputFormattingEnabled = false } = {}) {
   const existing = document.getElementById("running-pipelines-modal");
   if (typeof HTMLDialogElement === "function" && existing instanceof HTMLDialogElement && existing.open) {
@@ -202,6 +207,7 @@ export function showRunningPipelinesModal({ showToast, agentOutputFormattingEnab
   let loading = false;
   let detailLoading = false;
   let definitionsLoading = false;
+  let stoppingRunId = null;
   let showRecentRuns = false;
   let recentRunPage = 0;
 
@@ -392,6 +398,36 @@ export function showRunningPipelinesModal({ showToast, agentOutputFormattingEnab
         button.disabled = false;
         button.textContent = "Restart";
       }
+    }
+  }
+
+  async function stopRun(run, button) {
+    if (!run?.id || button.disabled) return;
+    if (!window.confirm(`Stop ${getPipelineRunDisplayName(run)}? The active pipeline agent session for the current step will be stopped.`)) {
+      return;
+    }
+    stoppingRunId = run.id;
+    button.disabled = true;
+    button.textContent = "Stopping...";
+    setStatus(`Stopping ${getPipelineRunDisplayName(run)}...`);
+    try {
+      const payload = await stopPipelineRun(run.id);
+      selectedRunId = run.id;
+      selectedRunDetail = payload;
+      selectedStepDetail = null;
+      showToast?.("Pipeline run stopped", { type: "success" });
+      await refreshModalRuns();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to stop pipeline.";
+      setStatus(message, "error");
+      showToast?.(message, { type: "error" });
+      if (button.isConnected) {
+        button.disabled = false;
+        button.textContent = "Stop";
+      }
+    } finally {
+      stoppingRunId = null;
+      renderContent();
     }
   }
 
@@ -626,6 +662,18 @@ export function showRunningPipelinesModal({ showToast, agentOutputFormattingEnab
     actions.className = "wm-running-pipelines-list__actions";
     actions.append(renderStatusChip(run.status));
 
+    if (isActivePipelineRun(run)) {
+      const stopButton = document.createElement("button");
+      stopButton.type = "button";
+      stopButton.className = "wm-button secondary wm-button--small";
+      stopButton.textContent = stoppingRunId === run.id ? "Stopping..." : "Stop";
+      stopButton.disabled = stoppingRunId === run.id;
+      stopButton.dataset.testid = "running-pipeline-stop";
+      stopButton.setAttribute("aria-label", `Stop ${getPipelineRunDisplayName(run)}`);
+      stopButton.addEventListener("click", () => void stopRun(run, stopButton));
+      actions.append(stopButton);
+    }
+
     const restartButton = document.createElement("button");
     restartButton.type = "button";
     restartButton.className = "wm-button secondary wm-button--small";
@@ -780,7 +828,20 @@ export function showRunningPipelinesModal({ showToast, agentOutputFormattingEnab
           <h2>${escapeHtml(getPipelineRunDisplayName(run))}</h2>
           <p><code>${escapeHtml(run.id)}</code></p>
         </div>
-        <span class="wm-pipeline-status-chip" data-status="${escapeHtml(run.status)}">${escapeHtml(statusLabel(run.status))}</span>
+        <div class="wm-pipeline-run-actions">
+          ${isActivePipelineRun(run) ? `
+            <button
+              type="button"
+              class="wm-button secondary wm-button--small"
+              data-action="running-pipeline-stop-selected"
+              data-run-id="${escapeAttribute(run.id)}"
+              data-testid="running-pipeline-detail-stop"
+              aria-label="Stop ${escapeAttribute(getPipelineRunDisplayName(run))}"
+              ${stoppingRunId === run.id ? "disabled" : ""}
+            >${stoppingRunId === run.id ? "Stopping..." : "Stop Run"}</button>
+          ` : ""}
+          <span class="wm-pipeline-status-chip" data-status="${escapeHtml(run.status)}">${escapeHtml(statusLabel(run.status))}</span>
+        </div>
       </header>
       <dl class="wm-pipeline-facts">
         <div><dt>Started</dt><dd>${escapeHtml(formatDateTime(run.startedAt ?? run.started_at))}</dd></div>
@@ -851,6 +912,13 @@ export function showRunningPipelinesModal({ showToast, agentOutputFormattingEnab
     if (closeStepButton) {
       event.preventDefault();
       closeStepDetails();
+      return;
+    }
+    const stopSelectedButton = event.target?.closest?.('[data-action="running-pipeline-stop-selected"]');
+    if (stopSelectedButton) {
+      event.preventDefault();
+      const run = selectedRunDetail?.run ?? runs.find((entry) => entry.id === stopSelectedButton.dataset.runId);
+      void stopRun(run, stopSelectedButton);
     }
   });
   dialog.addEventListener("click", (event) => {

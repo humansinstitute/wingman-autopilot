@@ -8,6 +8,7 @@ import {
   fetchPipelineRoot,
   fetchPipelineRuns,
   fetchPipelineRun,
+  cancelPipelineRun,
   editPipelineWithWizard,
   resumePipelineRunFromFailure,
   runPipelineDefinition,
@@ -308,6 +309,7 @@ export function initPipelinesPage({ showToast, isFeatureEnabledForViewer = () =>
       navigateToPipelinePath,
       ensureSelectedRunPayload,
       showToast,
+      cancelRun,
       resumeRunFromFailure,
       startCreateWizard,
       startEditWizard,
@@ -357,6 +359,31 @@ export function initPipelinesPage({ showToast, isFeatureEnabledForViewer = () =>
       showToast(state.error, { type: "error" });
     } finally {
       state.resumingRunId = null;
+      updatePage(page);
+    }
+  }
+
+  async function cancelRun(page, id) {
+    if (!id) return;
+    if (!window.confirm("Stop this pipeline run? The active pipeline agent session for the current step will be stopped.")) {
+      return;
+    }
+    state.cancellingRunId = id;
+    state.error = null;
+    updatePage(page);
+    try {
+      const payload = await cancelPipelineRun(id);
+      state.selectedRun = payload;
+      state.selectedStep = null;
+      state.selectedRunTab = "overview";
+      const runs = await fetchPipelineRuns();
+      state.runs = runs.runs ?? [];
+      showToast("Pipeline run stopped", { type: "success" });
+    } catch (error) {
+      state.error = error instanceof Error ? error.message : String(error);
+      showToast(state.error, { type: "error" });
+    } finally {
+      state.cancellingRunId = null;
       updatePage(page);
     }
   }

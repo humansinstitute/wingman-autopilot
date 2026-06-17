@@ -108,4 +108,42 @@ describe("PipelineStore run summaries", () => {
     });
     expect(summary as Record<string, unknown>).not.toHaveProperty("input");
   });
+
+  test("cancels a running run and any active steps", () => {
+    const store = makeStore();
+    const run = store.createRun({
+      definitionId: "definition-1",
+      name: "cancel run",
+      ownerNpub: "npub-owner",
+      ownerAlias: "owner-alias",
+      scope: "user",
+      input: { value: 1 },
+    });
+    const runningStep = store.createStep({
+      runId: run.id,
+      stepIndex: 0,
+      name: "running",
+      kind: "agent",
+      input: {},
+    });
+    const queuedStep = store.createStep({
+      runId: run.id,
+      stepIndex: 1,
+      name: "queued",
+      kind: "agent",
+      input: {},
+      status: "queued",
+    });
+    store.setRunActiveStep(run.id, runningStep.id);
+
+    const cancelled = store.cancelRun(run.id, "Stopped by test");
+
+    expect(cancelled?.status).toBe("cancelled");
+    expect(cancelled?.activeStepId).toBeNull();
+    expect(cancelled?.error).toBe("Stopped by test");
+    expect(store.listSteps(run.id).map((step) => [step.id, step.status, step.error])).toEqual([
+      [runningStep.id, "cancelled", "Stopped by test"],
+      [queuedStep.id, "cancelled", "Stopped by test"],
+    ]);
+  });
 });

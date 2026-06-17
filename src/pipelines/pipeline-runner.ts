@@ -54,6 +54,12 @@ class PipelineCallbackTimeout extends Error {
   }
 }
 
+class PipelineCancelled extends Error {
+  constructor(readonly runId: string) {
+    super("Pipeline run cancelled");
+  }
+}
+
 export async function runDeclarativePipeline(input: PipelineRunnerInput) {
   const run = createPipelineRun(input);
   return await executeDeclarativePipeline(input, run.id);
@@ -108,6 +114,7 @@ async function executeDeclarativePipeline(input: PipelineRunnerInput, runId: str
 
   try {
     while (cursor < topLevelSteps.length) {
+      throwIfRunCancelled(store, runId);
       executedSteps += 1;
       if (executedSteps > MAX_PIPELINE_EXECUTED_STEPS) {
         throw new Error("Pipeline exceeded the maximum step execution limit");
@@ -121,6 +128,7 @@ async function executeDeclarativePipeline(input: PipelineRunnerInput, runId: str
         nextStepIndex: () => stepIndex++,
         targetIndex: stepTargetIndex,
       });
+      throwIfRunCancelled(store, runId);
       current = outcome.current;
       cursor = typeof outcome.jumpTo === "number" ? outcome.jumpTo : cursor + 1;
       store.updateRunProgress(runId, current, cursor);
@@ -132,11 +140,21 @@ async function executeDeclarativePipeline(input: PipelineRunnerInput, runId: str
     if (error instanceof PipelineHalt) {
       return store.completeRun(runId, error.status, error.result, error.message);
     }
+    if (error instanceof PipelineCancelled) {
+      return store.getRun(runId)!;
+    }
     completeActiveStepOnError(store, runId, current, message);
     store.setRunActiveStep(runId, null);
     return store.completeRun(runId, "error", current, message);
   } finally {
     activeRunExecutions.delete(runId);
+  }
+}
+
+function throwIfRunCancelled(store: PipelineStore, runId: string): void {
+  const run = store.getRun(runId);
+  if (run?.status === "cancelled") {
+    throw new PipelineCancelled(runId);
   }
 }
 
@@ -168,6 +186,7 @@ async function executePipelineStep(input: PipelineRunnerInput & {
   trackActive?: boolean;
 }): Promise<{ current: JsonObject; jumpTo?: number }> {
   const { store, registry, step } = input;
+  throwIfRunCancelled(store, input.runId);
   const stepName = input.namePrefix ? `${input.namePrefix} / ${step.name}` : step.name;
   if (!shouldRunStep(input.current, step.when)) {
     const skipped = store.createStep({
@@ -204,6 +223,7 @@ async function executePipelineStep(input: PipelineRunnerInput & {
       throw new Error(`Unknown pipeline function: ${step.function}`);
     }
     const result = await fn(selected);
+    throwIfRunCancelled(store, input.runId);
     assertObject(result, `step ${stepName} result`);
     const current = assignOutput(input.current, result, step.assign);
     store.completeStep({ id: stepRecord.id, status: "ok", result: current, output: result });
@@ -239,6 +259,7 @@ async function executePipelineStep(input: PipelineRunnerInput & {
         trackActive: false,
       });
       current = childOutcome.current;
+      throwIfRunCancelled(store, input.runId);
     }
     store.completeStep({ id: stepRecord.id, status: "ok", result: current, output: current });
     return { current };
@@ -287,6 +308,7 @@ async function executePipelineStep(input: PipelineRunnerInput & {
             trackActive: false,
           });
           current = childOutcome.current;
+          throwIfRunCancelled(store, input.runId);
         }
       }
       const result = { iterations, current };
@@ -386,6 +408,7 @@ async function executePipelineStep(input: PipelineRunnerInput & {
         }
       },
     });
+    throwIfRunCancelled(store, input.runId);
     const current = assignOutput(input.current, aggregate, step.assign);
     store.completeStep({ id: stepRecord.id, status: "ok", result: current, output: aggregate });
     return { current };
@@ -439,7 +462,11 @@ async function executePipelineStep(input: PipelineRunnerInput & {
       directory: resolveStringTemplate(input.current, step.directory),
       callbackTimeoutMs: resolveDurationMs(input.current, step.timeoutMs, CALLBACK_TIMEOUT_MS),
     });
+    throwIfRunCancelled(store, input.runId);
   } catch (error) {
+    if (error instanceof PipelineCancelled) {
+      throw error;
+    }
     const latest = store.getStep(stepRecord.id);
     if (latest?.status === "running") {
       store.completeStep({
@@ -550,6 +577,19 @@ export async function acceptAgentCallback(input: {
     });
     return { ok: false, status: 401, body: { error: "Invalid callback token" } };
   }
+  if (step.status !== "running") {
+    input.store.addCallback({
+      stepId: input.stepId,
+      accepted: false,
+      payload: payloadObject(input.payload),
+      error: `Step is not accepting callbacks while ${step.status}`,
+    });
+    return {
+      ok: false,
+      status: 409,
+      body: { error: `Step is not accepting callbacks while ${step.status}` },
+    };
+  }
   const parsed = parseAgentCallbackPayload(input.payload, input.runId, input.stepId);
   input.store.addCallback({
     stepId: input.stepId,
@@ -585,12 +625,14 @@ async function runOrResumeAgentStep(input: PipelineRunnerInput & {
   const latest = input.store.getStep(input.stepId);
   if (latest?.status === "ok") return latest.output ?? latest.result ?? {};
   if (latest?.status === "error") throw new Error(latest.error ?? "Agent step failed");
+  if (latest?.status === "cancelled") throw new PipelineCancelled(input.runId);
   if (latest?.status === "needs_input") {
     throw new PipelineHalt("needs_input", latest.output ?? latest.result ?? {}, "Agent step needs input");
   }
   if (latest?.wingmanSessionId && input.sessionApiContext.manager.getSession(latest.wingmanSessionId)) {
     const result = await waitForCallbackResult(input.store, input.stepId, input.callbackTimeoutMs);
     if (result.status === "error") throw new Error(result.error ?? "Agent step failed");
+    if (result.status === "cancelled") throw new PipelineCancelled(input.runId);
     if (result.status === "needs_input") throw new PipelineHalt("needs_input", result.result ?? {}, "Agent step needs input");
     return result.result ?? {};
   }
@@ -636,6 +678,9 @@ async function runAgentStep(input: PipelineRunnerInput & {
     }
     if (latest?.status === "error") {
       throw new Error(latest.error ?? "Agent step failed");
+    }
+    if (latest?.status === "cancelled") {
+      throw new PipelineCancelled(input.runId);
     }
 
     let session: SessionSnapshot | null = null;
@@ -715,6 +760,9 @@ async function runAgentStep(input: PipelineRunnerInput & {
   }
   if (result.status === "error") {
     throw new Error(result.error ?? "Agent step failed");
+  }
+  if (result.status === "cancelled") {
+    throw new PipelineCancelled(input.runId);
   }
   if (result.status === "needs_input") {
     throw new PipelineHalt("needs_input", result.result ?? {}, "Agent step needs input");

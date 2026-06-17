@@ -169,6 +169,15 @@ export function createCommandPaletteQuickItems() {
     createCommandItem({
       group: "shortcut",
       groupLabel: "Shortcuts",
+      id: "quick:stop-pipeline",
+      title: "Stop Pipeline Run",
+      subtitle: "Stop an active pipeline run",
+      action: "stop-pipeline-run",
+      searchText: "stop cancel pipeline run workflow active",
+    }),
+    createCommandItem({
+      group: "shortcut",
+      groupLabel: "Shortcuts",
       id: "quick:files",
       title: "Files",
       subtitle: "Browse workspace files",

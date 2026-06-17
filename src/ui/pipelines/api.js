@@ -64,6 +64,21 @@ export async function resumePipelineRunFromFailure(id) {
   return payload;
 }
 
+export async function cancelPipelineRun(id, reason = "Pipeline run stopped by user") {
+  const res = await fetch(`/api/pipelines/runs/${encodeURIComponent(id)}/cancel`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ reason }),
+  });
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(payload.error || `Failed to stop pipeline run: ${res.status}`);
+  }
+  await clearCachedRunDetail(id);
+  return payload;
+}
+
 export async function startPipelineWizard(prompt) {
   const res = await fetch("/api/pipelines/wizard", {
     method: "POST",
