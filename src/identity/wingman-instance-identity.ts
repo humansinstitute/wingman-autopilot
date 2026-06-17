@@ -1,7 +1,8 @@
-import { getPublicKey, nip19 } from "nostr-tools";
+import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
 import { bytesToHex } from "@noble/hashes/utils";
 
 import { getBotDisplayName } from "./bot-identity-publisher";
+import { sharedStateStore, type SharedStateStore } from "../storage/shared-state-store";
 
 export interface WingmanInstanceIdentity {
   nsec: string;
@@ -10,7 +11,7 @@ export interface WingmanInstanceIdentity {
   pubkeyHex: string;
   npub: string;
   displayName: string;
-  source: "env";
+  source: "env" | "shared_state" | "generated";
 }
 
 export interface WingmanIdentityPublicDetails {
@@ -23,6 +24,8 @@ export interface WingmanIdentityPublicDetails {
 type ConfigEnvironment = Record<string, string | undefined>;
 
 let cachedIdentity: WingmanInstanceIdentity | null | undefined;
+
+const WINGMAN_PRIV_SHARED_STATE_KEY = "wingman_priv";
 
 function hexToBytes(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2);
@@ -59,32 +62,52 @@ function decodeWingmanPriv(input: string): Uint8Array {
 
 export function loadWingmanInstanceIdentity(
   env: ConfigEnvironment = Bun.env,
+  store: SharedStateStore = sharedStateStore,
 ): WingmanInstanceIdentity | null {
   if (env === Bun.env && cachedIdentity !== undefined) {
     return cachedIdentity;
   }
 
   const raw = env.WINGMAN_PRIV?.trim();
-  if (!raw) {
-    if (env === Bun.env) cachedIdentity = null;
-    return null;
+  if (raw) {
+    const identity = buildWingmanInstanceIdentity(decodeWingmanPriv(raw), "env");
+    if (env === Bun.env) cachedIdentity = identity;
+    return identity;
   }
 
-  const secretKey = decodeWingmanPriv(raw);
+  const stored = store.get(WINGMAN_PRIV_SHARED_STATE_KEY);
+  if (stored) {
+    const identity = buildWingmanInstanceIdentity(
+      decodeWingmanPriv(stored),
+      "shared_state",
+    );
+    if (env === Bun.env) cachedIdentity = identity;
+    return identity;
+  }
+
+  const secretKey = generateSecretKey();
+  const nsec = nip19.nsecEncode(secretKey);
+  store.set(WINGMAN_PRIV_SHARED_STATE_KEY, nsec);
+  const identity = buildWingmanInstanceIdentity(secretKey, "generated");
+  if (env === Bun.env) cachedIdentity = identity;
+  return identity;
+}
+
+function buildWingmanInstanceIdentity(
+  secretKey: Uint8Array,
+  source: WingmanInstanceIdentity["source"],
+): WingmanInstanceIdentity {
   const pubkeyHex = getPublicKey(secretKey);
   const nsec = nip19.nsecEncode(secretKey);
-  const identity: WingmanInstanceIdentity = {
+  return {
     nsec,
     nsecHex: bytesToHex(secretKey),
     secretKey,
     pubkeyHex,
     npub: nip19.npubEncode(pubkeyHex),
     displayName: getBotDisplayName(pubkeyHex),
-    source: "env",
+    source,
   };
-
-  if (env === Bun.env) cachedIdentity = identity;
-  return identity;
 }
 
 export function getWingmanIdentityPublicDetails(
