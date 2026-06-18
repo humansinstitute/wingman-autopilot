@@ -309,6 +309,13 @@ export interface FlightDeckPgDocumentResult {
   };
 }
 
+export interface FlightDeckPgChannelDocsResult {
+  identity?: Record<string, unknown>;
+  channel_id?: string;
+  docs: FlightDeckPgDocument[];
+  next_cursor: string | null;
+}
+
 export interface FlightDeckPgDocumentCommentsResult {
   identity?: Record<string, unknown>;
   doc_id?: string;
@@ -887,6 +894,39 @@ export async function createFlightDeckPgChannelDocument(params: {
     throw Object.assign(new Error(error.message), error);
   }
   return await response.json() as FlightDeckPgDocumentResult;
+}
+
+export async function listFlightDeckPgChannelDocs(params: {
+  backendBaseUrl: string;
+  workspaceId: string;
+  channelId: string;
+  appNpub: string;
+  botIdentity: RuntimeBotIdentity;
+  limit?: number;
+  signal?: AbortSignal;
+}): Promise<FlightDeckPgChannelDocsResult> {
+  const path = `/api/v4/flightdeck-pg/workspaces/${encodeURIComponent(params.workspaceId)}/channels/${encodeURIComponent(params.channelId)}/docs`;
+  const url = buildFlightDeckPgUrl(params.backendBaseUrl, path, {
+    limit: params.limit ?? 100,
+  });
+  const authorization = await signFlightDeckPgBotRequest({
+    botIdentity: params.botIdentity,
+    url,
+    method: 'GET',
+  });
+  const response = await fetch(url, {
+    headers: {
+      Accept: 'application/json',
+      Authorization: authorization,
+      'x-flightdeck-pg-app-npub': params.appNpub,
+    },
+    signal: params.signal,
+  });
+  if (!response.ok) {
+    const error = await parseTowerError(response, 'flightdeck_pg_channel_docs');
+    throw Object.assign(new Error(error.message), error);
+  }
+  return await response.json() as FlightDeckPgChannelDocsResult;
 }
 
 export async function fetchFlightDeckPgDocument(params: {

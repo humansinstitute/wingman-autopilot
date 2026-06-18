@@ -22,6 +22,7 @@ import {
   fetchFlightDeckPgDocument,
   fetchFlightDeckPgTask,
   fetchFlightDeckPgWorkspaceMembers,
+  listFlightDeckPgChannelDocs,
   uploadFlightDeckPgStorageObject,
   updateFlightDeckPgTaskState,
   type FlightDeckPgMessage,
@@ -855,6 +856,22 @@ export function createDispatchDiscussionDocumentEnsurer(
     }
 
     const workPlan = objectValue(input.workPlan ?? objectValue(input.decision).discussionWorkPlan);
+    if (isFlightDeckPgPublisherContext(context)) {
+      const titleMatch = await findFlightDeckPgDiscussionDocumentByTitle(context, input, workPlan);
+      if (titleMatch.documentId) {
+        return {
+          ensured: true,
+          status: 'reused',
+          operation: 'docs.ensure-discussion-document',
+          documentId: titleMatch.documentId,
+          documentTitle: titleMatch.documentTitle ?? 'Discussion document',
+          documentUrl: null,
+          documentMention: mention('document', titleMatch.documentId, titleMatch.documentTitle ?? 'Discussion document'),
+          lookup: titleMatch.lookup,
+        };
+      }
+    }
+
     const title = buildDiscussionDocumentTitle(input, workPlan);
     const body = buildDiscussionDocumentScaffold(input, workPlan, title);
     if (isFlightDeckPgPublisherContext(context)) {
@@ -956,6 +973,82 @@ export function createDispatchDiscussionDocumentEnsurer(
       };
     }
   };
+}
+
+async function findFlightDeckPgDiscussionDocumentByTitle(
+  context: DispatchPipelineFlightDeckPublisherContext,
+  input: JsonObject,
+  workPlan: Record<string, unknown>,
+): Promise<{
+  documentId: string | null;
+  documentTitle: string | null;
+  lookup?: JsonObject;
+}> {
+  const candidateTitles = extractDiscussionDocumentTitleCandidates(input, workPlan);
+  if (candidateTitles.length === 0) {
+    return { documentId: null, documentTitle: null };
+  }
+  const channelId = resolveFlightDeckPgChannelId(context, getText(workPlan.channelId ?? objectValue(workPlan.origin).channelId));
+  if (!channelId) {
+    return {
+      documentId: null,
+      documentTitle: null,
+      lookup: {
+        status: 'skipped',
+        reason: 'missing_channel_id',
+        candidateTitles,
+      },
+    };
+  }
+  try {
+    const result = await listFlightDeckPgChannelDocs({
+      ...getFlightDeckPgPublishContext(context),
+      channelId,
+      limit: 100,
+    });
+    const docs = Array.isArray(result.docs) ? result.docs : [];
+    const wanted = candidateTitles.map((title) => normalizeDocumentLookupTitle(title));
+    const exact = docs.find((doc) => {
+      const title = normalizeDocumentLookupTitle(getText(doc.title));
+      return Boolean(title && wanted.includes(title));
+    });
+    if (exact?.id) {
+      return {
+        documentId: exact.id,
+        documentTitle: getText(exact.title),
+        lookup: {
+          status: 'matched',
+          method: 'channel_doc_title',
+          channelId,
+          candidateTitles,
+          matchedTitle: getText(exact.title),
+        },
+      };
+    }
+    return {
+      documentId: null,
+      documentTitle: null,
+      lookup: {
+        status: 'not_found',
+        method: 'channel_doc_title',
+        channelId,
+        candidateTitles,
+        availableTitles: docs.map((doc) => getText(doc.title)).filter(Boolean).slice(0, 20),
+      },
+    };
+  } catch (error) {
+    return {
+      documentId: null,
+      documentTitle: null,
+      lookup: {
+        status: 'failed',
+        method: 'channel_doc_title',
+        channelId,
+        candidateTitles,
+        reason: error instanceof Error ? error.message : String(error),
+      },
+    };
+  }
 }
 
 export function createDispatchReviewTaskCompleter(
@@ -2991,6 +3084,72 @@ function findDiscussionDocumentReference(input: JsonObject): {
     documentTitle: null,
     documentUrl: null,
   };
+}
+
+function extractDiscussionDocumentTitleCandidates(input: JsonObject, workPlan: Record<string, unknown>): string[] {
+  const candidates: string[] = [];
+  const add = (value: unknown) => {
+    const text = getText(value);
+    if (text && !candidates.includes(text)) {
+      candidates.push(text);
+    }
+  };
+  const documentContext = objectValue(input.documentContext);
+  add(documentContext.documentTitle);
+  add(documentContext.title);
+  add(workPlan.documentTitle);
+  add(workPlan.title);
+
+  const promptSources = [
+    documentContext.discussionGoal,
+    workPlan.originalPrompt,
+    workPlan.taskSummary,
+    input.originalPrompt,
+  ];
+  for (const source of promptSources) {
+    for (const title of extractQuotedDocumentTitles(getText(source))) {
+      add(title);
+    }
+  }
+
+  const threadSources = [
+    objectValue(input.chatDispatchInput).latestThread,
+    objectValue(input.chatContext).latestThread,
+    objectValue(input.chatContext).thread,
+  ];
+  for (const source of threadSources) {
+    if (!Array.isArray(source)) continue;
+    for (const message of source.slice(-8)) {
+      const body = getText(objectValue(message).body);
+      for (const title of extractQuotedDocumentTitles(body)) {
+        add(title);
+      }
+    }
+  }
+  return candidates.slice(0, 8);
+}
+
+function extractQuotedDocumentTitles(text: string | null): string[] {
+  if (!text) return [];
+  const titles: string[] = [];
+  const quoted = text.matchAll(/["“”']([^"“”'\n]{3,160})["“”']/g);
+  for (const match of quoted) {
+    const title = match[1]?.trim();
+    if (title) titles.push(title);
+  }
+  return titles;
+}
+
+function normalizeDocumentLookupTitle(value: string | null): string | null {
+  if (!value) return null;
+  const normalized = value
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[\u2018\u2019\u201c\u201d]/g, '"')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+  return normalized || null;
 }
 
 function buildDiscussionDocumentTitle(input: JsonObject, workPlan: Record<string, unknown>): string {

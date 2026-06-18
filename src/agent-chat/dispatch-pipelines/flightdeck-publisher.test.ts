@@ -10,6 +10,7 @@ const pgMessageFetchCalls: Array<Record<string, unknown>> = [];
 const pgMessageCreateCalls: Array<Record<string, unknown>> = [];
 const pgStorageUploadCalls: Array<Record<string, unknown>> = [];
 const pgDocumentCreateCalls: Array<Record<string, unknown>> = [];
+const pgDocumentListCalls: Array<Record<string, unknown>> = [];
 const pgDocumentFetchCalls: Array<Record<string, unknown>> = [];
 const pgAudioNoteCreateCalls: Array<Record<string, unknown>> = [];
 const pgReactionCreateCalls: Array<Record<string, unknown>> = [];
@@ -180,6 +181,21 @@ mock.module('../tower-client', () => ({
         title: input.title,
         row_version: 1,
       },
+    };
+  }),
+  listFlightDeckPgChannelDocs: mock(async (input: Record<string, unknown>) => {
+    pgDocumentListCalls.push(input);
+    return {
+      channel_id: input.channelId,
+      docs: [
+        {
+          id: 'pg-doc-adapt-feedback',
+          channel_id: input.channelId,
+          title: 'Adapt - Kindling Feedback',
+          row_version: 4,
+        },
+      ],
+      next_cursor: null,
     };
   }),
   fetchFlightDeckPgDocument: mock(async (input: Record<string, unknown>) => {
@@ -399,6 +415,7 @@ describe('dispatch pipeline Flight Deck publisher', () => {
     pgMessageCreateCalls.length = 0;
     pgStorageUploadCalls.length = 0;
     pgDocumentCreateCalls.length = 0;
+    pgDocumentListCalls.length = 0;
     pgDocumentFetchCalls.length = 0;
     pgAudioNoteCreateCalls.length = 0;
     pgReactionCreateCalls.length = 0;
@@ -877,6 +894,52 @@ describe('dispatch pipeline Flight Deck publisher', () => {
       channelId: 'channel-1',
       title: 'Discuss PG document helpers',
     });
+    expect(yokeCommandCalls.some((args) => args[0] === 'docs' && args[1] === 'create')).toBe(false);
+  });
+
+  test('discussion document ensurer reuses PG document by title before creating scaffold', async () => {
+    const ensureDocument = createDispatchDiscussionDocumentEnsurer(buildChatPublisherContext({
+      runtime: {
+        mode: 'flightdeck_pg',
+        yokeStateDir: null,
+        commandPrefix: null,
+      },
+      subscription: {
+        workspaceId: 'workspace-pg-1',
+      },
+    }));
+
+    const result = await ensureDocument({
+      documentContext: {
+        documentLoaded: false,
+        documentId: null,
+        documentTitle: 'Adapt - Kindling Feedback',
+        discussionGoal: 'Review the Flight Deck document titled "Adapt - Kindling Feedback" in the current scope.',
+      },
+      workPlan: {
+        origin: {
+          channelId: 'channel-1',
+          threadId: 'thread-1',
+          messageId: 'chat-message-1',
+        },
+      },
+    });
+
+    expect(result).toMatchObject({
+      ensured: true,
+      status: 'reused',
+      operation: 'docs.ensure-discussion-document',
+      documentId: 'pg-doc-adapt-feedback',
+      documentTitle: 'Adapt - Kindling Feedback',
+      documentMention: '@[Adapt - Kindling Feedback](mention:document:pg-doc-adapt-feedback)',
+      lookup: {
+        status: 'matched',
+        method: 'channel_doc_title',
+        channelId: 'channel-1',
+      },
+    });
+    expect(pgDocumentListCalls).toHaveLength(1);
+    expect(pgDocumentCreateCalls).toHaveLength(0);
     expect(yokeCommandCalls.some((args) => args[0] === 'docs' && args[1] === 'create')).toBe(false);
   });
 
