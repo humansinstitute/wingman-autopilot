@@ -7,6 +7,7 @@ describe("resolveSecretKey — CLI auth env resolution", () => {
 
   afterEach(() => {
     // Restore env
+    delete Bun.env.AGENT_NSEC;
     delete Bun.env.WINGMAN_NSEC;
     delete Bun.env.WINGMAN_NIP98_NSEC;
     delete Bun.env.KEYTELEPORT_PRIVKEY;
@@ -21,6 +22,7 @@ describe("resolveSecretKey — CLI auth env resolution", () => {
 
   test("resolves from WINGMAN_NSEC env var", () => {
     const hex = "b".repeat(64);
+    delete Bun.env.AGENT_NSEC;
     Bun.env.WINGMAN_NSEC = hex;
     const result = resolveSecretKey();
     expect(result).toBeInstanceOf(Uint8Array);
@@ -28,17 +30,20 @@ describe("resolveSecretKey — CLI auth env resolution", () => {
   });
 
   test("does not fall back to WINGMAN_NIP98_NSEC", () => {
+    delete Bun.env.AGENT_NSEC;
     Bun.env.WINGMAN_NIP98_NSEC = "c".repeat(64);
-    expect(() => resolveSecretKey()).toThrow(/WINGMAN_NSEC/);
+    expect(() => resolveSecretKey()).toThrow(/AGENT_NSEC or WINGMAN_NSEC/);
   });
 
   test("does not fall back to KEYTELEPORT_PRIVKEY", () => {
+    delete Bun.env.AGENT_NSEC;
     Bun.env.KEYTELEPORT_PRIVKEY = "d".repeat(64);
-    expect(() => resolveSecretKey()).toThrow(/WINGMAN_NSEC/);
+    expect(() => resolveSecretKey()).toThrow(/AGENT_NSEC or WINGMAN_NSEC/);
   });
 
   test("throws with helpful message mentioning WINGMAN_NSEC when no key available", () => {
-    expect(() => resolveSecretKey()).toThrow(/WINGMAN_NSEC/);
+    delete Bun.env.AGENT_NSEC;
+    expect(() => resolveSecretKey()).toThrow(/AGENT_NSEC or WINGMAN_NSEC/);
   });
 
   test("prefers explicit keyInput over WINGMAN_NSEC env", () => {
