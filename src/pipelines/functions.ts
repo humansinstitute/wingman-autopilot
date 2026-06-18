@@ -670,8 +670,10 @@ function compactReferencedRecord(value: unknown): JsonObject {
   const payload = objectValue(record.payload);
   const data = objectValue(payload.data);
   return {
-    recordId: getText(record.record_id ?? record.recordId ?? payload.record_id),
-    family: getText(record.record_family ?? record.recordFamily ?? record.family),
+    id: getText(record.id ?? record.record_id ?? record.recordId ?? payload.record_id),
+    recordId: getText(record.record_id ?? record.recordId ?? record.id ?? payload.record_id),
+    type: getText(record.type ?? record.record_type ?? record.recordType ?? payload.type),
+    family: getText(record.record_family ?? record.recordFamily ?? record.family ?? payload.family),
     state: getText(record.state ?? record.record_state ?? record.recordState ?? payload.state ?? payload.record_state),
     title: compactText(record.title ?? payload.title ?? data.title, 240),
     summary: compactText(record.summary ?? payload.summary ?? data.summary ?? payload.description ?? data.description ?? payload.body, 900),
@@ -830,6 +832,13 @@ function isTaskInReview(value: unknown): boolean {
   const state = getText(record.state ?? record.recordState ?? record.record_state ?? payload.state ?? payload.record_state)?.toLowerCase();
   const family = getText(record.family ?? record.recordFamily ?? record.record_family ?? payload.family)?.toLowerCase();
   return (family === "task" || Boolean(getText(record.recordId ?? record.record_id ?? payload.task_id))) && state === "review";
+}
+
+function isDocumentReference(value: unknown): boolean {
+  const record = objectValue(value);
+  const payload = objectValue(record.payload);
+  const family = getText(record.type ?? record.family ?? record.recordFamily ?? record.record_family ?? payload.type ?? payload.family)?.toLowerCase();
+  return family === "doc" || family === "document" || family === "documents";
 }
 
 function isApprovalText(value: string): boolean {
@@ -1516,6 +1525,10 @@ export const builtinPipelineFunctions: FunctionRegistry = {
         channelId: getText(workPlan.channelId ?? objectValue(workPlan.origin).channelId ?? source.channelId),
         threadId: getText(workPlan.threadId ?? objectValue(workPlan.origin).threadId ?? source.threadId),
         messageId: getText(workPlan.messageId ?? objectValue(workPlan.origin).messageId ?? source.messageId),
+        documentReference: objectValue(workPlan.documentReference),
+        referencedRecords: Array.isArray(workPlan.referencedRecords)
+          ? workPlan.referencedRecords.slice(0, 12).map(compactReferencedRecord)
+          : referencedRecords,
         acceptanceCriteria: Array.isArray(workPlan.acceptanceCriteria) ? workPlan.acceptanceCriteria.slice(0, 8).map((item) => compactText(item, 500)) : [],
         executionPlan: Array.isArray(workPlan.executionPlan) ? workPlan.executionPlan.slice(0, 8).map((item) => compactText(item, 500)) : [],
       },
@@ -1662,6 +1675,14 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const documentBoundDiscussion = isDocumentDiscussionPipelineIdentifier(pipelineDefinitionId);
     const title = documentBoundDiscussion ? "Document discussion" : "Discussion response";
     const taskSummary = documentBoundDiscussion ? "Document-bound discussion response" : "Discussion response";
+    const referencedRecords = Array.isArray(chatDispatchInput.referencedRecords)
+      ? chatDispatchInput.referencedRecords.slice(0, 12).map(compactReferencedRecord)
+      : Array.isArray(chatContext.referencedRecords)
+        ? chatContext.referencedRecords.slice(0, 12).map(compactReferencedRecord)
+        : [];
+    const documentReference = documentBoundDiscussion
+      ? referencedRecords.find(isDocumentReference) ?? null
+      : null;
     const responseDraft = documentBoundDiscussion
       ? "Let's discuss that. Give me a minute and I'll pull together a doc so we can work on it together."
       : "Let's discuss that. Give me a minute to pull the context together and I'll reply here.";
@@ -1690,6 +1711,8 @@ export const builtinPipelineFunctions: FunctionRegistry = {
           : "Discuss, plan, or reason in chat using the latest thread context. Do not create a Flight Deck task.",
         originalPrompt: latestText,
         originThread: thread,
+        referencedRecords,
+        documentReference,
         origin: {
           triggerKind: "chat",
           channelId,

@@ -24,6 +24,7 @@ const pgTaskAssignmentCalls: Array<Record<string, unknown>> = [];
 let failChatContextCount = 0;
 let failReactionCount = 0;
 let failTaskCreateCount = 0;
+let pgHydratedMessageBody = 'Hydrated PG thread body.';
 
 const runAgentWorkspaceYokeCommandMock = mock(async (input: { args: string[] }) => {
   yokeCommandCalls.push(input.args);
@@ -138,7 +139,7 @@ mock.module('../tower-client', () => ({
           id: 'pg-message-1',
           channel_id: input.channelId,
           thread_id: input.threadId,
-          body: 'Hydrated PG thread body.',
+          body: pgHydratedMessageBody,
           created_by_actor_id: 'actor-requester',
           created_at: '2026-06-10T01:00:00.000Z',
           row_version: 12,
@@ -425,6 +426,7 @@ describe('dispatch pipeline Flight Deck publisher', () => {
     pgTaskCommentCreateCalls.length = 0;
     pgLeaseAcquireCalls.length = 0;
     pgWorkspaceMemberFetchCalls.length = 0;
+    pgHydratedMessageBody = 'Hydrated PG thread body.';
     pgTaskAssignmentCalls.length = 0;
     failChatContextCount = 0;
     failReactionCount = 0;
@@ -608,6 +610,47 @@ describe('dispatch pipeline Flight Deck publisher', () => {
         ],
       },
     });
+  });
+
+  test('chat context hydration resolves quoted Flight Deck PG document titles', async () => {
+    pgHydratedMessageBody = 'Can you review the doc "Adapt - Kindling Feedback" in this scope?';
+    const hydrate = createDispatchChatContextHydrator(buildChatPublisherContext({
+      subscription: {
+        subscriptionId: 'sub-pg-1',
+        workspaceOwnerNpub: 'npub1workspace',
+        sourceAppNpub: 'npub1source',
+        backendBaseUrl: 'https://tower.example.com',
+        workspaceId: 'workspace-pg-1',
+        botNpub: 'npub1bot',
+        wsKeyNpub: null,
+      },
+      runtime: {
+        mode: 'flightdeck_pg',
+        yokeStateDir: null,
+        commandPrefix: null,
+        commands: {},
+        error: null,
+      },
+    }));
+
+    const result = await hydrate({ availablePipelines: [] });
+
+    expect(pgDocumentListCalls).toHaveLength(1);
+    expect(pgDocumentListCalls[0]).toMatchObject({
+      workspaceId: 'workspace-pg-1',
+      channelId: 'channel-1',
+    });
+    expect(result.referencedRecords).toEqual([
+      expect.objectContaining({
+        type: 'document',
+        family: 'document',
+        id: 'pg-doc-adapt-feedback',
+        recordId: 'pg-doc-adapt-feedback',
+        title: 'Adapt - Kindling Feedback',
+        referenceSource: 'pg_channel_doc_title',
+      }),
+    ]);
+    expect(pgDocumentCreateCalls).toHaveLength(0);
   });
 
   test('chat context hydration reuses intake acknowledgement without writing a duplicate reaction', async () => {

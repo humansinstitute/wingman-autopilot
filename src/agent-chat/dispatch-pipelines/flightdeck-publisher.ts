@@ -720,7 +720,7 @@ export function createDispatchChatContextHydrator(
     if (!selfAuthored.selfAuthored) {
       if (isFlightDeckPgPublisherContext(context)) {
         scopes = [];
-        referencedRecords = [];
+        referencedRecords = await loadReferencedFlightDeckPgDocuments(context, thread, channelId);
       } else {
         try {
           scopes = await runYokeJson(context, ['scopes', 'list', '--json']);
@@ -2982,6 +2982,80 @@ function extractMentionRefs(value: unknown): Array<{ type: string; id: string }>
   return refs;
 }
 
+async function loadReferencedFlightDeckPgDocuments(
+  context: DispatchPipelineFlightDeckPublisherContext,
+  thread: unknown,
+  channelId: string,
+): Promise<Array<Record<string, unknown>>> {
+  const candidateTitles = extractThreadDocumentTitleCandidates(thread);
+  if (candidateTitles.length === 0) {
+    return [];
+  }
+  try {
+    const result = await listFlightDeckPgChannelDocs({
+      ...getFlightDeckPgPublishContext(context),
+      channelId,
+      limit: 100,
+    });
+    const wanted = candidateTitles.map((title) => normalizeDocumentLookupTitle(title));
+    const docs = Array.isArray(result.docs) ? result.docs : [];
+    return docs
+      .filter((doc) => {
+        const title = normalizeDocumentLookupTitle(getText(doc.title));
+        return Boolean(title && wanted.includes(title));
+      })
+      .slice(0, 8)
+      .map((doc) => ({
+        type: 'document',
+        family: 'document',
+        recordFamily: 'document',
+        id: doc.id,
+        recordId: doc.id,
+        title: getText(doc.title),
+        summary: getText(doc.summary),
+        state: 'current',
+        channelId: getText(doc.channel_id),
+        scopeId: getText(doc.scope_id),
+        rowVersion: doc.row_version ?? null,
+        status: 'ok',
+        referenceSource: 'pg_channel_doc_title',
+      }));
+  } catch (error) {
+    return [{
+      type: 'document',
+      family: 'document',
+      status: 'failed',
+      referenceSource: 'pg_channel_doc_title',
+      titleCandidates: candidateTitles,
+      error: error instanceof Error ? error.message : String(error),
+    }];
+  }
+}
+
+function extractThreadDocumentTitleCandidates(thread: unknown): string[] {
+  const messages = Array.isArray(thread)
+    ? thread
+    : Array.isArray(objectValue(thread).recent_messages)
+      ? objectValue(thread).recent_messages as unknown[]
+      : [];
+  if (messages.length === 0) {
+    return [];
+  }
+  const candidates: string[] = [];
+  const add = (value: string) => {
+    if (value && !candidates.includes(value)) {
+      candidates.push(value);
+    }
+  };
+  for (const message of messages.slice(-12)) {
+    const body = getText(objectValue(message).body);
+    for (const title of extractQuotedDocumentTitles(body)) {
+      add(title);
+    }
+  }
+  return candidates.slice(0, 8);
+}
+
 function buildChatCreatedTaskDescription(
   context: DispatchPipelineFlightDeckPublisherContext,
   decision: Record<string, unknown>,
@@ -3053,9 +3127,14 @@ function findDiscussionDocumentReference(input: JsonObject): {
     objectValue(input.chatContext),
     objectValue(input.originalChatContext),
     objectValue(input.freshChatContext),
+    objectValue(input.workPlan),
   ];
   for (const context of contexts) {
-    const referencedRecords = Array.isArray(context.referencedRecords) ? context.referencedRecords : [];
+    const directReference = objectValue(context.documentReference);
+    const referencedRecords = [
+      ...(Object.keys(directReference).length > 0 ? [directReference] : []),
+      ...(Array.isArray(context.referencedRecords) ? context.referencedRecords : []),
+    ];
     for (const entry of referencedRecords) {
       const record = objectValue(entry);
       const nested = objectValue(record.record);

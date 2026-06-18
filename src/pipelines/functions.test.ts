@@ -286,6 +286,7 @@ async function runChatDispatchSpec(input: {
       pipelineRunId: `run-${String(selected.pipelineDefinitionId)}`,
       pipelineDefinitionId: selected.pipelineDefinitionId,
       pipelineName: selected.pipelineDefinitionId,
+      workPlan: selected.workPlan,
     }),
     "dispatch.completeReviewTaskFromChat": async (selected: JsonObject) => ({
       completed: true,
@@ -1315,6 +1316,58 @@ describe("memory pipeline functions", () => {
     expect(currentAfterStep(execution, "start-discussion-pipeline").childPipeline).toMatchObject({
       started: true,
       pipelineDefinitionId: "document-discussion",
+    });
+  });
+
+  test("shared chat dispatch submits referenced document to document discussion child pipeline", async () => {
+    const execution = await runChatDispatchSpec({
+      latestMessage: 'Can you quickly review the doc "Adapt - Kindling Feedback" in this scope?',
+      referencedRecords: [
+        {
+          type: "document",
+          family: "document",
+          id: "pg-doc-adapt-feedback",
+          recordId: "pg-doc-adapt-feedback",
+          title: "Adapt - Kindling Feedback",
+          summary: "Kindling feedback notes",
+        },
+      ],
+      agentDecision: {
+        intent: "document_discussion",
+        dispatchTask: false,
+        recommendedPipelineId: "document-discussion",
+        chatResponse: { body: "I'll review the document." },
+        confidence: 0.9,
+      },
+    });
+
+    const routed = currentAfterStep(execution, "route-discussion-chat").decision as JsonObject;
+    const workPlan = routed.discussionWorkPlan as JsonObject;
+    expect(workPlan.documentReference).toMatchObject({
+      id: "pg-doc-adapt-feedback",
+      recordId: "pg-doc-adapt-feedback",
+      type: "document",
+      title: "Adapt - Kindling Feedback",
+    });
+    expect(workPlan.referencedRecords).toEqual([
+      expect.objectContaining({
+        id: "pg-doc-adapt-feedback",
+        type: "document",
+        family: "document",
+        title: "Adapt - Kindling Feedback",
+      }),
+    ]);
+    expect(currentAfterStep(execution, "start-discussion-pipeline").childPipeline).toMatchObject({
+      started: true,
+      pipelineDefinitionId: "document-discussion",
+      workPlan: {
+        documentReference: {
+          id: "pg-doc-adapt-feedback",
+          recordId: "pg-doc-adapt-feedback",
+          type: "document",
+          title: "Adapt - Kindling Feedback",
+        },
+      },
     });
   });
 
