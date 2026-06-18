@@ -11,6 +11,14 @@ export interface FlightDeckPgCliResult {
 
 type FlagMap = Map<string, string | boolean>;
 
+interface FlightDeckPgCliDefaults {
+  workspaceId?: string;
+  channelId?: string;
+  threadId?: string;
+  taskId?: string;
+  scopeId?: string;
+}
+
 export async function runFlightDeckPgCli(argv: string[], io: {
   stdout?: (text: string) => void;
   stderr?: (text: string) => void;
@@ -27,7 +35,8 @@ export async function runFlightDeckPgCli(argv: string[], io: {
       sessionId: stringFlag(flags, '--session-id') ?? undefined,
       fetchImpl: io.fetchImpl,
     }));
-    const result = await dispatch(client, parsed.positionals, flags);
+    const defaults = await resolveCommandDefaults(client, parsed.positionals, flags);
+    const result = await dispatch(client, parsed.positionals, flags, defaults);
     const text = formatOutput(result, flags.has('--json'));
     io.stdout?.(text);
     return { exitCode: 0, stdout: text };
@@ -39,7 +48,7 @@ export async function runFlightDeckPgCli(argv: string[], io: {
   }
 }
 
-async function dispatch(client: FlightDeckPgClient, args: string[], flags: FlagMap): Promise<unknown> {
+async function dispatch(client: FlightDeckPgClient, args: string[], flags: FlagMap, defaults: FlightDeckPgCliDefaults): Promise<unknown> {
   const [area, action, id] = args;
   if (!area || area === 'help') return usageText();
   const limit = optionalNumber(flags, '--limit');
@@ -50,46 +59,116 @@ async function dispatch(client: FlightDeckPgClient, args: string[], flags: FlagM
   if (area === 'workspace' && action === 'show') return await client.showWorkspace(requiredArg(id, 'workspace id'));
   if (area === 'workspace' && action === 'me') return await client.workspaceMe(requiredArg(id, 'workspace id'));
 
-  const workspaceId = requiredValue(flags, '--workspace', 'workspace id');
+  const workspaceId = requiredValue(flags, defaults, '--workspace', 'workspace id');
   if (area === 'scopes' && action === 'list') return await client.listScopes(workspaceId);
-  if (area === 'scope' && action === 'show') return await client.showScope(workspaceId, requiredArg(id, 'scope id'));
-  if (area === 'channels' && action === 'list') return await client.listChannels(workspaceId, requiredValue(flags, '--scope', 'scope id'), limit);
-  if (area === 'channel' && action === 'show') return await client.showChannel(workspaceId, requiredArg(id, 'channel id'));
-  if (area === 'threads' && action === 'list') return await client.listThreads(workspaceId, requiredValue(flags, '--channel', 'channel id'), limit);
-  if (area === 'thread' && action === 'read') return await client.readThread(workspaceId, requiredValue(flags, '--channel', 'channel id'), requiredArg(id, 'thread id'), limit);
-  if (area === 'chat' && action === 'reply') return await client.reply(workspaceId, requiredValue(flags, '--channel', 'channel id'), requiredValue(flags, '--thread', 'thread id'), requiredValue(flags, '--body', 'body'));
+  if (area === 'scope' && action === 'show') return await client.showScope(workspaceId, requiredArg(id ?? defaults.scopeId, 'scope id'));
+  if (area === 'channels' && action === 'list') return await client.listChannels(workspaceId, requiredValue(flags, defaults, '--scope', 'scope id'), limit);
+  if (area === 'channel' && action === 'show') return await client.showChannel(workspaceId, requiredArg(id ?? defaults.channelId, 'channel id'));
+  if (area === 'threads' && action === 'list') return await client.listThreads(workspaceId, requiredValue(flags, defaults, '--channel', 'channel id'), limit);
+  if (area === 'thread' && action === 'read') return await client.readThread(workspaceId, requiredValue(flags, defaults, '--channel', 'channel id'), requiredArg(id ?? defaults.threadId, 'thread id'), limit);
+  if (area === 'chat' && action === 'reply') return await client.reply(workspaceId, requiredValue(flags, defaults, '--channel', 'channel id'), requiredValue(flags, defaults, '--thread', 'thread id'), requiredFlag(flags, '--body', 'body'));
   if (area === 'tasks' && action === 'list') return await client.listTasks(workspaceId, {
-    channelId: stringFlag(flags, '--channel'),
-    scopeId: stringFlag(flags, '--scope'),
+    channelId: valueFromFlagOrDefault(flags, defaults, '--channel'),
+    scopeId: valueFromFlagOrDefault(flags, defaults, '--scope'),
     limit,
   });
-  if (area === 'task' && action === 'show') return await client.showTask(workspaceId, requiredArg(id, 'task id'));
-  if (area === 'task' && action === 'create') return await client.createTask(workspaceId, requiredValue(flags, '--channel', 'channel id'), {
-    title: requiredValue(flags, '--title', 'title'),
+  if (area === 'task' && action === 'show') return await client.showTask(workspaceId, requiredArg(id ?? defaults.taskId, 'task id'));
+  if (area === 'task' && action === 'create') return await client.createTask(workspaceId, requiredValue(flags, defaults, '--channel', 'channel id'), {
+    title: requiredFlag(flags, '--title', 'title'),
     description: stringFlag(flags, '--body') ?? stringFlag(flags, '--description'),
     state: stringFlag(flags, '--state') ?? undefined,
     priority: stringFlag(flags, '--priority') ?? undefined,
-    threadId: stringFlag(flags, '--thread'),
+    threadId: valueFromFlagOrDefault(flags, defaults, '--thread'),
   });
-  if (area === 'task' && action === 'patch') return await client.patchTask(workspaceId, requiredArg(id, 'task id'), readJsonFile(requiredValue(flags, '--json-file', 'json file')));
-  if (area === 'task' && action === 'state') return await client.updateTaskState(workspaceId, requiredArg(id, 'task id'), requiredValue(flags, '--state', 'state'));
-  if (area === 'task' && action === 'comments') return await client.listTaskComments(workspaceId, requiredArg(id, 'task id'), limit);
-  if (area === 'task' && action === 'comment') return await client.commentTask(workspaceId, requiredArg(id, 'task id'), requiredValue(flags, '--body', 'body'), stringFlag(flags, '--thread'));
-  if (area === 'task' && action === 'assign') return await client.assignTask(workspaceId, requiredArg(id, 'task id'), requiredValue(flags, '--agent', 'agent actor id'));
-  if (area === 'docs' && action === 'list') return await client.listDocs(workspaceId, requiredValue(flags, '--channel', 'channel id'), limit);
-  if (area === 'doc' && action === 'create') return await client.createDoc(workspaceId, requiredValue(flags, '--channel', 'channel id'), requiredValue(flags, '--title', 'title'), readTextFile(requiredValue(flags, '--body-file', 'body file')));
+  if (area === 'task' && action === 'patch') return await client.patchTask(workspaceId, requiredArg(id ?? defaults.taskId, 'task id'), readJsonFile(requiredFlag(flags, '--json-file', 'json file')));
+  if (area === 'task' && action === 'state') return await client.updateTaskState(workspaceId, requiredArg(id ?? defaults.taskId, 'task id'), requiredFlag(flags, '--state', 'state'));
+  if (area === 'task' && action === 'comments') return await client.listTaskComments(workspaceId, requiredArg(id ?? defaults.taskId, 'task id'), limit);
+  if (area === 'task' && action === 'comment') return await client.commentTask(workspaceId, requiredArg(id ?? defaults.taskId, 'task id'), requiredFlag(flags, '--body', 'body'), valueFromFlagOrDefault(flags, defaults, '--thread'));
+  if (area === 'task' && action === 'assign') return await client.assignTask(workspaceId, requiredArg(id ?? defaults.taskId, 'task id'), requiredFlag(flags, '--agent', 'agent actor id'));
+  if (area === 'docs' && action === 'list') return await client.listDocs(workspaceId, requiredValue(flags, defaults, '--channel', 'channel id'), limit);
+  if (area === 'doc' && action === 'create') return await client.createDoc(workspaceId, requiredValue(flags, defaults, '--channel', 'channel id'), requiredFlag(flags, '--title', 'title'), readTextFile(requiredFlag(flags, '--body-file', 'body file')));
   if (area === 'doc' && action === 'show') return await client.showDoc(workspaceId, requiredArg(id, 'doc id'), flags.has('--body'));
-  if (area === 'doc' && action === 'update') return await client.updateDoc(workspaceId, requiredArg(id, 'doc id'), readTextFile(requiredValue(flags, '--body-file', 'body file')));
+  if (area === 'doc' && action === 'update') return await client.updateDoc(workspaceId, requiredArg(id, 'doc id'), readTextFile(requiredFlag(flags, '--body-file', 'body file')));
   if (area === 'doc' && action === 'comments') return await client.listDocComments(workspaceId, requiredArg(id, 'doc id'), limit);
-  if (area === 'doc' && action === 'reply') return await client.replyDoc(workspaceId, requiredArg(id, 'doc id'), requiredValue(flags, '--body', 'body'), stringFlag(flags, '--comment'));
-  if (area === 'files' && action === 'list') return await client.listFiles(workspaceId, requiredValue(flags, '--channel', 'channel id'), limit);
-  if (area === 'file' && action === 'upload') return await client.uploadFile(workspaceId, requiredValue(flags, '--channel', 'channel id'), requiredValue(flags, '--path', 'path'), stringFlag(flags, '--content-type'));
+  if (area === 'doc' && action === 'reply') return await client.replyDoc(workspaceId, requiredArg(id, 'doc id'), requiredFlag(flags, '--body', 'body'), stringFlag(flags, '--comment'));
+  if (area === 'files' && action === 'list') return await client.listFiles(workspaceId, requiredValue(flags, defaults, '--channel', 'channel id'), limit);
+  if (area === 'file' && action === 'upload') return await client.uploadFile(workspaceId, requiredValue(flags, defaults, '--channel', 'channel id'), requiredFlag(flags, '--path', 'path'), stringFlag(flags, '--content-type'));
   if (area === 'file' && action === 'show') return await client.showFile(workspaceId, requiredArg(id, 'file id'), flags.has('--object'));
-  if (area === 'audio' && action === 'create') return await client.createAudio(workspaceId, requiredValue(flags, '--channel', 'channel id'), requiredValue(flags, '--file', 'file'), stringFlag(flags, '--content-type'));
-  if (area === 'reactions' && action === 'create') return await client.createReaction(workspaceId, requiredValue(flags, '--target', 'target'), requiredValue(flags, '--emoji', 'emoji'));
+  if (area === 'audio' && action === 'create') return await client.createAudio(workspaceId, requiredValue(flags, defaults, '--channel', 'channel id'), requiredFlag(flags, '--file', 'file'), stringFlag(flags, '--content-type'));
+  if (area === 'reactions' && action === 'create') return await client.createReaction(workspaceId, requiredFlag(flags, '--target', 'target'), requiredFlag(flags, '--emoji', 'emoji'));
   if (area === 'events' && action === 'poll') return await client.pollEvents(workspaceId, stringFlag(flags, '--since'), limit);
   if (area === 'members' && action === 'list') return await client.listMembers(workspaceId);
   throw new Error(`Unknown flightdeck command: ${[area, action, id].filter(Boolean).join(' ')}`);
+}
+
+async function resolveCommandDefaults(client: FlightDeckPgClient, args: string[], flags: FlagMap): Promise<FlightDeckPgCliDefaults> {
+  if (!commandUsesDispatchContext(args) || hasAllRequiredDispatchFlags(args, flags)) return {};
+  const context = await client.context();
+  return parseDispatchDefaults(context);
+}
+
+function commandUsesDispatchContext(args: string[]): boolean {
+  const [area, action] = args;
+  return [
+    'scopes:list',
+    'scope:show',
+    'channels:list',
+    'channel:show',
+    'threads:list',
+    'thread:read',
+    'chat:reply',
+    'tasks:list',
+    'task:show',
+    'task:create',
+    'task:patch',
+    'task:state',
+    'task:comments',
+    'task:comment',
+    'task:assign',
+    'docs:list',
+    'doc:create',
+    'doc:show',
+    'doc:update',
+    'doc:comments',
+    'doc:reply',
+    'files:list',
+    'file:upload',
+    'file:show',
+    'audio:create',
+    'reactions:create',
+    'events:poll',
+    'members:list',
+  ].includes(`${area}:${action}`);
+}
+
+function hasAllRequiredDispatchFlags(args: string[], flags: FlagMap): boolean {
+  const [area, action, id] = args;
+  if (!stringFlag(flags, '--workspace')) return false;
+  if (['channels:list'].includes(`${area}:${action}`)) return Boolean(stringFlag(flags, '--scope'));
+  if (['threads:list', 'docs:list', 'files:list'].includes(`${area}:${action}`)) return Boolean(stringFlag(flags, '--channel'));
+  if (['thread:read'].includes(`${area}:${action}`)) return Boolean(stringFlag(flags, '--channel') && id);
+  if (['chat:reply'].includes(`${area}:${action}`)) return Boolean(stringFlag(flags, '--channel') && stringFlag(flags, '--thread'));
+  if (['task:show', 'task:patch', 'task:state', 'task:comments', 'task:comment', 'task:assign'].includes(`${area}:${action}`)) return Boolean(id);
+  if (['task:create', 'doc:create', 'file:upload', 'audio:create'].includes(`${area}:${action}`)) return Boolean(stringFlag(flags, '--channel'));
+  return true;
+}
+
+function parseDispatchDefaults(context: Record<string, unknown>): FlightDeckPgCliDefaults {
+  const workspace = objectValue(context.workspace);
+  const chat = objectValue(context.chat);
+  const routing = objectValue(context.routing);
+  const record = objectValue(context.record);
+  const bindingType = stringValue(routing.bindingType);
+  const bindingId = stringValue(routing.bindingId);
+  const recordFamily = stringValue(record.recordFamily);
+  const recordId = stringValue(record.recordId);
+  return {
+    workspaceId: stringValue(workspace.workspaceId),
+    channelId: stringValue(chat.channelId) ?? stringValue(routing.channelId),
+    threadId: stringValue(chat.threadId) ?? stringValue(routing.threadId),
+    scopeId: stringValue(routing.scopeId) ?? stringValue(workspace.scopeId),
+    taskId: bindingType === 'task' ? bindingId : recordFamily === 'task' ? recordId : undefined,
+  };
 }
 
 function parseFlags(argv: string[]): { positionals: string[]; flags: FlagMap } {
@@ -117,10 +196,29 @@ function stringFlag(flags: FlagMap, name: string): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
-function requiredValue(flags: FlagMap, name: string, label: string): string {
+function requiredValue(flags: FlagMap, defaults: FlightDeckPgCliDefaults, name: string, label: string): string {
+  const value = valueFromFlagOrDefault(flags, defaults, name);
+  if (!value) throw new Error(`Missing required ${label}. Pass ${name} or run from a SESSION_ID with Flight Deck dispatch context.`);
+  return value;
+}
+
+function requiredFlag(flags: FlagMap, name: string, label: string): string {
   const value = stringFlag(flags, name);
   if (!value) throw new Error(`Missing required ${label}. Pass ${name}.`);
   return value;
+}
+
+function valueFromFlagOrDefault(flags: FlagMap, defaults: FlightDeckPgCliDefaults, name: string): string | null {
+  return stringFlag(flags, name) ?? defaultForFlag(defaults, name) ?? null;
+}
+
+function defaultForFlag(defaults: FlightDeckPgCliDefaults, name: string): string | undefined {
+  if (name === '--workspace') return defaults.workspaceId;
+  if (name === '--channel') return defaults.channelId;
+  if (name === '--thread') return defaults.threadId;
+  if (name === '--task') return defaults.taskId;
+  if (name === '--scope') return defaults.scopeId;
+  return undefined;
 }
 
 function requiredArg(value: string | undefined, label: string): string {
@@ -149,6 +247,14 @@ function readTextFile(path: string): string {
 function formatOutput(result: unknown, json: boolean): string {
   if (json || typeof result !== 'string') return JSON.stringify(result, null, 2);
   return result;
+}
+
+function objectValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
 function serializeError(error: unknown): Record<string, unknown> {

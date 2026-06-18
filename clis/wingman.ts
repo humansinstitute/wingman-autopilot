@@ -14,6 +14,9 @@ Use the PG-native Flight Deck command group instead.`);
 }
 
 async function main() {
+  if (process.execArgv.includes('--check')) {
+    return;
+  }
   const [command, ...rest] = process.argv.slice(2);
   if (command !== 'flightdeck') {
     usage();
