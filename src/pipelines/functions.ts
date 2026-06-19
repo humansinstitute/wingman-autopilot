@@ -1540,7 +1540,7 @@ export const builtinPipelineFunctions: FunctionRegistry = {
         "Use latestThread as the authoritative current conversation.",
         "Use channelContext.contextPrompt as the channel-specific instruction.",
         "Use referencedRecords and document mentions to find the working Flight Deck document.",
-        "Do not create a task. Do not run Yoke for Flight Deck PG work.",
+        "Do not create a task. Use current Flight Deck PG helpers for Flight Deck work.",
       ],
     };
   },
@@ -1779,12 +1779,67 @@ export const builtinPipelineFunctions: FunctionRegistry = {
   },
 
   async "dispatch.ensureImplementationReviewTask"(input) {
+    const createdTask = objectValue(input.createdTask);
+    const suppliedWorkPlan = objectValue(input.workPlan ?? createdTask.workPlan);
+    const taskId = getText(suppliedWorkPlan.taskId ?? input.taskId ?? createdTask.taskId);
+    const taskTitle = getText(input.taskTitle ?? createdTask.title ?? suppliedWorkPlan.taskTitle ?? suppliedWorkPlan.taskSummary);
+    const reporting = objectValue(suppliedWorkPlan.reporting ?? input.reporting ?? input.reportTarget);
+    const hasFlightDeckDispatchContext = Object.keys(objectValue(input.dispatch)).length > 0
+      || Object.keys(objectValue(input.workspace)).length > 0
+      || Object.keys(objectValue(input.record)).length > 0
+      || Object.keys(objectValue(input.routing)).length > 0
+      || Object.keys(objectValue(input.runtime)).length > 0;
+    const rawReportingMode = getText(reporting.mode ?? reporting.type);
+    const reportingMode = hasFlightDeckDispatchContext
+      && (!rawReportingMode || rawReportingMode === "pipeline_result" || rawReportingMode === "pipeline-result")
+      ? "flightdeck_task"
+      : rawReportingMode ?? (hasFlightDeckDispatchContext ? "flightdeck_task" : "pipeline_result");
+    const origin = objectValue(suppliedWorkPlan.origin ?? input.origin);
+    const originKind = getText(origin.kind)
+      ?? (hasFlightDeckDispatchContext ? "flightdeck_task" : "direct");
+    const workPlan = {
+      ...suppliedWorkPlan,
+      ...(taskId ? { taskId } : {}),
+      ...(taskTitle ? { taskTitle } : {}),
+      taskSummary: getText(suppliedWorkPlan.taskSummary ?? taskTitle) ?? "Software implementation",
+      origin: {
+        ...origin,
+        kind: originKind,
+      },
+      workdir: getText(suppliedWorkPlan.workdir ?? suppliedWorkPlan.workingDirectory ?? input.workingDirectory)
+        ?? suppliedWorkPlan.workdir,
+      instructions: getText(suppliedWorkPlan.instructions ?? input.implementationPrompt)
+        ?? suppliedWorkPlan.instructions,
+      designDocumentUrl: getText(suppliedWorkPlan.designDocumentUrl ?? input.designDocumentUrl)
+        ?? suppliedWorkPlan.designDocumentUrl,
+      designDocumentUnavailableReason: getText(suppliedWorkPlan.designDocumentUnavailableReason ?? input.designDocumentUnavailableReason)
+        ?? suppliedWorkPlan.designDocumentUnavailableReason,
+      designDocument: suppliedWorkPlan.designDocument ?? input.designDocument ?? null,
+      designDocumentAccessInstructions: getText(suppliedWorkPlan.designDocumentAccessInstructions ?? input.designDocumentAccessInstructions)
+        ?? suppliedWorkPlan.designDocumentAccessInstructions,
+      targetSurface: objectValue(suppliedWorkPlan.targetSurface ?? input.targetSurface),
+      visualReferences: Array.isArray(suppliedWorkPlan.visualReferences)
+        ? suppliedWorkPlan.visualReferences
+        : Array.isArray(input.visualReferences)
+          ? input.visualReferences
+          : [],
+      reporting: {
+        ...reporting,
+        mode: reportingMode,
+      },
+    };
     return {
       published: false,
-      status: "not_configured",
-      operation: "tasks.ensure-implementation-review-loop",
-      reason: "This function only creates or updates Flight Deck tasks when the pipeline is launched by a Wingman dispatch route.",
-      taskId: input.taskId ?? null,
+      status: hasFlightDeckDispatchContext ? "not_configured" : "ready",
+      operation: "implementation-review-context.normalise",
+      reason: hasFlightDeckDispatchContext
+        ? "Flight Deck task mutation is handled by dispatch route bindings; preserving the supplied implementation work plan for the review loop."
+        : "Direct pipeline launch; no Flight Deck task mutation required.",
+      taskId: taskId ?? null,
+      title: taskTitle ?? null,
+      workPlan,
+      reporting: workPlan.reporting,
+      taskBacked: hasFlightDeckDispatchContext,
     };
   },
 
@@ -1808,7 +1863,6 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const allowedFiles = getStringArray(targetSurface.allowedFiles);
     const forbidden = getStringArray(targetSurface.forbidden ?? targetSurface.forbiddenSurfaces);
     const missing = [
-      !taskId ? "taskId" : "",
       !workdir ? "workdir" : "",
       workdir === "/Users/mini/code/wingmen" ? "non-placeholder workdir" : "",
       !instructions ? "instructions" : "",
@@ -1823,7 +1877,7 @@ export const builtinPipelineFunctions: FunctionRegistry = {
       ok: true,
       status: "ok",
       operation: "implementation-contract.validate",
-      taskId,
+      taskId: taskId ?? null,
       workdir,
       targetSurface: {
         ...targetSurface,

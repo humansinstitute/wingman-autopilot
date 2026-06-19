@@ -469,9 +469,14 @@ describe("memory pipeline functions", () => {
     });
     await expect(builtinPipelineFunctions["dispatch.ensureImplementationReviewTask"]!({ taskId: "task-1" })).resolves.toMatchObject({
       published: false,
-      status: "not_configured",
-      operation: "tasks.ensure-implementation-review-loop",
+      status: "ready",
+      operation: "implementation-review-context.normalise",
       taskId: "task-1",
+      workPlan: {
+        taskId: "task-1",
+        origin: { kind: "direct" },
+        reporting: { mode: "pipeline_result" },
+      },
     });
     await expect(builtinPipelineFunctions["dispatch.validateImplementationContract"]!({
       createdTask: {
@@ -509,7 +514,79 @@ describe("memory pipeline functions", () => {
           designDocumentUrl: "~/code/wingmen/docs/example-design.md",
         },
       },
-    })).rejects.toThrow(/taskId.*non-placeholder workdir.*real designDocumentUrl.*targetSurface/);
+    })).rejects.toThrow(/non-placeholder workdir.*real designDocumentUrl.*targetSurface/);
+  });
+
+  test("dispatch.ensureImplementationReviewTask normalises direct software loop input", async () => {
+    const result = await builtinPipelineFunctions["dispatch.ensureImplementationReviewTask"]!({
+      taskTitle: "Build the thing",
+      workingDirectory: "/repo/project",
+      implementationPrompt: "Implement the target.",
+      designDocumentUrl: "/repo/project/docs/ticket.md",
+      targetSurface: {
+        route: "clis/wingman.ts flightdeck",
+        existingFiles: ["clis/wingman.ts"],
+      },
+      visualReferences: ["screenshot.png"],
+    });
+
+    expect(result).toMatchObject({
+      published: false,
+      status: "ready",
+      operation: "implementation-review-context.normalise",
+      taskId: null,
+      taskBacked: false,
+      workPlan: {
+        taskTitle: "Build the thing",
+        taskSummary: "Build the thing",
+        origin: { kind: "direct" },
+        workdir: "/repo/project",
+        instructions: "Implement the target.",
+        designDocumentUrl: "/repo/project/docs/ticket.md",
+        targetSurface: {
+          route: "clis/wingman.ts flightdeck",
+          existingFiles: ["clis/wingman.ts"],
+        },
+        visualReferences: ["screenshot.png"],
+        reporting: { mode: "pipeline_result" },
+      },
+    });
+
+    await expect(builtinPipelineFunctions["dispatch.validateImplementationContract"]!({
+      createdTask: result,
+    })).resolves.toMatchObject({
+      ok: true,
+      status: "ok",
+      taskId: null,
+      workdir: "/repo/project",
+    });
+  });
+
+  test("dispatch.ensureImplementationReviewTask preserves Flight Deck reporting mode when dispatch context exists", async () => {
+    const result = await builtinPipelineFunctions["dispatch.ensureImplementationReviewTask"]!({
+      dispatch: { routeId: "route-1" },
+      workspace: { workspaceId: "workspace-1" },
+      reporting: { mode: "pipeline_result" },
+      taskId: "task-1",
+      workPlan: {
+        workdir: "/repo/project",
+        instructions: "Implement from task.",
+        designDocumentUrl: "flightdeck-task://task-1",
+        targetSurface: { route: "/settings" },
+      },
+    });
+
+    expect(result).toMatchObject({
+      published: false,
+      status: "not_configured",
+      taskId: "task-1",
+      taskBacked: true,
+      workPlan: {
+        taskId: "task-1",
+        origin: { kind: "flightdeck_task" },
+        reporting: { mode: "flightdeck_task" },
+      },
+    });
   });
 
   test("dispatch.normaliseTaskWorkPlan normalises list fields", async () => {
