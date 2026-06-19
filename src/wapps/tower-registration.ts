@@ -1,6 +1,7 @@
 import { parseTowerError, type FetchLike } from "../agent-chat/tower-client";
 import type { RuntimeBotIdentity } from "../agent-chat/types";
 import { loadYokeBotHelpers } from "../agent-chat/yoke-bot-helpers";
+import type { WappRecord } from "./types";
 
 export interface TowerWappRegistrationInput {
   towerUrl: string;
@@ -44,6 +45,50 @@ export class HttpTowerWappRegistrar implements TowerWappRegistrar {
   async register(input: TowerWappRegistrationInput): Promise<TowerWappRegistrationResult> {
     return registerTowerWappWithTower(input, this.fetchImpl);
   }
+}
+
+export function requireTowerWappRegistrationIdentity(
+  identity: RuntimeBotIdentity | null | undefined,
+): RuntimeBotIdentity {
+  if (!identity) {
+    throw new TowerWappRegistrationError("Tower-backed WApps require a configured Wingman instance identity for Tower registration", {
+      status: 503,
+      detailCode: "tower_registration_identity_missing",
+    });
+  }
+  return identity;
+}
+
+export async function registerTowerBackedWappAssignment(input: {
+  wapp: WappRecord;
+  appName: string;
+  authority: RuntimeBotIdentity;
+  registrar?: TowerWappRegistrar;
+}): Promise<TowerWappRegistrationResult> {
+  const { wapp } = input;
+  if (!wapp.towerBindingId) {
+    throw new TowerWappRegistrationError(`WApp ${wapp.id} is not Tower-backed`, {
+      detailCode: "wapp_not_tower_backed",
+    });
+  }
+  if (!wapp.towerBinding) {
+    throw new TowerWappRegistrationError(`Tower-backed WApp ${wapp.id} is missing Tower binding ${wapp.towerBindingId}`, {
+      detailCode: "wapp_tower_binding_missing",
+    });
+  }
+  if (!wapp.appNpub) {
+    throw new TowerWappRegistrationError(`Tower-backed WApp ${wapp.id} is missing APP_NPUB`, {
+      detailCode: "wapp_app_npub_missing",
+    });
+  }
+  const registrar = input.registrar ?? new HttpTowerWappRegistrar();
+  return await registrar.register({
+    towerUrl: wapp.towerBinding.towerUrl,
+    workspaceOwnerNpub: wapp.towerBinding.workspaceOwnerNpub,
+    appNpub: wapp.appNpub,
+    appName: input.appName,
+    authority: input.authority,
+  });
 }
 
 export async function registerTowerWappWithTower(

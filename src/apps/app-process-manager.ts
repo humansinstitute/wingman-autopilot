@@ -25,6 +25,13 @@ import { readCombinedLogs } from "../agents/log-reader";
 import { runtimePortRegistry } from "./runtime-port-registry";
 import { waitForListeningPort } from "../utils/port-utils";
 import { wappStore, type WappStore } from "../wapps/wapp-store";
+import type { RuntimeBotIdentity } from "../agent-chat/types";
+import {
+  HttpTowerWappRegistrar,
+  registerTowerBackedWappAssignment,
+  requireTowerWappRegistrationIdentity,
+  type TowerWappRegistrar,
+} from "../wapps/tower-registration";
 
 export type AppRuntimeStatus =
   | "idle"
@@ -108,13 +115,33 @@ export class AppProcessManager {
   private readonly config = loadConfig();
   private readonly adminNpubs: string[];
   private readonly wappStore: WappStore;
+  private towerRegistrationIdentity: RuntimeBotIdentity | null;
+  private towerWappRegistrar: TowerWappRegistrar;
 
-  constructor(registry: AppRegistry = appRegistry, adminNpubs?: string | string[] | null, store: WappStore = wappStore) {
+  constructor(
+    registry: AppRegistry = appRegistry,
+    adminNpubs?: string | string[] | null,
+    store: WappStore = wappStore,
+    towerRegistrationIdentity: RuntimeBotIdentity | null = null,
+    towerWappRegistrar: TowerWappRegistrar = new HttpTowerWappRegistrar(),
+  ) {
     this.registry = registry;
     this.adminNpubs = normaliseNpubList(
       adminNpubs ?? (Bun.env.ADMIN_NPUB?.trim() ? Bun.env.ADMIN_NPUB : Bun.env.WINGMAN_ADMIN_NPUB),
     );
     this.wappStore = store;
+    this.towerRegistrationIdentity = towerRegistrationIdentity;
+    this.towerWappRegistrar = towerWappRegistrar;
+  }
+
+  configureTowerRegistration(input: {
+    identity: RuntimeBotIdentity | null;
+    registrar?: TowerWappRegistrar;
+  }): void {
+    this.towerRegistrationIdentity = input.identity;
+    if (input.registrar) {
+      this.towerWappRegistrar = input.registrar;
+    }
   }
 
   async getStatus(appId: string): Promise<AppProcessStatus> {
@@ -129,6 +156,7 @@ export class AppProcessManager {
   async start(appId: string): Promise<AppProcessStatus> {
     return this.runAction(appId, "start", async (app) => {
       const script = this.requireScript(app, "start");
+      await this.ensureTowerWappRegistered(app);
 
       // Resolve user info
       const { userAlias, userRootDir, isAdmin } = this.resolveUserContext(app);
@@ -202,6 +230,7 @@ export class AppProcessManager {
       if (!startScript) {
         throw new AppScriptMissingError(app.id, "restart");
       }
+      await this.ensureTowerWappRegistered(app);
 
       // Clear runtime port before restart
       runtimePortRegistry.clear(app.id);
@@ -277,6 +306,7 @@ export class AppProcessManager {
   async setup(appId: string): Promise<AppProcessStatus> {
     return this.runAction(appId, "setup", async (app) => {
       const script = this.requireScript(app, "setup");
+      await this.ensureTowerWappRegistered(app);
       const result = await this.runOneShot(app, script, "setup");
       return {
         finalStatus: result.exitCode === 0 ? ("idle" as AppRuntimeStatus) : ("failed" as AppRuntimeStatus),
@@ -470,6 +500,18 @@ export class AppProcessManager {
       : app.root;
 
     return { userAlias, userRootDir, isAdmin };
+  }
+
+  private async ensureTowerWappRegistered(app: AppRecord): Promise<void> {
+    const wapp = this.wappStore.getByAppId(app.id);
+    if (!wapp?.towerBindingId) return;
+    const authority = requireTowerWappRegistrationIdentity(this.towerRegistrationIdentity);
+    await registerTowerBackedWappAssignment({
+      wapp,
+      appName: wapp.title || app.label || app.id,
+      authority,
+      registrar: this.towerWappRegistrar,
+    });
   }
 
   private async isPM2ProcessRunning(processName: string): Promise<boolean> {

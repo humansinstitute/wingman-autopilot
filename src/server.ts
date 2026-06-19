@@ -272,6 +272,15 @@ if (wingmanInstanceIdentity) {
 } else {
   console.warn("[identity] WINGMAN_PRIV not configured; shared Wingman bot identity is missing");
 }
+appProcessManager.configureTowerRegistration({
+  identity: wingmanInstanceIdentity
+    ? {
+      botNpub: wingmanInstanceIdentity.npub,
+      botPubkeyHex: wingmanInstanceIdentity.pubkeyHex,
+      botSecret: wingmanInstanceIdentity.secretKey,
+    }
+    : null,
+});
 const migratedUserSettingCount = userSettingsStore.migrateSensitiveValues();
 if (migratedUserSettingCount > 0) {
   console.log(`[config] migrated ${migratedUserSettingCount} sensitive user setting(s) to encrypted storage`);
