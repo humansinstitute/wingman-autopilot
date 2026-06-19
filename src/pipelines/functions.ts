@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -262,6 +263,11 @@ function normaliseDispatchWorkPlanContext(
       mode: reportingMode,
     },
   };
+  const maxReviewIterations = clampReviewIterations(
+    suppliedWorkPlan.maxReviewIterations
+      ?? input.maxReviewIterations
+      ?? createdTask.maxReviewIterations,
+  );
   return {
     published: false,
     status: hasFlightDeckDispatchContext ? "not_configured" : "ready",
@@ -278,6 +284,14 @@ function normaliseDispatchWorkPlanContext(
     workPlan,
     reporting: workPlan.reporting,
     taskBacked: hasFlightDeckDispatchContext,
+    maxReviewIterations,
+    reviewLoop: {
+      iteration: 1,
+      index: 0,
+      completed: 0,
+      total: maxReviewIterations,
+      done: false,
+    },
   };
 }
 
@@ -523,6 +537,137 @@ function isPlaceholderSoftwareWorkdir(value: string | null): boolean {
   if (!value) return true;
   return value === "/Users/mini/code/wingmen"
     || value.includes("/data/agent-chat-workspaces/");
+}
+
+function extractRepoWorkdirFromText(value: string | null): string | null {
+  if (!value) return null;
+  const patterns = [
+    /(?:^|[\s(:])(~\/code\/[A-Za-z0-9._~/-]+)/,
+    /(?:^|[\s(:])(\/Users\/mini\/code\/[A-Za-z0-9._~/-]+)/,
+  ];
+  for (const pattern of patterns) {
+    const match = value.match(pattern);
+    const raw = match?.[1]?.replace(/[).,;:]+$/, "");
+    if (!raw) continue;
+    const expanded = raw.startsWith("~/") ? `/Users/mini/${raw.slice(2)}` : raw;
+    if (!isPlaceholderSoftwareWorkdir(expanded)) return expanded;
+  }
+  return null;
+}
+
+const highSignalProjectAliases = [
+  {
+    path: "/Users/mini/code/wingmanbefree/autopilot",
+    patterns: [
+      /\bautopilot\b/i,
+      /\bwingman autopilot\b/i,
+      /\bwingmen? runtime\b/i,
+    ],
+  },
+  {
+    path: "/Users/mini/code/wingmanbefree/wm-fd-2",
+    patterns: [
+      /\bwm-fd-2\b/i,
+      /\bactive flight deck\b/i,
+      /\bcurrent flight deck\b/i,
+      /\bflight deck ui\b/i,
+      /\bflight deck pg\b/i,
+    ],
+  },
+  {
+    path: "/Users/mini/code/wingmanbefree/wingman-tower",
+    patterns: [
+      /\bwingman tower\b/i,
+      /\btower backend\b/i,
+      /\btower api\b/i,
+      /\bgraph memory\b/i,
+    ],
+  },
+  {
+    path: "/Users/mini/code/wingmanbefree/wingman-flightlog",
+    patterns: [/\bflightlog\b/i, /\bflight log\b/i],
+  },
+  {
+    path: "/Users/mini/code/wingmanbefree/sb-publisher",
+    patterns: [/\bsb-publisher\b/i, /\bschema publishing\b/i],
+  },
+];
+
+const localRepoSearchRoots = [
+  "/Users/mini/code/wingmanbefree",
+  "/Users/mini/code",
+  "/Users/mini/wingmen",
+];
+
+function resolveRepoWorkdirFromHighSignalText(...values: Array<string | null>): string | null {
+  const text = values.filter(Boolean).join("\n");
+  const explicit = extractRepoWorkdirFromText(text);
+  if (explicit) return explicit;
+  const aliasMatches = highSignalProjectAliases
+    .filter((candidate) => candidate.patterns.some((pattern) => pattern.test(text)))
+    .map((candidate) => candidate.path)
+    .filter(isLikelyRepoDirectory);
+  const uniqueAliasMatches = [...new Set(aliasMatches)];
+  if (uniqueAliasMatches.length === 1) return uniqueAliasMatches[0]!;
+  if (uniqueAliasMatches.length > 1) return null;
+  return findSingleLocalRepoMatch(text);
+}
+
+function findSingleLocalRepoMatch(text: string): string | null {
+  const normalizedText = normalizeMatchText(text);
+  if (!normalizedText) return null;
+  const matches: Array<{ path: string; score: number }> = [];
+  for (const root of localRepoSearchRoots) {
+    for (const dir of listImmediateDirectories(root)) {
+      if (!isLikelyRepoDirectory(dir)) continue;
+      const basename = dir.split("/").filter(Boolean).at(-1) ?? "";
+      const normalizedName = normalizeMatchText(basename);
+      if (!normalizedName) continue;
+      let score = 0;
+      if (normalizedText.includes(normalizedName)) score += 4;
+      const nameTokens = normalizedName.split(" ").filter((token) => token.length >= 3);
+      const matchingTokens = nameTokens.filter((token) => normalizedText.includes(token));
+      if (nameTokens.length > 0 && matchingTokens.length === nameTokens.length) score += 3;
+      if (matchingTokens.length > 0) score += matchingTokens.length;
+      if (score >= 4) matches.push({ path: dir, score });
+    }
+  }
+  if (matches.length === 0) return null;
+  matches.sort((a, b) => b.score - a.score || a.path.length - b.path.length);
+  const topScore = matches[0]?.score ?? 0;
+  const topMatches = matches.filter((match) => match.score === topScore);
+  return topMatches.length === 1 ? topMatches[0]!.path : null;
+}
+
+function listImmediateDirectories(root: string): string[] {
+  try {
+    return readdirSync(root)
+      .map((entry) => join(root, entry))
+      .filter((entry) => {
+        try {
+          return statSync(entry).isDirectory();
+        } catch {
+          return false;
+        }
+      });
+  } catch {
+    return [];
+  }
+}
+
+function isLikelyRepoDirectory(value: string | null): boolean {
+  if (!value || isPlaceholderSoftwareWorkdir(value)) return false;
+  return existsSync(join(value, ".git")) || existsSync(join(value, "package.json")) || existsSync(join(value, "AGENTS.md"));
+}
+
+function normalizeMatchText(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function clampReviewIterations(value: unknown, fallback = 3): number {
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return fallback;
+  return Math.max(1, Math.min(256, Math.floor(numeric)));
 }
 
 const coreChatChildPipelineSlugs = new Set([
@@ -1836,6 +1981,10 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const taskLikeDecisionPending = decision.requestedDispatchTask === true
       || decision.taskRoutingPending === true
       || decision.dispatchTask === true;
+    const missing = Array.isArray(decision.missing) ? decision.missing : [];
+    if (decision.intent === "clarify" || getText(decision.clarifyingQuestion) || missing.length > 0) {
+      return decision;
+    }
     if (taskLikeDecisionPending && isImplementationRequestText(`${latestText} ${taskDraftInstructions}`)) {
       return decision;
     }
@@ -2534,7 +2683,18 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const selectedDocumentDiscussionPipeline = isDocumentDiscussionPipelineIdentifier(requestedPipelineId);
     const selectedSoftwareImplementationPipeline = isSoftwareImplementationPipelineIdentifier(requestedPipelineId);
     const scopeId = getText(raw.scopeId ?? workPlanInput.scopeId ?? taskDraftInput.scopeId);
-    const workdir = getText(raw.workdir ?? raw.workingDirectory ?? workPlanInput.workdir ?? workPlanInput.workingDirectory ?? taskDraftInput.workdir ?? agent.workingDirectory);
+    const explicitWorkdir = getText(raw.workdir ?? raw.workingDirectory ?? workPlanInput.workdir ?? workPlanInput.workingDirectory ?? taskDraftInput.workdir);
+    const channelWorkdir = resolveRepoWorkdirFromHighSignalText(
+      getText(channelContext.contextPrompt),
+      getText(workPlanInput.channelContext),
+      getText(taskDraftInput.channelContext),
+      originalPrompt,
+    );
+    const fallbackWorkdir = selectedSoftwareImplementationPipeline ? null : getText(agent.workingDirectory);
+    const selectedWorkdir = explicitWorkdir ?? channelWorkdir ?? fallbackWorkdir;
+    const workdir = selectedSoftwareImplementationPipeline && isPlaceholderSoftwareWorkdir(selectedWorkdir)
+      ? null
+      : selectedWorkdir;
     const targetSurface = objectValue(raw.targetSurface ?? workPlanInput.targetSurface ?? taskDraftInput.targetSurface);
     const hasTargetSurface = Object.keys(targetSurface).length > 0;
     const instructions = getText(
@@ -2602,6 +2762,7 @@ export const builtinPipelineFunctions: FunctionRegistry = {
       workdir: workdir ?? null,
       assignerNpub,
       reviewerNpub,
+      maxReviewIterations: clampReviewIterations(workPlanInput.maxReviewIterations ?? raw.maxReviewIterations),
       originalPrompt,
       channelContext,
       originThread,

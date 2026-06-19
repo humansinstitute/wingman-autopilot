@@ -62,7 +62,7 @@ const CHAT_REPLY_TTS_DEFAULT_VOICE = 'af_heart';
 const CHAT_REPLY_TTS_DEFAULT_FORMAT = 'mp3';
 const CHAT_REPLY_TTS_DEFAULT_SUMMARY_MODEL = 'openai/gpt-4o-mini';
 const CHAT_REPLY_TTS_MAX_TEXT_LENGTH = 8000;
-const IMPLEMENTATION_REVIEW_DOC_SNAPSHOT_DIR = '/Users/mini/.wingmen/pipelines/shared/artifacts/implementation-review-docs';
+const IMPLEMENTATION_REVIEW_DOC_SNAPSHOT_FALLBACK_DIR = '/Users/mini/.wingmen/pipelines/shared/artifacts/implementation-review-docs';
 
 export function pipelineNeedsFlightDeckPublisher(pipeline: DeclarativePipeline): boolean {
   return pipeline.steps.some(stepNeedsFlightDeckPublisher);
@@ -1951,7 +1951,11 @@ export function createDispatchImplementationReviewTaskEnsurer(
     }
 
     const designDocumentReference = resolveImplementationDesignDocumentReference(input, workPlan);
-    const designDocument = await hydrateImplementationDesignDocument(context, designDocumentReference);
+    const workdir = getText(workPlan.workdir ?? workPlan.workingDirectory)
+      ?? getText(input.workingDirectory)
+      ?? context.agent?.workingDirectory
+      ?? process.cwd();
+    const designDocument = await hydrateImplementationDesignDocument(context, designDocumentReference, workdir);
     const nextWorkPlan = {
       ...workPlan,
       taskId,
@@ -1963,10 +1967,7 @@ export function createDispatchImplementationReviewTaskEnsurer(
       instructions: getText(workPlan.instructions)
         ?? getText(input.implementationPrompt)
         ?? 'Run the implementation review loop.',
-      workdir: getText(workPlan.workdir ?? workPlan.workingDirectory)
-        ?? getText(input.workingDirectory)
-        ?? context.agent?.workingDirectory
-        ?? process.cwd(),
+      workdir,
       designDocumentUrl: designDocumentReference,
       designDocumentSource: getText(workPlan.designDocumentSource) ?? getText(input.designDocumentSource),
       designDocumentUnavailableReason: getText(workPlan.designDocumentUnavailableReason)
@@ -1976,7 +1977,7 @@ export function createDispatchImplementationReviewTaskEnsurer(
       designDocumentLocalPath: getText(designDocument?.localPath),
       designDocumentAccessInstructions: [
         designDocument?.status === 'loaded'
-          ? 'Use workPlan.designDocument.localPath as the design baseline; refresh with flightdeck_doc_get only if current state matters.'
+          ? 'Use workPlan.designDocument.localPath as the design baseline; refresh with flightdeck_doc_get only if current state matters. If workPlan.designDocument.unresolvedStorageReferences is non-empty, download those assets with the current Flight Deck/storage helper or mark visual verification incomplete.'
           : 'If the design reference is a Flight Deck document, read it with the flightdeck_doc_get helper.',
         'Do not run Yoke or sync a Yoke workspace to read Flight Deck PG documents.',
       ].join(' '),
@@ -2058,6 +2059,7 @@ export function createDispatchImplementationReviewProgressCommenter(
 async function hydrateImplementationDesignDocument(
   context: DispatchPipelineFlightDeckPublisherContext,
   reference: string | null,
+  workdir: string | null,
 ): Promise<Record<string, unknown> | null> {
   if (!reference || !isFlightDeckPgPublisherContext(context) || !context.botIdentity) {
     return null;
@@ -2083,6 +2085,7 @@ async function hydrateImplementationDesignDocument(
     const body = decodeFlightDeckPgDocumentBody(result);
     const localPath = body
       ? await writeImplementationDesignDocumentSnapshot({
+        workdir,
         documentId,
         title: getText(document.title),
         rowVersion: document.row_version ?? document.rowVersion ?? null,
@@ -2097,6 +2100,7 @@ async function hydrateImplementationDesignDocument(
       rowVersion: document.row_version ?? document.rowVersion ?? null,
       reference,
       localPath,
+      unresolvedStorageReferences: body ? extractStorageReferences(body) : [],
       bodyExcerpt: body ? truncateBlock(body, 4000) : '',
       bodyTruncated: Boolean(body && body.length > 30000),
     };
@@ -2153,13 +2157,17 @@ function extractFlightDeckDocumentReference(text: string): string | null {
 }
 
 async function writeImplementationDesignDocumentSnapshot(input: {
+  workdir: string | null;
   documentId: string;
   title: string | null;
   rowVersion: unknown;
   reference: string;
   body: string;
 }): Promise<string> {
-  await mkdir(IMPLEMENTATION_REVIEW_DOC_SNAPSHOT_DIR, { recursive: true });
+  const snapshotDir = input.workdir
+    ? join(input.workdir, 'tmp', 'flightdeck-docs')
+    : IMPLEMENTATION_REVIEW_DOC_SNAPSHOT_FALLBACK_DIR;
+  await mkdir(snapshotDir, { recursive: true });
   const safeTitle = (input.title ?? 'design-document')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
@@ -2167,9 +2175,10 @@ async function writeImplementationDesignDocumentSnapshot(input: {
     .slice(0, 60)
     || 'design-document';
   const filePath = join(
-    IMPLEMENTATION_REVIEW_DOC_SNAPSHOT_DIR,
+    snapshotDir,
     `${input.documentId}.${safeTitle}.md`,
   );
+  const unresolvedStorageReferences = extractStorageReferences(input.body);
   const metadata = [
     '<!--',
     'Local snapshot of Flight Deck design document for software-implementation-review-loop.',
@@ -2177,12 +2186,21 @@ async function writeImplementationDesignDocumentSnapshot(input: {
     input.title ? `Title: ${input.title}` : null,
     input.rowVersion !== null && input.rowVersion !== undefined ? `Row version: ${String(input.rowVersion)}` : null,
     `Source: ${input.reference}`,
+    unresolvedStorageReferences.length > 0
+      ? `Unresolved storage assets: ${unresolvedStorageReferences.join(', ')}`
+      : null,
     `Snapshot created: ${new Date().toISOString()}`,
     '-->',
     '',
   ].filter((line): line is string => line !== null);
   await writeFile(filePath, `${metadata.join('\n')}${input.body.trim()}\n`, 'utf8');
   return filePath;
+}
+
+function extractStorageReferences(body: string): string[] {
+  return [...new Set(Array.from(body.matchAll(/storage:\/\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})/gi))
+    .map((match) => match[1])
+    .filter((value): value is string => Boolean(value)))];
 }
 
 export function createDispatchTaskStateUpdater(

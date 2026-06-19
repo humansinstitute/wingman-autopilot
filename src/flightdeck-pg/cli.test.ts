@@ -256,6 +256,7 @@ describe('flightdeck pg cli', () => {
     expect(requests.some((request) => request.url === `http://tower.test/api/v4/flightdeck-pg/workspaces/workspace-1/docs/${docId}/body` && request.method === 'GET')).toBe(true);
     expect(requests.some((request) => request.url === `http://tower.test/api/v4/flightdeck-pg/workspaces/workspace-1/docs/${docId}/comments?limit=500` && request.method === 'GET')).toBe(true);
     expect(requests.some((request) => request.url === `http://tower.test/api/v4/storage/${objectId}` && request.method === 'GET')).toBe(true);
+    expect(requests.some((request) => request.url === `http://tower.test/api/v4/storage/${objectId}/content` && request.method === 'GET')).toBe(true);
   });
 
   test('covers file and audio upload storage paths', async () => {
@@ -429,6 +430,13 @@ function makeFlightDeckRouter(): {
       return Response.json({ audio_note: { id: 'audio-1' } });
     }
     if (url.pathname === '/api/v4/storage/22222222-2222-4222-8222-222222222222' && method === 'GET') {
+      return Response.json({
+        object_id: '22222222-2222-4222-8222-222222222222',
+        content_type: 'image/png',
+        content_url: 'http://tower.test/api/v4/storage/22222222-2222-4222-8222-222222222222/content',
+      });
+    }
+    if (url.pathname === '/api/v4/storage/22222222-2222-4222-8222-222222222222/content' && method === 'GET') {
       return new Response(new Uint8Array([1, 2, 3]), {
         headers: { 'content-type': 'image/png' },
       });

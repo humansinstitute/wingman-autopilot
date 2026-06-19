@@ -2191,6 +2191,7 @@ describe('dispatch pipeline Flight Deck publisher', () => {
   });
 
   test('implementation review task ensurer hydrates Flight Deck PG design doc without Yoke', async () => {
+    const workdir = join(tmpdir(), `autopilot-doc-snapshot-${randomUUID()}`);
     const ensureTask = createDispatchImplementationReviewTaskEnsurer(buildChatPublisherContext({
       subscription: {
         subscriptionId: 'sub-pg-1',
@@ -2212,7 +2213,7 @@ describe('dispatch pipeline Flight Deck publisher', () => {
 
     const createdTask = await ensureTask({
       implementationPrompt: 'Implement the Autopilot overview design.',
-      workingDirectory: '/repo/app',
+      workingDirectory: workdir,
       designDocumentUrl: '@[Design for Autopilot Overview](mention:doc:76ebf6ac-91ff-47e2-af36-b99d47a10d57)',
       workPlan: {
         taskSummary: 'Implement Autopilot overview design',
@@ -2228,6 +2229,7 @@ describe('dispatch pipeline Flight Deck publisher', () => {
       includeBody: true,
     });
     const localPath = String((createdTask as any).workPlan.designDocument.localPath);
+    expect(localPath).toContain(join(workdir, 'tmp', 'flightdeck-docs'));
     expect(createdTask).toMatchObject({
       workPlan: {
         designDocumentUrl: '@[Design for Autopilot Overview](mention:doc:76ebf6ac-91ff-47e2-af36-b99d47a10d57)',
@@ -2247,6 +2249,7 @@ describe('dispatch pipeline Flight Deck publisher', () => {
   });
 
   test('implementation review task ensurer extracts design doc mention from instructions before snapshotting', async () => {
+    const workdir = join(tmpdir(), `autopilot-doc-snapshot-${randomUUID()}`);
     const ensureTask = createDispatchImplementationReviewTaskEnsurer(buildChatPublisherContext({
       subscription: {
         subscriptionId: 'sub-pg-1',
@@ -2268,7 +2271,7 @@ describe('dispatch pipeline Flight Deck publisher', () => {
 
     const createdTask = await ensureTask({
       implementationPrompt: 'Implement it.',
-      workingDirectory: '/repo/app',
+      workingDirectory: workdir,
       workPlan: {
         taskSummary: 'Implement Autopilot overview design',
         instructions: 'Implement the Flight Deck Autopilot Overview design from @[Design for Autopilot Overview](mention:document:76ebf6ac-91ff-47e2-af36-b99d47a10d57) in main.',
@@ -2287,7 +2290,7 @@ describe('dispatch pipeline Flight Deck publisher', () => {
         designDocumentUrl: '@[Design for Autopilot Overview](mention:document:76ebf6ac-91ff-47e2-af36-b99d47a10d57)',
         designDocument: {
           status: 'loaded',
-          localPath: expect.stringContaining('76ebf6ac-91ff-47e2-af36-b99d47a10d57'),
+          localPath: expect.stringContaining(join(workdir, 'tmp', 'flightdeck-docs')),
         },
       },
     });

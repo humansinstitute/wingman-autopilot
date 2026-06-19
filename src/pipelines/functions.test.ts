@@ -409,6 +409,7 @@ async function runChatDispatchSpec(input: {
   agentDecision: JsonObject;
   agentWorkDecision?: JsonObject;
   latestMessage: string;
+  agent?: JsonObject;
   channelContext?: JsonObject;
   referencedRecords?: unknown[];
 }) {
@@ -518,7 +519,7 @@ async function runChatDispatchSpec(input: {
       testAgentWorkDecision: agentWorkDecision,
       dispatch: { triggerKind: "chat" },
       workspace: { workspaceOwnerNpub: "npub1owner", sourceAppNpub: "npub1source" },
-      agent: { workingDirectory: "/repo", defaultAgent: "codex" },
+      agent: input.agent ?? { workingDirectory: "/repo", defaultAgent: "codex" },
       record: { recordId: "message-1", payload: { body: input.latestMessage, sender_npub: "npub1requester" } },
       chat: { messageText: input.latestMessage, senderNpub: "npub1requester", channelId: "channel-1", threadId: "thread-1" },
       routing: { channelId: "channel-1", threadId: "thread-1", bindingType: "thread" },
@@ -780,6 +781,34 @@ describe("memory pipeline functions", () => {
         taskId: "task-1",
         origin: { kind: "flightdeck_task" },
         reporting: { mode: "flightdeck_task" },
+      },
+      maxReviewIterations: 3,
+      reviewLoop: {
+        total: 3,
+        done: false,
+      },
+    });
+  });
+
+  test("dispatch.ensureImplementationReviewTask carries explicit review loop limit", async () => {
+    const result = await builtinPipelineFunctions["dispatch.ensureImplementationReviewTask"]!({
+      maxReviewIterations: 5,
+      workPlan: {
+        workdir: "/repo/project",
+        instructions: "Implement from task.",
+        designDocumentUrl: "flightdeck-task://task-1",
+        targetSurface: { route: "/settings" },
+      },
+    });
+
+    expect(result).toMatchObject({
+      maxReviewIterations: 5,
+      reviewLoop: {
+        iteration: 1,
+        index: 0,
+        completed: 0,
+        total: 5,
+        done: false,
       },
     });
   });
@@ -1651,10 +1680,35 @@ describe("memory pipeline functions", () => {
       model: "openai/gpt-oss-120b:nitro",
       retries: 3,
     });
+    expect(spec.steps.find((step) => step.name === "mark-response-thinking")).toMatchObject({
+      type: "code",
+      input: {
+        value: {
+          status: "thinking",
+          label: "Thinking",
+          expiresInSeconds: 90,
+        },
+      },
+    });
+    expect(spec.steps.find((step) => step.name === "mark-response-drafting")).toMatchObject({
+      type: "code",
+      input: {
+        value: {
+          status: "drafting",
+          label: "Writing a reply",
+          expiresInSeconds: 90,
+        },
+      },
+    });
     expect(spec.steps.find((step) => step.name === "dispatch-agent")).toMatchObject({
       type: "agent",
       when: { path: "$.decision.dispatchAgent", equals: true },
     });
+    expect(String(spec.steps.find((step) => step.name === "dispatch-agent")?.prompt)).toContain("<workdir>/tmp/flightdeck-docs");
+    expect(String(spec.steps.find((step) => step.name === "dispatch-agent")?.prompt)).toContain("channelContext.contextPrompt as high-information channel/project policy");
+    expect(String(spec.steps.find((step) => step.name === "dispatch-agent")?.prompt)).toContain("Search local project roots for an obvious single match");
+    expect(String(spec.steps.find((step) => step.name === "dispatch-agent")?.prompt)).toContain("Never use agent.workingDirectory when it is under data/agent-chat-workspaces");
+    expect(String(spec.steps.find((step) => step.name === "dispatch-agent")?.prompt)).toContain("return action clarify and ask for the target project/repo");
     expect(spec.steps.map((step) => step.name)).not.toContain("select-task-pipeline");
     expect(spec.steps.map((step) => step.name)).not.toContain("normalise-task-pipeline-selection");
 
@@ -1667,6 +1721,21 @@ describe("memory pipeline functions", () => {
         closeoutContext: "$.closeoutContext",
       },
     });
+  });
+
+  test("software implementation loop reads normalised review loop context", async () => {
+    const definition = await getPipelineDefinition("software-implementation-review-loop", "functions-test");
+    if (!definition) throw new Error("software-implementation-review-loop definition missing");
+    const spec = definition.spec;
+    const loop = spec.steps.find((step) => step.name === "loop-to-implementation-worker");
+    expect(loop).toMatchObject({
+      type: "loop",
+      iterations: "$.createdTask.maxReviewIterations",
+      counter: "$.createdTask.reviewLoop",
+    });
+    expect(JSON.stringify(spec)).toContain("$.createdTask.reviewLoop");
+    expect(JSON.stringify(spec)).toContain("runtimeUpdate");
+    expect(JSON.stringify(spec)).toContain("runtimeReview");
   });
 
   test("shared chat dispatch routes feature doc iteration to document discussion without task", async () => {
@@ -1830,6 +1899,167 @@ describe("memory pipeline functions", () => {
       pipelineDefinitionId: "software-implementation-review-loop",
       workdir: "/Users/mini/code/wingmanbefree/wm-fd-2",
     });
+  });
+
+  test("shared chat dispatch derives software workdir from channel context before private agent workspace", async () => {
+    const execution = await runChatDispatchSpec({
+      latestMessage: "Please build the feature in the linked doc.",
+      agent: {
+        workingDirectory: "/Users/mini/code/wingmanbefree/autopilot/data/agent-chat-workspaces/fd-private",
+        defaultAgent: "codex",
+      },
+      channelContext: {
+        channelId: "channel-1",
+        scopeId: "scope-1",
+        name: "Implementation",
+        contextPrompt: "This is the Implementation channel scope for the Wingman Autopilot project (~/code/wingmanbefree/autopilot). Use the software-implementation-review-loop for implementation.",
+        hasSpecificContext: true,
+      },
+      agentDecision: {
+        intent: "agent",
+        chatResponse: { body: null },
+        confidence: 0.95,
+      },
+      agentWorkDecision: {
+        action: "start_pipeline",
+        recommendedPipelineId: "software-implementation-review-loop",
+        createTask: true,
+        taskDraft: {
+          title: "Build linked feature",
+          instructions: "Build the linked feature.",
+          acceptanceCriteria: ["Feature is implemented."],
+          executionPlan: ["Inspect", "Implement", "Validate"],
+          managerChecklist: ["Check route"],
+        },
+        workPlan: {
+          taskSummary: "Build linked feature",
+          instructions: "Build the linked feature.",
+          targetSurface: {
+            route: "/docs",
+            surface: "Docs",
+            existingFiles: ["src/ui/app.js"],
+          },
+          designDocumentUrl: "/Users/mini/code/wingmanbefree/autopilot/tmp/flightdeck-docs/docs-header.md",
+        },
+        confidence: 0.91,
+      },
+    });
+
+    const result = currentAfterStep(execution, "prepare-chat-response");
+    expect(result.decision).toMatchObject({
+      dispatchTask: true,
+      pipelineDefinitionId: "software-implementation-review-loop",
+      workdir: "/Users/mini/code/wingmanbefree/autopilot",
+    });
+    expect(result.createdTask).toMatchObject({
+      workPlan: {
+        workdir: "/Users/mini/code/wingmanbefree/autopilot",
+        maxReviewIterations: 3,
+      },
+    });
+  });
+
+  test("shared chat dispatch resolves obvious project names from high information channel context", async () => {
+    const execution = await runChatDispatchSpec({
+      latestMessage: "Please build the feature in the linked doc.",
+      agent: {
+        workingDirectory: "/Users/mini/code/wingmanbefree/autopilot/data/agent-chat-workspaces/fd-private",
+        defaultAgent: "codex",
+      },
+      channelContext: {
+        channelId: "channel-1",
+        scopeId: "scope-1",
+        name: "Implementation",
+        contextPrompt: "This is the Implementation channel scope for the Wingman Autopilot project. Use the software-implementation-review-loop for implementation.",
+        hasSpecificContext: true,
+      },
+      agentDecision: {
+        intent: "agent",
+        chatResponse: { body: null },
+        confidence: 0.95,
+      },
+      agentWorkDecision: {
+        action: "start_pipeline",
+        recommendedPipelineId: "software-implementation-review-loop",
+        createTask: true,
+        taskDraft: {
+          title: "Build linked feature",
+          instructions: "Build the linked feature.",
+          acceptanceCriteria: ["Feature is implemented."],
+        },
+        workPlan: {
+          taskSummary: "Build linked feature",
+          instructions: "Build the linked feature.",
+          targetSurface: {
+            route: "/docs",
+            surface: "Docs",
+            existingFiles: ["src/ui/app.js"],
+          },
+          designDocumentUrl: "/Users/mini/code/wingmanbefree/autopilot/tmp/flightdeck-docs/docs-header.md",
+        },
+        confidence: 0.91,
+      },
+    });
+
+    const result = currentAfterStep(execution, "prepare-chat-response");
+    expect(result.decision).toMatchObject({
+      dispatchTask: true,
+      pipelineDefinitionId: "software-implementation-review-loop",
+      workdir: "/Users/mini/code/wingmanbefree/autopilot",
+    });
+  });
+
+  test("shared chat dispatch rejects software work when only private agent workspace is available", async () => {
+    const execution = await runChatDispatchSpec({
+      latestMessage: "Please build the feature in the linked doc.",
+      agent: {
+        workingDirectory: "/Users/mini/code/wingmanbefree/autopilot/data/agent-chat-workspaces/fd-private",
+        defaultAgent: "codex",
+      },
+      channelContext: {
+        channelId: "channel-1",
+        scopeId: "scope-1",
+        name: "Implementation",
+        contextPrompt: "Implementation channel, but no repo path is configured.",
+        hasSpecificContext: true,
+      },
+      agentDecision: {
+        intent: "agent",
+        chatResponse: { body: null },
+        confidence: 0.95,
+      },
+      agentWorkDecision: {
+        action: "start_pipeline",
+        recommendedPipelineId: "software-implementation-review-loop",
+        createTask: true,
+        taskDraft: {
+          title: "Build linked feature",
+          instructions: "Build the linked feature.",
+          acceptanceCriteria: ["Feature is implemented."],
+        },
+        workPlan: {
+          taskSummary: "Build linked feature",
+          instructions: "Build the linked feature.",
+          targetSurface: {
+            route: "/docs",
+            surface: "Docs",
+            existingFiles: ["src/ui/app.js"],
+          },
+          designDocumentUrl: "/tmp/flightdeck-docs/docs-header.md",
+        },
+        confidence: 0.91,
+      },
+    });
+
+    const result = currentAfterStep(execution, "prepare-chat-response");
+    expect(result.decision).toMatchObject({
+      dispatchTask: false,
+      intent: "clarify",
+      missing: ["non-placeholder workdir"],
+      workdir: null,
+    });
+    expect(result.createdTask).toBeUndefined();
+    expect(String(result.agentResponse.responseDraft)).toContain("non-placeholder workdir");
   });
 
   test("shared chat dispatch execution answer_now stays chat-only", async () => {

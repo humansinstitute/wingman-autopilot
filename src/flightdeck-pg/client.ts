@@ -437,7 +437,16 @@ export class FlightDeckPgClient {
     bytes: Uint8Array;
     contentType: string;
   }> {
-    const response = await this.signedRaw('GET', `/api/v4/storage/${encodeURIComponent(objectId)}`, undefined, undefined, workspaceId);
+    let response: Response;
+    try {
+      response = await this.signedRaw('GET', `/api/v4/storage/${encodeURIComponent(objectId)}`, undefined, undefined, workspaceId);
+    } catch (error) {
+      try {
+        return await this.downloadStorageObjectContent(workspaceId, objectId);
+      } catch {
+        throw error;
+      }
+    }
     const contentType = response.headers.get('content-type') ?? 'application/octet-stream';
     if (contentType.includes('application/json')) {
       const payload = await response.json() as Record<string, unknown>;
@@ -447,6 +456,9 @@ export class FlightDeckPgClient {
       const downloadUrl = stringValue(payload.download_url)
         ?? stringValue(payload.downloadUrl)
         ?? stringValue(objectValue(payload.object).download_url);
+      const contentUrl = stringValue(payload.content_url)
+        ?? stringValue(payload.contentUrl)
+        ?? stringValue(objectValue(payload.object).content_url);
       if (base64) {
         return {
           bytes: new Uint8Array(Buffer.from(base64, 'base64')),
@@ -464,11 +476,25 @@ export class FlightDeckPgClient {
           contentType: downloaded.headers.get('content-type') ?? 'application/octet-stream',
         };
       }
-      throw new Error(`Storage object ${objectId} JSON response did not include base64_data or download_url.`);
+      if (contentUrl) {
+        return await this.downloadStorageObjectContent(workspaceId, objectId);
+      }
+      throw new Error(`Storage object ${objectId} JSON response did not include base64_data, download_url, or content_url.`);
     }
     return {
       bytes: new Uint8Array(await response.arrayBuffer()),
       contentType,
+    };
+  }
+
+  private async downloadStorageObjectContent(workspaceId: string, objectId: string): Promise<{
+    bytes: Uint8Array;
+    contentType: string;
+  }> {
+    const response = await this.signedRaw('GET', `/api/v4/storage/${encodeURIComponent(objectId)}/content`, undefined, undefined, workspaceId);
+    return {
+      bytes: new Uint8Array(await response.arrayBuffer()),
+      contentType: response.headers.get('content-type') ?? 'application/octet-stream',
     };
   }
 
