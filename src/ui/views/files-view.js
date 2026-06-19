@@ -118,10 +118,43 @@ function getPreviewMetaLabel(entry) {
   );
 }
 
+function getFilesSurfaceCopy(surface) {
+  if (surface === "docs") {
+    return {
+      title: "Docs",
+      description: "Browse and preview workspace documentation.",
+      testId: "docs-page-header",
+    };
+  }
+  return {
+    title: "Files",
+    description: "Browse and preview workspace files.",
+    testId: "files-page-header",
+  };
+}
+
+function createFilesPageHeader(surface) {
+  const copy = getFilesSurfaceCopy(surface);
+  const header = document.createElement("header");
+  header.className = "wm-files-page-header";
+  header.dataset.testid = copy.testId;
+
+  const title = document.createElement("h1");
+  title.id = "files-page-title";
+  title.textContent = copy.title;
+
+  const description = document.createElement("p");
+  description.textContent = copy.description;
+
+  header.append(title, description);
+  return header;
+}
+
 export function initFilesView(deps) {
   const {
     state,
     getCurrentRoute,
+    getFilesSurface,
     render,
     // File tree / preview
     loadFilesTree,
@@ -286,6 +319,11 @@ export function initFilesView(deps) {
 
     const wrapper = document.createElement("div");
     wrapper.className = "wm-files";
+    const filesSurface = typeof getFilesSurface === "function" ? getFilesSurface() : "files";
+    wrapper.dataset.surface = filesSurface;
+    wrapper.setAttribute("aria-labelledby", "files-page-title");
+
+    const pageHeader = createFilesPageHeader(filesSurface);
 
     const layout = document.createElement("div");
     layout.className = "wm-files-layout";
@@ -953,7 +991,7 @@ export function initFilesView(deps) {
     }
 
     layout.append(browserCard, previewCard);
-    wrapper.append(layout);
+    wrapper.append(pageHeader, layout);
     return wrapper;
   };
 

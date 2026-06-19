@@ -133,6 +133,13 @@ import { initAppsView } from "./views/apps-view.js";
 import { initHomeView } from "./views/home-view.js";
 import { initFilesView } from "./views/files-view.js";
 import { initFilesApi } from "./files/api.js";
+import {
+  FILES_ROUTE_PREFIX,
+  getFilesRoutePrefixForPath,
+  getFilesSurfaceFromPath,
+  isDocsRoutePath,
+  isFilesRoutePath,
+} from "./files/route-url.js";
 import { initLiveView } from "./views/live-view.js";
 import { initTerminalView } from "./views/terminal-view.js";
 import { initDirectoryBrowser } from "./modals/directory-browser.js";
@@ -471,7 +478,7 @@ let submitAdminPortsAssignment = async () => {};
 let generateAdminPorts = async () => {};
 
 const LIVE_ROUTE_PREFIX = "/live";
-const FILES_ROUTE = "/files";
+const FILES_ROUTE = FILES_ROUTE_PREFIX;
 const SETTINGS_ROUTE = "/settings";
 const APPS_ROUTE = "/apps";
 const PROJECTS_ROUTE = "/projects";
@@ -485,10 +492,8 @@ const PRIVACY_ROUTE = "/privacy";
 
 const getRouteFromPath = (pathname) => {
   if (
-    pathname === FILES_ROUTE ||
-    pathname.startsWith(`${FILES_ROUTE}/`) ||
-    pathname === "/docs" ||
-    pathname.startsWith("/docs/")
+    isFilesRoutePath(pathname) ||
+    isDocsRoutePath(pathname)
   ) {
     return "files";
   }
@@ -581,11 +586,6 @@ const applyAceTheme = (instance) => {
     editor.setTheme(targetTheme);
   }
 };
-
-if (currentRoute === "files" && window.location.pathname.startsWith("/docs")) {
-  const newPath = window.location.pathname.replace("/docs", "/files");
-  window.history.replaceState({ route: "files" }, "", newPath);
-}
 
 // Session routing module — extracted from app.js.
 // setActiveSession, ensureActiveSession, and applyRouteSessionFromPath live in sessions/session-routing.js.
@@ -1281,7 +1281,9 @@ const updateDocumentTitle = () => {
   } else if (currentRoute === "apps") {
     title = "Apps - Wingman";
   } else if (currentRoute === "files") {
-    title = "Files - Wingman";
+    title = getFilesSurfaceFromPath(window.location.pathname) === "docs"
+      ? "Docs - Wingman"
+      : "Files - Wingman";
   } else if (currentRoute === "settings") {
     title = "Settings - Wingman";
   } else if (currentRoute === "projects") {
@@ -2102,6 +2104,7 @@ const filesApiModule = initFilesApi({
   getCurrentRoute: () => currentRoute,
   render,
   FILES_ROUTE,
+  getFilesRoutePrefix: () => getFilesRoutePrefixForPath(window.location.pathname),
 });
 resetFilesPreview = filesApiModule.resetFilesPreview;
 updateFilesUrl = filesApiModule.updateFilesUrl;
@@ -2158,6 +2161,7 @@ openFileTransferDialogForMode = dirBrowserModule.openFileTransferDialogForMode;
 const filesViewModule = initFilesView({
   state,
   getCurrentRoute: () => currentRoute,
+  getFilesSurface: () => getFilesSurfaceFromPath(window.location.pathname),
   render,
   loadFilesTree,
   loadFilesPreview,
@@ -2633,10 +2637,6 @@ window.addEventListener("popstate", () => {
   }
   applyRouteSessionFromPath({ allowHistoryUpdate: false });
   if (currentRoute === "files") {
-    if (window.location.pathname.startsWith("/docs")) {
-      const newPath = window.location.pathname.replace("/docs", "/files");
-      window.history.replaceState({ route: "files" }, "", newPath);
-    }
     const parsed = parseFilesPathFromUrl();
     if (!state.files.initialized) {
       state.files.initialized = true;

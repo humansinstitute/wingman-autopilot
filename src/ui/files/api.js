@@ -11,8 +11,9 @@ import {
  * @param {() => string} deps.getCurrentRoute - getter for the mutable currentRoute variable
  * @param {() => void} deps.render     - re-render the UI
  * @param {string} deps.FILES_ROUTE    - route prefix, e.g. "/files"
+ * @param {() => string} [deps.getFilesRoutePrefix] - returns the visible files/docs route prefix
  */
-export function initFilesApi({ state, getCurrentRoute, render, FILES_ROUTE }) {
+export function initFilesApi({ state, getCurrentRoute, render, FILES_ROUTE, getFilesRoutePrefix }) {
 
   function resetFilesPreview() {
     state.files.previewPath = null;
@@ -36,12 +37,13 @@ export function initFilesApi({ state, getCurrentRoute, render, FILES_ROUTE }) {
    */
   function updateFilesUrl({ replace = false } = {}) {
     if (getCurrentRoute() !== "files") return;
+    const routePrefix = typeof getFilesRoutePrefix === "function" ? getFilesRoutePrefix() : FILES_ROUTE;
     const dirRelative = state.files.relativePath || "";
-    const slug = dirRelative ? `${FILES_ROUTE}/${dirRelative}` : FILES_ROUTE;
+    const slug = dirRelative ? `${routePrefix}/${dirRelative}` : routePrefix;
     const fileRelative = state.files.previewRelativePath || "";
     let target = slug;
     if (fileRelative) {
-      target = `${FILES_ROUTE}/${fileRelative}`;
+      target = `${routePrefix}/${fileRelative}`;
     }
     if (window.location.pathname === target) return;
     const stateObj = { route: "files" };
@@ -58,7 +60,8 @@ export function initFilesApi({ state, getCurrentRoute, render, FILES_ROUTE }) {
    */
   function parseFilesPathFromUrl() {
     const pathname = window.location.pathname;
-    const prefix = `${FILES_ROUTE}/`;
+    const routePrefix = typeof getFilesRoutePrefix === "function" ? getFilesRoutePrefix() : FILES_ROUTE;
+    const prefix = `${routePrefix}/`;
     if (!pathname.startsWith(prefix)) {
       return { slug: null };
     }

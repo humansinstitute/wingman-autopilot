@@ -8152,7 +8152,27 @@ dialog button[value="cancel"] {
 .wm-files {
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: 1rem;
+}
+
+.wm-files-page-header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.wm-files-page-header h1 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 1.75rem;
+  line-height: 1.15;
+  font-weight: 700;
+}
+
+.wm-files-page-header p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.95rem;
 }
 
 .wm-files-mobile-toggle {
@@ -8189,7 +8209,7 @@ dialog button[value="cancel"] {
   display: grid;
   grid-template-columns: minmax(260px, 360px) minmax(0, 2fr);
   gap: 1.75rem;
-  height: calc(100vh - var(--nav-height) - 4rem);
+  height: calc(100vh - var(--nav-height) - 7.5rem);
 }
 
 .wm-files-layout > .wm-files-browser {
