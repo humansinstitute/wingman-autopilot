@@ -140,22 +140,26 @@ const DEFAULT_DISPATCH_PIPELINE_ROUTES: Array<{
   triggerKind: CreateDispatchRouteInput['triggerKind'];
   capability: CreateDispatchRouteInput['capability'];
   pipelineDefinitionId: string;
+  pipelineVersionPolicy?: CreateDispatchRouteInput['pipelineVersionPolicy'];
   flightDeckPgPipelineDefinitionId?: string;
 }> = [
   {
     triggerKind: 'chat',
     capability: 'chat_intercept',
     pipelineDefinitionId: 'fd-agent-dispatch-chat',
+    pipelineVersionPolicy: 'latest',
   },
   {
     triggerKind: 'task',
     capability: 'task_dispatch',
     pipelineDefinitionId: 'fd-agent-dispatch-task-response',
+    pipelineVersionPolicy: 'latest',
   },
   {
     triggerKind: 'comment',
     capability: 'comment_dispatch',
     pipelineDefinitionId: 'fd-agent-dispatch-comment-response',
+    pipelineVersionPolicy: 'latest',
   },
 ];
 
@@ -1143,6 +1147,7 @@ export class WorkspaceSubscriptionManager {
       targetKind: AgentWorkspacePipelineOverrideTarget;
       targetId: string;
       pipelineDefinitionId: string;
+      pipelineVersionPolicy?: CreateDispatchRouteInput['pipelineVersionPolicy'];
     }>;
     appendedContexts?: Array<{
       contextKind: AgentWorkspaceContextKind;
@@ -1380,6 +1385,7 @@ export class WorkspaceSubscriptionManager {
             triggerKind: existingRoute.triggerKind,
             capability: existingRoute.capability,
             pipelineDefinitionId,
+            pipelineVersionPolicy: existingRoute.pipelineVersionPolicy,
             enabled: existingRoute.enabled,
             priority: existingRoute.priority,
             matchJson: existingRoute.matchJson,
@@ -1405,6 +1411,7 @@ export class WorkspaceSubscriptionManager {
         triggerKind: routeConfig.triggerKind,
         capability: routeConfig.capability,
         pipelineDefinitionId,
+        pipelineVersionPolicy: routeConfig.pipelineVersionPolicy,
         enabled: true,
         priority: 100,
       });

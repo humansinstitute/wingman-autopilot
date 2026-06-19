@@ -7,8 +7,14 @@ import { databaseFile } from '../storage/message-store';
 import type {
   AgentChatDiagnostic,
   BackendConnectionRecord,
+  PipelineVersionPolicy,
   WorkspaceSubscriptionRecord,
 } from './types';
+import {
+  DEFAULT_DISPATCH_PIPELINE_VERSION_POLICY,
+  normaliseBuiltInDispatchPipelineId,
+  normaliseDispatchPipelineVersionPolicy,
+} from './dispatch-pipelines/pipeline-policy';
 
 const DEFAULT_DB_PATH = databaseFile;
 const BUILT_IN_DEFAULT_PIPELINE_ID = 'fd-agent-dispatch-chat';
@@ -89,6 +95,7 @@ export interface AgentWorkspaceEventPolicyRecord {
   enabled: boolean;
   defaultAction: AgentWorkspacePolicyAction;
   pipelineDefinitionId: string | null;
+  pipelineVersionPolicy: PipelineVersionPolicy;
   promptContext: string | null;
   quietMode: boolean;
   lastDiagnostic: AgentChatDiagnostic | null;
@@ -101,6 +108,7 @@ export interface AgentWorkspacePipelineOverrideRecord {
   targetKind: AgentWorkspacePipelineOverrideTarget;
   targetId: string;
   pipelineDefinitionId: string;
+  pipelineVersionPolicy: PipelineVersionPolicy;
   createdAt: string;
   updatedAt: string;
 }
@@ -125,6 +133,7 @@ export interface AgentProfileWorkspaceBundle {
 
 export interface ResolvedPipelineSelection {
   pipelineDefinitionId: string;
+  pipelineVersionPolicy: PipelineVersionPolicy;
   source: 'event_policy' | 'channel_override' | 'scope_override' | 'workspace_default' | 'profile_default' | 'built_in_default';
 }
 
@@ -202,6 +211,7 @@ export function defaultAgentWorkspaceEventPolicies(): AgentWorkspaceEventPolicyR
     enabled: policy.enabled,
     defaultAction: policy.defaultAction,
     pipelineDefinitionId: null,
+    pipelineVersionPolicy: DEFAULT_DISPATCH_PIPELINE_VERSION_POLICY,
     promptContext: null,
     quietMode: policy.quietMode,
     lastDiagnostic: null,
@@ -211,35 +221,58 @@ export function defaultAgentWorkspaceEventPolicies(): AgentWorkspaceEventPolicyR
 }
 
 export function resolveAgentWorkspacePipeline(input: {
-  eventPolicy?: Pick<AgentWorkspaceEventPolicyRecord, 'pipelineDefinitionId'> | null;
-  channelOverride?: Pick<AgentWorkspacePipelineOverrideRecord, 'pipelineDefinitionId'> | null;
-  scopeOverride?: Pick<AgentWorkspacePipelineOverrideRecord, 'pipelineDefinitionId'> | null;
+  eventPolicy?: Pick<AgentWorkspaceEventPolicyRecord, 'pipelineDefinitionId' | 'pipelineVersionPolicy'> | null;
+  channelOverride?: Pick<AgentWorkspacePipelineOverrideRecord, 'pipelineDefinitionId' | 'pipelineVersionPolicy'> | null;
+  scopeOverride?: Pick<AgentWorkspacePipelineOverrideRecord, 'pipelineDefinitionId' | 'pipelineVersionPolicy'> | null;
   workspace?: Pick<AgentProfileWorkspaceRecord, 'defaultPipelineDefinitionId'> | null;
   profile?: Pick<AgentProfileRecord, 'defaultPipelineDefinitionId'> | null;
   builtInDefaultPipelineId?: string | null;
 }): ResolvedPipelineSelection {
   const eventPipeline = textOrNull(input.eventPolicy?.pipelineDefinitionId ?? null);
   if (eventPipeline) {
-    return { pipelineDefinitionId: eventPipeline, source: 'event_policy' };
+    return {
+      pipelineDefinitionId: normaliseBuiltInDispatchPipelineId(eventPipeline) ?? eventPipeline,
+      pipelineVersionPolicy: normaliseDispatchPipelineVersionPolicy(input.eventPolicy?.pipelineVersionPolicy),
+      source: 'event_policy',
+    };
   }
   const channelPipeline = textOrNull(input.channelOverride?.pipelineDefinitionId ?? null);
   if (channelPipeline) {
-    return { pipelineDefinitionId: channelPipeline, source: 'channel_override' };
+    return {
+      pipelineDefinitionId: normaliseBuiltInDispatchPipelineId(channelPipeline) ?? channelPipeline,
+      pipelineVersionPolicy: normaliseDispatchPipelineVersionPolicy(input.channelOverride?.pipelineVersionPolicy),
+      source: 'channel_override',
+    };
   }
   const scopePipeline = textOrNull(input.scopeOverride?.pipelineDefinitionId ?? null);
   if (scopePipeline) {
-    return { pipelineDefinitionId: scopePipeline, source: 'scope_override' };
+    return {
+      pipelineDefinitionId: normaliseBuiltInDispatchPipelineId(scopePipeline) ?? scopePipeline,
+      pipelineVersionPolicy: normaliseDispatchPipelineVersionPolicy(input.scopeOverride?.pipelineVersionPolicy),
+      source: 'scope_override',
+    };
   }
   const workspacePipeline = textOrNull(input.workspace?.defaultPipelineDefinitionId ?? null);
   if (workspacePipeline) {
-    return { pipelineDefinitionId: workspacePipeline, source: 'workspace_default' };
+    return {
+      pipelineDefinitionId: normaliseBuiltInDispatchPipelineId(workspacePipeline) ?? workspacePipeline,
+      pipelineVersionPolicy: DEFAULT_DISPATCH_PIPELINE_VERSION_POLICY,
+      source: 'workspace_default',
+    };
   }
   const profilePipeline = textOrNull(input.profile?.defaultPipelineDefinitionId ?? null);
   if (profilePipeline) {
-    return { pipelineDefinitionId: profilePipeline, source: 'profile_default' };
+    return {
+      pipelineDefinitionId: normaliseBuiltInDispatchPipelineId(profilePipeline) ?? profilePipeline,
+      pipelineVersionPolicy: DEFAULT_DISPATCH_PIPELINE_VERSION_POLICY,
+      source: 'profile_default',
+    };
   }
   return {
-    pipelineDefinitionId: textOrNull(input.builtInDefaultPipelineId ?? null) ?? BUILT_IN_DEFAULT_PIPELINE_ID,
+    pipelineDefinitionId: normaliseBuiltInDispatchPipelineId(textOrNull(input.builtInDefaultPipelineId ?? null))
+      ?? textOrNull(input.builtInDefaultPipelineId ?? null)
+      ?? BUILT_IN_DEFAULT_PIPELINE_ID,
+    pipelineVersionPolicy: DEFAULT_DISPATCH_PIPELINE_VERSION_POLICY,
     source: 'built_in_default',
   };
 }
@@ -399,7 +432,7 @@ class AgentProfilePolicyStore {
   listPolicies(profileWorkspaceId: string): AgentWorkspaceEventPolicyRecord[] {
     return this.db.query(
       `SELECT profile_workspace_id, event_type, enabled, default_action,
-              pipeline_definition_id, prompt_context, quiet_mode,
+              pipeline_definition_id, pipeline_version_policy, prompt_context, quiet_mode,
               last_diagnostic_json, created_at, updated_at
        FROM agent_profile_event_policies
        WHERE profile_workspace_id = ?1
@@ -409,7 +442,7 @@ class AgentProfilePolicyStore {
 
   listPipelineOverrides(profileWorkspaceId: string): AgentWorkspacePipelineOverrideRecord[] {
     return this.db.query(
-      `SELECT profile_workspace_id, target_kind, target_id, pipeline_definition_id, created_at, updated_at
+      `SELECT profile_workspace_id, target_kind, target_id, pipeline_definition_id, pipeline_version_policy, created_at, updated_at
        FROM agent_profile_pipeline_overrides
        WHERE profile_workspace_id = ?1
        ORDER BY target_kind ASC, target_id ASC`,
@@ -419,7 +452,8 @@ class AgentProfilePolicyStore {
         profileWorkspaceId: record.profile_workspace_id!,
         targetKind: record.target_kind as AgentWorkspacePipelineOverrideTarget,
         targetId: record.target_id!,
-        pipelineDefinitionId: record.pipeline_definition_id!,
+        pipelineDefinitionId: normaliseBuiltInDispatchPipelineId(record.pipeline_definition_id) ?? record.pipeline_definition_id!,
+        pipelineVersionPolicy: normaliseDispatchPipelineVersionPolicy(record.pipeline_version_policy),
         createdAt: record.created_at!,
         updatedAt: record.updated_at!,
       };
@@ -449,7 +483,7 @@ class AgentProfilePolicyStore {
   getPolicy(profileWorkspaceId: string, eventType: AgentWorkspaceEventType): AgentWorkspaceEventPolicyRecord | null {
     const row = this.db.query(
       `SELECT profile_workspace_id, event_type, enabled, default_action,
-              pipeline_definition_id, prompt_context, quiet_mode,
+              pipeline_definition_id, pipeline_version_policy, prompt_context, quiet_mode,
               last_diagnostic_json, created_at, updated_at
        FROM agent_profile_event_policies
        WHERE profile_workspace_id = ?1 AND event_type = ?2
@@ -462,13 +496,14 @@ class AgentProfilePolicyStore {
     this.db.query(
       `INSERT INTO agent_profile_event_policies (
          profile_workspace_id, event_type, enabled, default_action,
-         pipeline_definition_id, prompt_context, quiet_mode,
+         pipeline_definition_id, pipeline_version_policy, prompt_context, quiet_mode,
          last_diagnostic_json, created_at, updated_at
-       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
        ON CONFLICT(profile_workspace_id, event_type) DO UPDATE SET
          enabled = excluded.enabled,
          default_action = excluded.default_action,
          pipeline_definition_id = excluded.pipeline_definition_id,
+         pipeline_version_policy = excluded.pipeline_version_policy,
          prompt_context = excluded.prompt_context,
          quiet_mode = excluded.quiet_mode,
          last_diagnostic_json = excluded.last_diagnostic_json,
@@ -478,7 +513,8 @@ class AgentProfilePolicyStore {
       input.eventType,
       input.enabled ? 1 : 0,
       input.defaultAction,
-      input.pipelineDefinitionId,
+      normaliseBuiltInDispatchPipelineId(input.pipelineDefinitionId) ?? input.pipelineDefinitionId,
+      normaliseDispatchPipelineVersionPolicy(input.pipelineVersionPolicy),
       input.promptContext,
       input.quietMode ? 1 : 0,
       jsonString(input.lastDiagnostic),
@@ -493,26 +529,31 @@ class AgentProfilePolicyStore {
     targetKind: AgentWorkspacePipelineOverrideTarget;
     targetId: string;
     pipelineDefinitionId: string;
+    pipelineVersionPolicy?: PipelineVersionPolicy;
   }): AgentWorkspacePipelineOverrideRecord {
     const now = new Date().toISOString();
     const existing = this.getPipelineOverride(input.profileWorkspaceId, input.targetKind, input.targetId);
     const record = {
       ...input,
+      pipelineDefinitionId: normaliseBuiltInDispatchPipelineId(input.pipelineDefinitionId) ?? input.pipelineDefinitionId,
+      pipelineVersionPolicy: normaliseDispatchPipelineVersionPolicy(input.pipelineVersionPolicy),
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     };
     this.db.query(
       `INSERT INTO agent_profile_pipeline_overrides (
-         profile_workspace_id, target_kind, target_id, pipeline_definition_id, created_at, updated_at
-       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+         profile_workspace_id, target_kind, target_id, pipeline_definition_id, pipeline_version_policy, created_at, updated_at
+       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
        ON CONFLICT(profile_workspace_id, target_kind, target_id) DO UPDATE SET
          pipeline_definition_id = excluded.pipeline_definition_id,
+         pipeline_version_policy = excluded.pipeline_version_policy,
          updated_at = excluded.updated_at`,
     ).run(
       record.profileWorkspaceId,
       record.targetKind,
       record.targetId,
       record.pipelineDefinitionId,
+      record.pipelineVersionPolicy,
       record.createdAt,
       record.updatedAt,
     );
@@ -540,6 +581,7 @@ class AgentProfilePolicyStore {
         targetKind: override.targetKind,
         targetId,
         pipelineDefinitionId,
+        pipelineVersionPolicy: DEFAULT_DISPATCH_PIPELINE_VERSION_POLICY,
       }));
     }
     return saved;
@@ -551,7 +593,7 @@ class AgentProfilePolicyStore {
     targetId: string | null | undefined,
   ): AgentWorkspacePipelineOverrideRecord | null {
     const row = this.db.query(
-      `SELECT profile_workspace_id, target_kind, target_id, pipeline_definition_id, created_at, updated_at
+      `SELECT profile_workspace_id, target_kind, target_id, pipeline_definition_id, pipeline_version_policy, created_at, updated_at
        FROM agent_profile_pipeline_overrides
        WHERE profile_workspace_id = ?1 AND target_kind = ?2 AND target_id = ?3
        LIMIT 1`,
@@ -560,7 +602,8 @@ class AgentProfilePolicyStore {
       profileWorkspaceId: row.profile_workspace_id!,
       targetKind: row.target_kind as AgentWorkspacePipelineOverrideTarget,
       targetId: row.target_id!,
-      pipelineDefinitionId: row.pipeline_definition_id!,
+      pipelineDefinitionId: normaliseBuiltInDispatchPipelineId(row.pipeline_definition_id) ?? row.pipeline_definition_id!,
+      pipelineVersionPolicy: normaliseDispatchPipelineVersionPolicy(row.pipeline_version_policy),
       createdAt: row.created_at!,
       updatedAt: row.updated_at!,
     } : null;
@@ -899,6 +942,7 @@ class AgentProfilePolicyStore {
         enabled: policy.enabled,
         defaultAction: policy.defaultAction,
         pipelineDefinitionId: null,
+        pipelineVersionPolicy: DEFAULT_DISPATCH_PIPELINE_VERSION_POLICY,
         promptContext: null,
         quietMode: policy.quietMode,
         lastDiagnostic: null,
@@ -953,7 +997,12 @@ class AgentProfilePolicyStore {
       eventType: row.event_type as AgentWorkspaceEventType,
       enabled: row.enabled === 1 || row.enabled === '1',
       defaultAction: row.default_action as AgentWorkspacePolicyAction,
-      pipelineDefinitionId: typeof row.pipeline_definition_id === 'string' ? row.pipeline_definition_id : null,
+      pipelineDefinitionId: typeof row.pipeline_definition_id === 'string'
+        ? normaliseBuiltInDispatchPipelineId(row.pipeline_definition_id)
+        : null,
+      pipelineVersionPolicy: normaliseDispatchPipelineVersionPolicy(
+        typeof row.pipeline_version_policy === 'string' ? row.pipeline_version_policy : null,
+      ),
       promptContext: typeof row.prompt_context === 'string' ? row.prompt_context : null,
       quietMode: row.quiet_mode === 1 || row.quiet_mode === '1',
       lastDiagnostic: jsonParse<AgentChatDiagnostic>(
@@ -1014,6 +1063,7 @@ class AgentProfilePolicyStore {
         enabled INTEGER NOT NULL,
         default_action TEXT NOT NULL,
         pipeline_definition_id TEXT,
+        pipeline_version_policy TEXT NOT NULL DEFAULT 'latest',
         prompt_context TEXT,
         quiet_mode INTEGER NOT NULL,
         last_diagnostic_json TEXT,
@@ -1030,6 +1080,7 @@ class AgentProfilePolicyStore {
         target_kind TEXT NOT NULL,
         target_id TEXT NOT NULL,
         pipeline_definition_id TEXT NOT NULL,
+        pipeline_version_policy TEXT NOT NULL DEFAULT 'latest',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         PRIMARY KEY (profile_workspace_id, target_kind, target_id),
@@ -1061,6 +1112,12 @@ class AgentProfilePolicyStore {
     }
     if (!hasColumn(this.db, 'agent_profile_workspaces', 'workspace_service_npub')) {
       this.db.exec('ALTER TABLE agent_profile_workspaces ADD COLUMN workspace_service_npub TEXT');
+    }
+    if (!hasColumn(this.db, 'agent_profile_event_policies', 'pipeline_version_policy')) {
+      this.db.exec(`ALTER TABLE agent_profile_event_policies ADD COLUMN pipeline_version_policy TEXT NOT NULL DEFAULT '${DEFAULT_DISPATCH_PIPELINE_VERSION_POLICY}'`);
+    }
+    if (!hasColumn(this.db, 'agent_profile_pipeline_overrides', 'pipeline_version_policy')) {
+      this.db.exec(`ALTER TABLE agent_profile_pipeline_overrides ADD COLUMN pipeline_version_policy TEXT NOT NULL DEFAULT '${DEFAULT_DISPATCH_PIPELINE_VERSION_POLICY}'`);
     }
   }
 }

@@ -300,6 +300,88 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
     });
   });
 
+  test('resolves generated built-in dispatch ids to stable latest definitions at runtime', async () => {
+    const routeStore = new DispatchRouteStore(makeTempDb('agent-chat-built-in-latest-routes'));
+    const agentStore = new AgentDefinitionStore(makeTempDb('agent-chat-built-in-latest-agents'));
+    const pipelineStore = new PipelineStore(makeTempDb('agent-chat-built-in-latest-runs'));
+    const subscription = makeSubscription();
+    const now = new Date().toISOString();
+    agentStore.save({
+      agentId: 'agent-chat',
+      label: 'Chat Agent',
+      botNpub: subscription.botNpub,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      groupNpubs: ['npub1group'],
+      workingDirectory: '/tmp/agent-chat',
+      capabilities: ['chat_intercept'],
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+      managedByNpub: subscription.managedByNpub,
+    });
+    routeStore.save({
+      managedByNpub: subscription.managedByNpub!,
+      subscriptionId: subscription.subscriptionId,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      botNpub: subscription.botNpub,
+      sourceAppNpub: subscription.sourceAppNpub,
+      triggerKind: 'chat',
+      capability: 'chat_intercept',
+      pipelineDefinitionId: 'shared:7df6cda5438c',
+      pipelineVersionPolicy: 'latest',
+    });
+    const requestedDefinitionIds: string[] = [];
+    const runtime = new DispatchPipelineRuntime({
+      routeStore,
+      agentStore,
+      pipelineStore,
+      getSessionApiContext: () => ({} as never),
+      callbackOrigin: 'http://localhost',
+      defaultAgent: 'codex',
+      acknowledgeChatMessage: async () => ({ acknowledged: true, status: 'ok' }),
+      loadDefinition: async (id) => {
+        requestedDefinitionIds.push(id);
+        return {
+          id: 'shared:current',
+          slug: 'fd-agent-dispatch-chat',
+          name: 'fd-agent-dispatch-chat',
+          scope: 'shared',
+          ownerAlias: null,
+          path: '/tmp/fd-agent-dispatch-chat.json',
+          spec: { name: 'fd-agent-dispatch-chat', input: {}, steps: [] },
+        };
+      },
+      loadFunctions: async () => ({ registry: {}, records: [] }),
+      runPipeline: async (input: any) => makePipelineRun('chat-run-1', input.input),
+    });
+
+    await runtime.dispatch({
+      subscription,
+      triggerKind: 'chat',
+      capability: 'chat_intercept',
+      recordId: 'chat-record-1',
+      record: {},
+      payload: {
+        body: 'Can you see this message?',
+        sender_npub: 'npub1sender',
+        channel_id: 'channel-1',
+        parent_message_id: null,
+        attachments: [],
+      },
+      recordFamily: 'chat',
+      recordState: null,
+      recordVersion: null,
+      updaterNpub: 'npub1sender',
+      bindingType: 'thread',
+      bindingId: 'thread-1',
+      channelId: 'channel-1',
+      threadId: 'thread-1',
+      groupNpubs: ['npub1group'],
+    });
+
+    expect(requestedDefinitionIds).toEqual(['fd-agent-dispatch-chat']);
+  });
+
   test('suppresses chat pipeline dispatch for messages authored by the workspace key', async () => {
     const routeStore = new DispatchRouteStore(makeTempDb('agent-chat-self-pipeline-routes'));
     const agentStore = new AgentDefinitionStore(makeTempDb('agent-chat-self-pipeline-agents'));
@@ -881,7 +963,11 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
         enabled: true,
         defaultAction: 'respond',
         quietMode: false,
-        pipeline: { pipelineDefinitionId: 'profile-chat-pipeline', source: 'event_policy' },
+        pipeline: {
+          pipelineDefinitionId: 'profile-chat-pipeline',
+          pipelineVersionPolicy: 'latest',
+          source: 'event_policy',
+        },
         appendedContext: [
           {
             kind: 'workspace',
@@ -1178,6 +1264,7 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
     expect((runInputs[0]?.profileRuntime as any)?.eventType).toBe('task_assigned');
     expect((runInputs[0]?.profileRuntime as any)?.pipeline).toEqual({
       pipelineDefinitionId: 'policy-task-pipeline',
+      pipelineVersionPolicy: 'latest',
       source: 'event_policy',
     });
     expect((runInputs[0]?.profileRuntime as any)?.appendedContext.map((entry: any) => entry.contextText)).toEqual([

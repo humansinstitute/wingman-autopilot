@@ -14,6 +14,7 @@ export type AgentCapability =
   | 'approval_dispatch';
 export type DispatchTriggerKind = 'chat' | 'task' | 'flow' | 'task_review' | 'approval' | 'comment';
 export type DispatchActivePolicy = 'skip' | 'queue' | 'start_new';
+export type PipelineVersionPolicy = 'latest';
 export type AgentInterceptDecision = 'respond' | 'ignore' | 'pending' | 'failed';
 export type ChatInterceptStateStatus =
   | 'pending'
@@ -99,6 +100,7 @@ export interface DispatchRouteRecord {
   triggerKind: DispatchTriggerKind;
   capability: AgentCapability;
   pipelineDefinitionId: string;
+  pipelineVersionPolicy: PipelineVersionPolicy;
   enabled: boolean;
   priority: number;
   matchJson: Record<string, unknown>;
@@ -119,6 +121,7 @@ export interface CreateDispatchRouteInput {
   triggerKind: DispatchTriggerKind;
   capability: AgentCapability;
   pipelineDefinitionId: string;
+  pipelineVersionPolicy?: PipelineVersionPolicy;
   enabled?: boolean;
   priority?: number;
   matchJson?: Record<string, unknown>;

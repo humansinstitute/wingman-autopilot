@@ -122,6 +122,10 @@ function serialiseDispatchRoute(record: DispatchRouteRecord) {
   return { ...record };
 }
 
+function parsePipelineVersionPolicy(value: unknown) {
+  return value === 'latest' ? 'latest' : 'latest';
+}
+
 function getProfileWorkspaceForSubscription(
   manager: WorkspaceSubscriptionManager,
   subscriptionId: string,
@@ -453,6 +457,7 @@ function parseProfileWorkspacePolicies(value: unknown) {
       pipelineDefinitionId: hasPipelineDefinitionId
         ? typeof record.pipelineDefinitionId === 'string' ? record.pipelineDefinitionId : null
         : undefined,
+      pipelineVersionPolicy: parsePipelineVersionPolicy(record.pipelineVersionPolicy),
       promptContext: hasPromptContext
         ? typeof record.promptContext === 'string' ? record.promptContext : null
         : undefined,
@@ -474,7 +479,7 @@ function parseProfileWorkspacePipelineOverrides(value: unknown) {
     const targetId = typeof record.targetId === 'string' ? record.targetId.trim() : '';
     const pipelineDefinitionId = typeof record.pipelineDefinitionId === 'string' ? record.pipelineDefinitionId.trim() : '';
     return targetKind && targetId && pipelineDefinitionId
-      ? [{ targetKind, targetId, pipelineDefinitionId }]
+      ? [{ targetKind, targetId, pipelineDefinitionId, pipelineVersionPolicy: parsePipelineVersionPolicy(record.pipelineVersionPolicy) }]
       : [];
   });
 }
@@ -661,6 +666,7 @@ export async function handleAgentChatApi(
     const triggerKind = parseDispatchTriggerKind(body.triggerKind);
     const capability = parseDispatchCapability(body.capability);
     const pipelineDefinitionId = typeof body.pipelineDefinitionId === 'string' ? body.pipelineDefinitionId.trim() : '';
+    const pipelineVersionPolicy = parsePipelineVersionPolicy(body.pipelineVersionPolicy);
     if (!subscriptionId || !triggerKind || !capability || !pipelineDefinitionId) {
       return Response.json(
         { error: 'subscriptionId, triggerKind, capability, and pipelineDefinitionId are required.' },
@@ -676,6 +682,7 @@ export async function handleAgentChatApi(
         triggerKind,
         capability,
         pipelineDefinitionId,
+        pipelineVersionPolicy,
         enabled: body.enabled !== false,
         priority: Number.isFinite(body.priority) ? Number(body.priority) : undefined,
         matchJson: parseJsonObjectField(body.matchJson),

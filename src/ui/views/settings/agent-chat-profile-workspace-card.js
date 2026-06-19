@@ -38,6 +38,25 @@ function formatLabel(value) {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+function stableBuiltInDispatchPipelineValue(definition) {
+  const name = definition?.name || definition?.slug;
+  if (
+    name === 'fd-agent-dispatch-chat'
+    || name === 'fd-agent-dispatch-task-response'
+    || name === 'fd-agent-dispatch-comment-response'
+  ) {
+    return name;
+  }
+  return definition?.id || '';
+}
+
+function normaliseBuiltInDispatchPipelineSelection(value) {
+  if (value === 'shared:7df6cda5438c') return 'fd-agent-dispatch-chat';
+  if (value === 'shared:4e7e569c4c5f') return 'fd-agent-dispatch-task-response';
+  if (value === 'shared:e4cd47744fb8') return 'fd-agent-dispatch-comment-response';
+  return value || '';
+}
+
 function createPipelineSelect({ label, definitions, selectedId, testId }) {
   const wrapper = document.createElement('label');
   wrapper.style.cssText = 'display:flex;flex-direction:column;gap:6px;';
@@ -55,11 +74,11 @@ function createPipelineSelect({ label, definitions, selectedId, testId }) {
 
   definitions.forEach((definition) => {
     const option = document.createElement('option');
-    option.value = definition.id || '';
+    option.value = stableBuiltInDispatchPipelineValue(definition);
     option.textContent = definition.name || definition.slug || definition.id || 'Pipeline';
     select.append(option);
   });
-  select.value = selectedId || '';
+  select.value = normaliseBuiltInDispatchPipelineSelection(selectedId);
   wrapper.append(select);
   return { wrapper, select };
 }
@@ -227,6 +246,7 @@ function createScopeChannelRows({ bundle, definitions, controlsDisabled }) {
       targetKind: override.targetKind,
       targetId: override.targetId || '',
       pipelineDefinitionId: override.pipelineDefinitionId || '',
+      pipelineVersionPolicy: override.pipelineVersionPolicy || 'latest',
       contextText: '',
     });
   });
@@ -245,7 +265,7 @@ function createScopeChannelRows({ bundle, definitions, controlsDisabled }) {
     byKey.set(key, row);
   });
 
-  const rows = [...byKey.values(), { targetKind: 'scope', targetId: '', pipelineDefinitionId: '', contextText: '' }];
+  const rows = [...byKey.values(), { targetKind: 'scope', targetId: '', pipelineDefinitionId: '', pipelineVersionPolicy: 'latest', contextText: '' }];
   const controls = rows.map((rowData, index) => {
     const row = document.createElement('section');
     row.style.cssText = 'display:grid;grid-template-columns:minmax(110px,0.45fr) minmax(160px,0.8fr) minmax(180px,1fr);gap:8px;align-items:start;padding:10px;border:1px solid var(--wm-border-muted, rgba(255,255,255,0.12));border-radius:8px;';
@@ -298,6 +318,7 @@ function createScopeChannelRows({ bundle, definitions, controlsDisabled }) {
           targetKind: kind.value,
           targetId: target.input.value.trim(),
           pipelineDefinitionId: pipeline.select.value.trim(),
+          pipelineVersionPolicy: 'latest',
         }))
         .filter((row) => row.targetId && row.pipelineDefinitionId);
     },
@@ -395,6 +416,7 @@ export function createProfileWorkspaceSettingsCard({
             enabled: enabled.input.checked,
             defaultAction: action.value,
             pipelineDefinitionId: pipeline.select.value,
+            pipelineVersionPolicy: 'latest',
             promptContext: prompt.input.value,
             quietMode: quiet.input.checked,
           })),

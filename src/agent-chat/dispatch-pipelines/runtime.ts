@@ -25,6 +25,12 @@ import type {
 import { bootstrapAgentDefinitionWorkspace } from '../agent-workspace-bootstrap';
 import { fetchFlightDeckPgScopeChannels, type FlightDeckPgChannel } from '../tower-client';
 import {
+  DEFAULT_DISPATCH_PIPELINE_VERSION_POLICY,
+  normaliseBuiltInDispatchPipelineId,
+  stableDispatchPipelineIdForRoute,
+  type DispatchPipelineVersionPolicy,
+} from './pipeline-policy';
+import {
   createDispatchFlightDeckPublisher,
   createDispatchChatContextHydrator,
   createDispatchChatThreadReloader,
@@ -314,7 +320,8 @@ export class DispatchPipelineRuntime {
 
       const ownerNpub = input.subscription.managedByNpub ?? route.managedByNpub;
       const ownerAlias = generateIdentityAlias(ownerNpub);
-      const definition = await this.loadDefinition(route.pipelineDefinitionId, ownerAlias)
+      const resolvedPipelineDefinitionId = resolveRoutePipelineDefinitionId(route);
+      const definition = await this.loadDefinition(resolvedPipelineDefinitionId, ownerAlias)
         ?? await this.loadFallbackDefinitionForRoute(route, ownerAlias);
       const sessionApiContext = this.getSessionApiContext();
       if (!definition || !sessionApiContext) {
@@ -327,7 +334,7 @@ export class DispatchPipelineRuntime {
               pipelineRunId: null,
               acknowledgement: chatAcknowledgement,
               diagnosticSummary: !definition
-                ? `Pipeline definition not found: ${route.pipelineDefinitionId}`
+                ? `Pipeline definition not found: ${resolvedPipelineDefinitionId}`
                 : 'Pipeline session API context is not ready.',
             }),
           ],
@@ -415,8 +422,8 @@ export class DispatchPipelineRuntime {
             dedupeKey,
             acknowledgement: chatAcknowledgement,
             diagnosticSummary: needsInputUpdate
-              ? `Started dispatch pipeline ${route.pipelineDefinitionId}; needs-input question published.`
-              : `Started dispatch pipeline ${route.pipelineDefinitionId}.`,
+              ? `Started dispatch pipeline ${resolvedPipelineDefinitionId}; needs-input question published.`
+              : `Started dispatch pipeline ${resolvedPipelineDefinitionId}.`,
           }),
         ],
         lastPipelineRunId: run.id,
@@ -1008,6 +1015,7 @@ function buildProfilePolicyRoutes(input: DispatchPipelineEventInput, configuredR
     triggerKind: input.triggerKind,
     capability: input.capability,
     pipelineDefinitionId,
+    pipelineVersionPolicy: profileRuntime.pipeline.pipelineVersionPolicy,
     enabled: profileRuntime.enabled && !profileRuntime.quietMode,
     priority: 0,
     matchJson: {},
@@ -1175,16 +1183,21 @@ function isSelfAuthoredChatEvent(
 }
 
 function fallbackPipelineDefinitionId(route: DispatchRouteRecord): string | null {
-  if (route.triggerKind === 'chat' && route.capability === 'chat_intercept') {
-    return 'fd-agent-dispatch-chat';
+  return stableDispatchPipelineIdForRoute(route);
+}
+
+function resolveRoutePipelineDefinitionId(route: Pick<DispatchRouteRecord, 'pipelineDefinitionId' | 'pipelineVersionPolicy' | 'triggerKind' | 'capability'>): string {
+  const versionPolicy = normaliseRouteVersionPolicy(route.pipelineVersionPolicy);
+  const stableBuiltIn = stableDispatchPipelineIdForRoute(route);
+  const normalised = normaliseBuiltInDispatchPipelineId(route.pipelineDefinitionId) ?? route.pipelineDefinitionId;
+  if (versionPolicy === 'latest' && stableBuiltIn && normalised === stableBuiltIn) {
+    return stableBuiltIn;
   }
-  if (route.triggerKind === 'task' && route.capability === 'task_dispatch') {
-    return 'fd-agent-dispatch-task-response';
-  }
-  if (route.triggerKind === 'comment' && route.capability === 'comment_dispatch') {
-    return 'fd-agent-dispatch-comment-response';
-  }
-  return null;
+  return normalised;
+}
+
+function normaliseRouteVersionPolicy(value: string | null | undefined): DispatchPipelineVersionPolicy {
+  return value === 'latest' ? 'latest' : DEFAULT_DISPATCH_PIPELINE_VERSION_POLICY;
 }
 
 function getText(value: unknown): string | null {

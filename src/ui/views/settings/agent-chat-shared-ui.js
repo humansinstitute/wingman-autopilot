@@ -239,15 +239,35 @@ function findDispatchRoute(routes, triggerKind, capability) {
     : null;
 }
 
+function stableBuiltInDispatchPipelineValue(definition) {
+  const name = definition?.name || definition?.slug;
+  if (
+    name === 'fd-agent-dispatch-chat'
+    || name === 'fd-agent-dispatch-task-response'
+    || name === 'fd-agent-dispatch-comment-response'
+  ) {
+    return name;
+  }
+  return definition?.id || '';
+}
+
+function normaliseBuiltInDispatchPipelineSelection(value) {
+  if (value === 'shared:7df6cda5438c') return 'fd-agent-dispatch-chat';
+  if (value === 'shared:4e7e569c4c5f') return 'fd-agent-dispatch-task-response';
+  if (value === 'shared:e4cd47744fb8') return 'fd-agent-dispatch-comment-response';
+  return value || '';
+}
+
 function findDefaultPipelineId(definitions, defaultName, fallbackToFirst = true) {
   const list = Array.isArray(definitions) ? definitions : [];
   if (defaultName) {
     const exact = list.find((definition) => definition?.name === defaultName || definition?.slug === defaultName);
-    if (exact?.id) {
-      return exact.id;
+    const value = stableBuiltInDispatchPipelineValue(exact);
+    if (value) {
+      return value;
     }
   }
-  return fallbackToFirst ? list[0]?.id || '' : '';
+  return fallbackToFirst ? stableBuiltInDispatchPipelineValue(list[0]) : '';
 }
 
 function createPipelineSelect({ title, definitions, selectedId, defaultName, fallbackToFirst = true }) {
@@ -267,11 +287,12 @@ function createPipelineSelect({ title, definitions, selectedId, defaultName, fal
 
   definitions.forEach((definition) => {
     const option = document.createElement('option');
-    option.value = definition.id || '';
+    option.value = stableBuiltInDispatchPipelineValue(definition);
     option.textContent = definition.name || definition.id || 'Pipeline';
     select.append(option);
   });
-  select.value = selectedId || findDefaultPipelineId(definitions, defaultName, fallbackToFirst);
+  select.value = normaliseBuiltInDispatchPipelineSelection(selectedId)
+    || findDefaultPipelineId(definitions, defaultName, fallbackToFirst);
   label.append(select);
   return { label, select };
 }
@@ -449,6 +470,7 @@ function createCapabilityCard({
           triggerKind: routeConfig.triggerKind,
           capability: routeConfig.capability,
           pipelineDefinitionId: pipelineSelect.select.value,
+          pipelineVersionPolicy: 'latest',
           enabled: true,
           priority: routeConfig.priority,
           activePolicy: routeConfig.activePolicy,

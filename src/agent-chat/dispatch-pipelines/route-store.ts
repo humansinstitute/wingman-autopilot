@@ -13,6 +13,11 @@ import type {
   DispatchRouteRecord,
   DispatchTriggerKind,
 } from '../types';
+import {
+  DEFAULT_DISPATCH_PIPELINE_VERSION_POLICY,
+  normaliseBuiltInDispatchPipelineId,
+  normaliseDispatchPipelineVersionPolicy,
+} from './pipeline-policy';
 
 const DEFAULT_DB_PATH = databaseFile;
 
@@ -110,7 +115,8 @@ export class DispatchRouteStore {
       sourceAppNpub: input.sourceAppNpub,
       triggerKind: input.triggerKind,
       capability: input.capability,
-      pipelineDefinitionId: input.pipelineDefinitionId,
+      pipelineDefinitionId: normaliseBuiltInDispatchPipelineId(input.pipelineDefinitionId) ?? input.pipelineDefinitionId,
+      pipelineVersionPolicy: normaliseDispatchPipelineVersionPolicy(input.pipelineVersionPolicy),
       enabled: input.enabled !== false,
       priority: Number.isFinite(input.priority) ? Number(input.priority) : 100,
       matchJson: input.matchJson ?? {},
@@ -125,11 +131,11 @@ export class DispatchRouteStore {
     this.db.query(`
       INSERT INTO agent_dispatch_pipeline_routes (
         route_id, managed_by_npub, subscription_id, workspace_owner_npub, bot_npub,
-        source_app_npub, trigger_kind, capability, pipeline_definition_id, enabled,
+        source_app_npub, trigger_kind, capability, pipeline_definition_id, pipeline_version_policy, enabled,
         priority, match_json, input_template_json, concurrency_key_template,
         active_policy, dedupe_window_seconds, created_at, updated_at
       ) VALUES (
-        ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18
+        ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19
       )
       ON CONFLICT(route_id) DO UPDATE SET
         managed_by_npub = excluded.managed_by_npub,
@@ -140,6 +146,7 @@ export class DispatchRouteStore {
         trigger_kind = excluded.trigger_kind,
         capability = excluded.capability,
         pipeline_definition_id = excluded.pipeline_definition_id,
+        pipeline_version_policy = excluded.pipeline_version_policy,
         enabled = excluded.enabled,
         priority = excluded.priority,
         match_json = excluded.match_json,
@@ -158,6 +165,7 @@ export class DispatchRouteStore {
       record.triggerKind,
       record.capability,
       record.pipelineDefinitionId,
+      record.pipelineVersionPolicy,
       record.enabled ? 1 : 0,
       record.priority,
       JSON.stringify(record.matchJson),
@@ -209,7 +217,10 @@ export class DispatchRouteStore {
       sourceAppNpub: String(row.source_app_npub ?? ''),
       triggerKind: normaliseTriggerKind(String(row.trigger_kind ?? 'chat')),
       capability: normaliseCapability(String(row.capability ?? 'chat_intercept')),
-      pipelineDefinitionId: String(row.pipeline_definition_id ?? ''),
+      pipelineDefinitionId: normaliseBuiltInDispatchPipelineId(String(row.pipeline_definition_id ?? '')) ?? '',
+      pipelineVersionPolicy: normaliseDispatchPipelineVersionPolicy(
+        typeof row.pipeline_version_policy === 'string' ? row.pipeline_version_policy : null,
+      ),
       enabled: Number(row.enabled ?? 0) === 1,
       priority: Number(row.priority ?? 100),
       matchJson: parseJsonObject(typeof row.match_json === 'string' ? row.match_json : null),
@@ -234,6 +245,7 @@ export class DispatchRouteStore {
         trigger_kind TEXT NOT NULL,
         capability TEXT NOT NULL,
         pipeline_definition_id TEXT NOT NULL,
+        pipeline_version_policy TEXT NOT NULL DEFAULT 'latest',
         enabled INTEGER NOT NULL DEFAULT 1,
         priority INTEGER NOT NULL DEFAULT 100,
         match_json TEXT,
@@ -251,7 +263,16 @@ export class DispatchRouteStore {
       CREATE INDEX IF NOT EXISTS idx_agent_dispatch_routes_manager
         ON agent_dispatch_pipeline_routes(managed_by_npub, updated_at DESC);
     `);
+
+    if (!hasColumn(this.db, 'agent_dispatch_pipeline_routes', 'pipeline_version_policy')) {
+      this.db.exec(`ALTER TABLE agent_dispatch_pipeline_routes ADD COLUMN pipeline_version_policy TEXT NOT NULL DEFAULT '${DEFAULT_DISPATCH_PIPELINE_VERSION_POLICY}'`);
+    }
   }
+}
+
+function hasColumn(db: Database, tableName: string, columnName: string): boolean {
+  const rows = db.query(`PRAGMA table_info(${tableName})`).all() as Array<{ name?: string }>;
+  return rows.some((row) => row.name === columnName);
 }
 
 function defaultActivePolicy(triggerKind: DispatchTriggerKind): DispatchActivePolicy {

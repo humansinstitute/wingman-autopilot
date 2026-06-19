@@ -398,6 +398,25 @@ function getPolicyPipelineId(policy) {
   return policy?.pipelineDefinitionId || '';
 }
 
+function stableBuiltInDispatchPipelineValue(definition) {
+  const name = definition?.name || definition?.slug;
+  if (
+    name === 'fd-agent-dispatch-chat'
+    || name === 'fd-agent-dispatch-task-response'
+    || name === 'fd-agent-dispatch-comment-response'
+  ) {
+    return name;
+  }
+  return definition?.id || '';
+}
+
+function normaliseBuiltInDispatchPipelineSelection(value) {
+  if (value === 'shared:7df6cda5438c') return 'fd-agent-dispatch-chat';
+  if (value === 'shared:4e7e569c4c5f') return 'fd-agent-dispatch-task-response';
+  if (value === 'shared:e4cd47744fb8') return 'fd-agent-dispatch-comment-response';
+  return value || '';
+}
+
 function countEnabledPolicies(subscription) {
   const policies = subscription?.profileWorkspace?.policies;
   return FLIGHT_DECK_DISPATCH_ROWS.filter((config) => {
@@ -419,11 +438,11 @@ function createPipelineSelect(definitions, selectedId, testId) {
 
   definitions.forEach((definition) => {
     const option = document.createElement('option');
-    option.value = definition.id || '';
+    option.value = stableBuiltInDispatchPipelineValue(definition);
     option.textContent = definition.name || definition.slug || definition.id || 'Pipeline';
     select.append(option);
   });
-  select.value = selectedId || '';
+  select.value = normaliseBuiltInDispatchPipelineSelection(selectedId);
   return select;
 }
 
@@ -568,6 +587,7 @@ function createFlightDeckDispatchCard({ subscription, pipelineDefinitions, works
             enabled: retiredEventTypes.has(policy.eventType) ? false : policy.enabled !== false,
             defaultAction: retiredEventTypes.has(policy.eventType) ? 'ignore' : policy.defaultAction || 'ignore',
             pipelineDefinitionId: policy.pipelineDefinitionId || '',
+            pipelineVersionPolicy: policy.pipelineVersionPolicy || 'latest',
             promptContext: policy.promptContext || '',
             quietMode: retiredEventTypes.has(policy.eventType) ? true : policy.quietMode === true,
           })),
@@ -576,6 +596,7 @@ function createFlightDeckDispatchCard({ subscription, pipelineDefinitions, works
           enabled: enabled.checked,
           defaultAction: action.value,
           pipelineDefinitionId: pipeline.value,
+          pipelineVersionPolicy: 'latest',
           promptContext: policy.promptContext || '',
           quietMode: action.value === 'observe' ? true : policy.quietMode === true,
         })),
@@ -591,6 +612,7 @@ function createFlightDeckDispatchCard({ subscription, pipelineDefinitions, works
             targetKind: override.targetKind,
             targetId: override.targetId,
             pipelineDefinitionId: override.pipelineDefinitionId,
+            pipelineVersionPolicy: override.pipelineVersionPolicy || 'latest',
           }))
           : [],
         appendedContexts: Array.isArray(bundle.appendedContexts)

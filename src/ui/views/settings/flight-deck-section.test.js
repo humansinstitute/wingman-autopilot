@@ -376,6 +376,7 @@ describe("flight deck settings panel", () => {
         enabled: false,
         defaultAction: "ignore",
         pipelineDefinitionId: "new-chat-pipeline",
+        pipelineVersionPolicy: "latest",
         promptContext: "",
         quietMode: false,
       });
@@ -384,6 +385,7 @@ describe("flight deck settings panel", () => {
         enabled: false,
         defaultAction: "ignore",
         pipelineDefinitionId: "approval-pipeline",
+        pipelineVersionPolicy: "latest",
         promptContext: "",
         quietMode: true,
       });

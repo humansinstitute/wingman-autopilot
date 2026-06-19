@@ -568,12 +568,18 @@ describe('agent-chat routes', () => {
         enabled: false,
         defaultAction: 'ignore',
         pipelineDefinitionId: null,
+        pipelineVersionPolicy: 'latest',
         promptContext: null,
         quietMode: true,
       },
     ]);
     expect(captured?.pipelineOverrides).toEqual([
-      { targetKind: 'scope', targetId: 'scope-autopilot', pipelineDefinitionId: 'scope-pipeline' },
+      {
+        targetKind: 'scope',
+        targetId: 'scope-autopilot',
+        pipelineDefinitionId: 'scope-pipeline',
+        pipelineVersionPolicy: 'latest',
+      },
     ]);
     expect(captured?.appendedContexts).toEqual([
       { contextKind: 'channel', targetId: 'channel-design', eventType: null, contextText: 'Channel context' },
@@ -618,7 +624,15 @@ describe('agent-chat routes', () => {
     expect(captured?.workspaceContext).toBe('Nested workspace context');
     expect('profileDefaultPipelineDefinitionId' in (captured ?? {})).toBe(false);
     expect('workspaceDefaultPipelineDefinitionId' in (captured ?? {})).toBe(false);
-    expect(captured?.policies).toEqual([{ eventType: 'task_assigned', enabled: true }]);
+    expect(captured?.policies).toEqual([{
+      eventType: 'task_assigned',
+      enabled: true,
+      defaultAction: undefined,
+      pipelineDefinitionId: undefined,
+      pipelineVersionPolicy: 'latest',
+      promptContext: undefined,
+      quietMode: undefined,
+    }]);
     expect(captured?.pipelineOverrides).toEqual([]);
     expect(captured?.appendedContexts).toEqual([]);
   });

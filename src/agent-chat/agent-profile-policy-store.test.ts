@@ -268,7 +268,7 @@ describe('agent workspace policy helpers', () => {
       workspace: { defaultPipelineDefinitionId: 'workspace-pipeline' },
       profile: { defaultPipelineDefinitionId: 'profile-pipeline' },
       builtInDefaultPipelineId: 'built-in',
-    })).toEqual({ pipelineDefinitionId: 'event-pipeline', source: 'event_policy' });
+    })).toEqual({ pipelineDefinitionId: 'event-pipeline', pipelineVersionPolicy: 'latest', source: 'event_policy' });
 
     expect(resolveAgentWorkspacePipeline({
       eventPolicy: { pipelineDefinitionId: null },
@@ -277,7 +277,7 @@ describe('agent workspace policy helpers', () => {
       workspace: { defaultPipelineDefinitionId: 'workspace-pipeline' },
       profile: { defaultPipelineDefinitionId: 'profile-pipeline' },
       builtInDefaultPipelineId: 'built-in',
-    })).toEqual({ pipelineDefinitionId: 'channel-pipeline', source: 'channel_override' });
+    })).toEqual({ pipelineDefinitionId: 'channel-pipeline', pipelineVersionPolicy: 'latest', source: 'channel_override' });
 
     expect(resolveAgentWorkspacePipeline({
       eventPolicy: { pipelineDefinitionId: null },
@@ -286,7 +286,7 @@ describe('agent workspace policy helpers', () => {
       workspace: { defaultPipelineDefinitionId: 'workspace-pipeline' },
       profile: { defaultPipelineDefinitionId: 'profile-pipeline' },
       builtInDefaultPipelineId: 'built-in',
-    })).toEqual({ pipelineDefinitionId: 'scope-pipeline', source: 'scope_override' });
+    })).toEqual({ pipelineDefinitionId: 'scope-pipeline', pipelineVersionPolicy: 'latest', source: 'scope_override' });
 
     expect(resolveAgentWorkspacePipeline({
       eventPolicy: null,
@@ -295,7 +295,7 @@ describe('agent workspace policy helpers', () => {
       workspace: { defaultPipelineDefinitionId: 'workspace-pipeline' },
       profile: { defaultPipelineDefinitionId: 'profile-pipeline' },
       builtInDefaultPipelineId: 'built-in',
-    })).toEqual({ pipelineDefinitionId: 'workspace-pipeline', source: 'workspace_default' });
+    })).toEqual({ pipelineDefinitionId: 'workspace-pipeline', pipelineVersionPolicy: 'latest', source: 'workspace_default' });
 
     expect(resolveAgentWorkspacePipeline({
       eventPolicy: null,
@@ -304,7 +304,7 @@ describe('agent workspace policy helpers', () => {
       workspace: { defaultPipelineDefinitionId: null },
       profile: { defaultPipelineDefinitionId: 'profile-pipeline' },
       builtInDefaultPipelineId: 'built-in',
-    })).toEqual({ pipelineDefinitionId: 'profile-pipeline', source: 'profile_default' });
+    })).toEqual({ pipelineDefinitionId: 'profile-pipeline', pipelineVersionPolicy: 'latest', source: 'profile_default' });
 
     expect(resolveAgentWorkspacePipeline({
       eventPolicy: null,
@@ -313,7 +313,22 @@ describe('agent workspace policy helpers', () => {
       workspace: null,
       profile: null,
       builtInDefaultPipelineId: 'built-in',
-    })).toEqual({ pipelineDefinitionId: 'built-in', source: 'built_in_default' });
+    })).toEqual({ pipelineDefinitionId: 'built-in', pipelineVersionPolicy: 'latest', source: 'built_in_default' });
+  });
+
+  test('normalises generated built-in dispatch ids to stable latest selections', () => {
+    expect(resolveAgentWorkspacePipeline({
+      eventPolicy: { pipelineDefinitionId: 'shared:7df6cda5438c' },
+      channelOverride: null,
+      scopeOverride: null,
+      workspace: null,
+      profile: null,
+      builtInDefaultPipelineId: 'built-in',
+    })).toEqual({
+      pipelineDefinitionId: 'fd-agent-dispatch-chat',
+      pipelineVersionPolicy: 'latest',
+      source: 'event_policy',
+    });
   });
 
   test('merges appended context in workspace, scope, channel, event-policy order', () => {
@@ -391,7 +406,11 @@ describe('agent workspace policy helpers', () => {
     });
 
     expect(result.policy).toMatchObject({ eventType: 'chat_mention', enabled: true, defaultAction: 'respond' });
-    expect(result.pipeline).toEqual({ pipelineDefinitionId: 'channel-pipeline', source: 'channel_override' });
+    expect(result.pipeline).toEqual({
+      pipelineDefinitionId: 'channel-pipeline',
+      pipelineVersionPolicy: 'latest',
+      source: 'channel_override',
+    });
     expect(result.appendedContext).toEqual([
       { kind: 'agent_profile', targetId: 'leon', eventType: null, contextText: 'Profile guidance' },
       { kind: 'workspace', targetId: null, eventType: null, contextText: 'Saved workspace guidance' },
