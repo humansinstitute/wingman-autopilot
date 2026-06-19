@@ -117,10 +117,34 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
       },
     },
     {
+      name: "prepare-short-lookup-answer",
+      description: "Answer trivial greetings and bounded workspace focus/status lookups without launching an agent or child task.",
+      type: "code",
+      function: "dispatch.prepareShortLookupAnswer",
+      when: { path: "$.chatContext.shouldProceed", equals: true },
+      input: {
+        pick: {
+          workspace: "$.workspace",
+          chatDispatchInput: "$.chatDispatchInput",
+        },
+      },
+      assign: "$.agentDecision",
+      display: {
+        in: [
+          { label: "Thread", path: "$.chatDispatchInput.latestThread", format: "messages", limit: 4, empty: "No thread messages" },
+        ],
+        out: [
+          { label: "Fast Answer", path: "$.skipAgent" },
+          { label: "Intent", path: "$.intent", format: "text" },
+          { label: "Reply", path: "$.chatResponse.body", format: "text" },
+        ],
+      },
+    },
+    {
       name: "analyse-intent",
       description: "Analyse the hydrated thread and classify the request as answer_now or create_task.",
       type: "agent",
-      when: { path: "$.chatContext.shouldProceed", equals: true },
+      when: { path: "$.agentDecision.skipAgent", equals: false },
       agent: CHAT_DISPATCH_FAST_AGENT,
       model: CHAT_DISPATCH_FAST_MODEL,
       directory: "$.agent.workingDirectory",

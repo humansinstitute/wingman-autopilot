@@ -1460,6 +1460,140 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     };
   },
 
+  async "dispatch.prepareShortLookupAnswer"(input) {
+    const workspace = objectValue(input.workspace);
+    const packet = objectValue(input.chatDispatchInput);
+    const latestThread = Array.isArray(packet.latestThread)
+      ? packet.latestThread.map((message) => objectValue(message))
+      : [];
+    const latestMessage = latestThread.length > 0 ? latestThread[latestThread.length - 1] : {};
+    const latestText = getText(latestMessage.body ?? latestMessage.text ?? latestMessage.messageText) ?? "";
+    const normalized = latestText.toLowerCase().replace(/[^\p{L}\p{N}\s']/gu, " ").replace(/\s+/g, " ").trim();
+
+    if (/^(hey|hi|hello|yo|hiya|gm|good morning|good afternoon|good evening)( pete)?$/.test(normalized)) {
+      return {
+        skipAgent: true,
+        intent: "answer_now",
+        dispatchTask: false,
+        recommendedPipelineId: null,
+        taskDraft: null,
+        chatResponse: { body: "Hey Pete." },
+        clarifyingQuestion: null,
+        confidence: 0.99,
+        shortLookup: { kind: "greeting" },
+      };
+    }
+
+    const focusLookup = /\b(focus|priority|priorities|daily scope|what should (i|we) work on|what are we working on|where should (i|we) focus|what'?s next|what is next)\b/.test(normalized)
+      && /\b(today|now|current|this morning|this afternoon|right now|next)\b/.test(normalized);
+    const statusLookup = /\b(where are we at|where are we up to|current status|status today|what'?s our status)\b/.test(normalized);
+    if (!focusLookup && !statusLookup) {
+      return {
+        skipAgent: false,
+        intent: "needs_classification",
+        dispatchTask: false,
+        chatResponse: { body: "" },
+        confidence: 0.5,
+      };
+    }
+
+    const towerBaseUrl = getText(workspace.backendBaseUrl ?? workspace.towerBaseUrl ?? workspace.baseUrl);
+    const workspaceId = getText(workspace.workspaceId ?? workspace.workspace_id);
+    const appNpub = getText(workspace.sourceAppNpub ?? workspace.appNpub ?? workspace.app_npub);
+    if (!towerBaseUrl || !workspaceId) {
+      return {
+        skipAgent: true,
+        intent: "answer_now",
+        dispatchTask: false,
+        recommendedPipelineId: null,
+        taskDraft: null,
+        chatResponse: {
+          body: "I can answer that from Daily Scope, but I do not have the Flight Deck PG workspace connection details in this dispatch context.",
+        },
+        clarifyingQuestion: null,
+        confidence: 0.8,
+        shortLookup: { kind: "daily_focus", fetched: false, reason: "missing_workspace_context" },
+      };
+    }
+
+    const noteDate = new Date().toISOString().slice(0, 10);
+    try {
+      const params = new URLSearchParams({ note_date: noteDate, limit: "1" });
+      const payload = await fetchTowerPgJson(
+        towerBaseUrl,
+        `/api/v4/flightdeck-pg/workspaces/${encodeURIComponent(workspaceId)}/daily-notes?${params.toString()}`,
+        appNpub,
+      );
+      const notes = Array.isArray(payload.daily_notes) ? payload.daily_notes : [];
+      const note = normaliseDailyNote(notes[0] ?? null);
+      if (!note.recordId && !note.focus && !note.title && !note.body) {
+        return {
+          skipAgent: true,
+          intent: "answer_now",
+          dispatchTask: false,
+          recommendedPipelineId: null,
+          taskDraft: null,
+          chatResponse: {
+            body: `I do not see a Daily Scope for ${noteDate} yet, so I do not have a reliable focus signal from Flight Deck.`,
+          },
+          clarifyingQuestion: null,
+          confidence: 0.78,
+          shortLookup: { kind: "daily_focus", fetched: true, noteDate, found: false },
+        };
+      }
+
+      const openItems = note.items
+        .filter((item) => item.status !== "completed")
+        .slice(0, 4)
+        .map((item) => item.title)
+        .filter(Boolean);
+      const completedItems = note.items.filter((item) => item.status === "completed").length;
+      const focus = note.focus || note.title || "today's Daily Scope";
+      const itemLine = openItems.length > 0
+        ? `\n\nOpen items I can see:\n${openItems.map((item) => `- ${item}`).join("\n")}`
+        : "";
+      const progressLine = note.items.length > 0
+        ? `\n\nProgress: ${completedItems}/${note.items.length} Daily Scope items complete.`
+        : "";
+      const body = `Today's focus is: ${focus}.${itemLine}${progressLine}`;
+      return {
+        skipAgent: true,
+        intent: "answer_now",
+        dispatchTask: false,
+        recommendedPipelineId: null,
+        taskDraft: null,
+        chatResponse: { body },
+        clarifyingQuestion: null,
+        confidence: 0.9,
+        shortLookup: {
+          kind: "daily_focus",
+          fetched: true,
+          noteDate,
+          found: true,
+          dailyNoteId: note.recordId,
+        },
+      };
+    } catch (error) {
+      return {
+        skipAgent: true,
+        intent: "answer_now",
+        dispatchTask: false,
+        recommendedPipelineId: null,
+        taskDraft: null,
+        chatResponse: {
+          body: `I tried to read today's Daily Scope, but Flight Deck returned an error: ${truncateText(error instanceof Error ? error.message : String(error), 220)}`,
+        },
+        clarifyingQuestion: null,
+        confidence: 0.72,
+        shortLookup: {
+          kind: "daily_focus",
+          fetched: false,
+          reason: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+  },
+
   async "dispatch.prepareChatTaskPipelineInput"(input) {
     const dispatch = objectValue(input.dispatch);
     const workspace = objectValue(input.workspace);

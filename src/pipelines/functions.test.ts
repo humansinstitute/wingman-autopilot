@@ -111,6 +111,105 @@ test("channel context sentinel is not treated as specific context", async () => 
   });
 });
 
+test("dispatch.prepareShortLookupAnswer answers greetings without an agent", async () => {
+  const result = await builtinPipelineFunctions["dispatch.prepareShortLookupAnswer"]!({
+    chatDispatchInput: {
+      latestThread: [
+        { messageId: "message-1", body: "Hey" },
+      ],
+    },
+  });
+
+  expect(result).toMatchObject({
+    skipAgent: true,
+    intent: "answer_now",
+    dispatchTask: false,
+    chatResponse: { body: "Hey Pete." },
+    shortLookup: { kind: "greeting" },
+  });
+});
+
+test("dispatch.prepareShortLookupAnswer leaves ordinary chat for classification", async () => {
+  const result = await builtinPipelineFunctions["dispatch.prepareShortLookupAnswer"]!({
+    chatDispatchInput: {
+      latestThread: [
+        { messageId: "message-1", body: "Can you build the new WApp screen?" },
+      ],
+    },
+  });
+
+  expect(result).toMatchObject({
+    skipAgent: false,
+    intent: "needs_classification",
+    dispatchTask: false,
+  });
+});
+
+test("dispatch.prepareShortLookupAnswer answers focus questions from Daily Scope", async () => {
+  const previousWingmanPriv = process.env.WINGMAN_PRIV;
+  const previousFetch = globalThis.fetch;
+  const requested: { url?: string; appNpub?: string | null; authorization?: string | null } = {};
+  process.env.WINGMAN_PRIV = nip19.nsecEncode(generateSecretKey());
+  globalThis.fetch = (async (input, init) => {
+    requested.url = String(input);
+    const headers = new Headers(init?.headers);
+    requested.appNpub = headers.get("x-flightdeck-pg-app-npub");
+    requested.authorization = headers.get("authorization");
+    return Response.json({
+      daily_notes: [
+        {
+          id: "daily-1",
+          note_date: new Date().toISOString().slice(0, 10),
+          title: "Daily Scope",
+          focus: "Make Flight Deck and Autopilot demo-ready.",
+          items: [
+            { title: "Tighten deploy/connect path", status: "in_progress" },
+            { title: "Keep Plantrite contained", status: "completed" },
+          ],
+        },
+      ],
+    });
+  }) as typeof fetch;
+
+  let result: Record<string, unknown>;
+  try {
+    result = await builtinPipelineFunctions["dispatch.prepareShortLookupAnswer"]!({
+      workspace: {
+        backendBaseUrl: "http://tower.local",
+        workspaceId: "workspace-1",
+        sourceAppNpub: "npub1app",
+      },
+      chatDispatchInput: {
+        latestThread: [
+          { messageId: "message-1", body: "What's our focus today?" },
+        ],
+      },
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousWingmanPriv === undefined) delete process.env.WINGMAN_PRIV;
+    else process.env.WINGMAN_PRIV = previousWingmanPriv;
+  }
+
+  expect(requested.url).toContain("http://tower.local/api/v4/flightdeck-pg/workspaces/workspace-1/daily-notes");
+  expect(requested.appNpub).toBe("npub1app");
+  expect(requested.authorization).toStartWith("Nostr ");
+  expect(result).toMatchObject({
+    skipAgent: true,
+    intent: "answer_now",
+    dispatchTask: false,
+    shortLookup: {
+      kind: "daily_focus",
+      fetched: true,
+      found: true,
+      dailyNoteId: "daily-1",
+    },
+  });
+  expect(((result.chatResponse as any).body as string)).toContain("Make Flight Deck and Autopilot demo-ready.");
+  expect(((result.chatResponse as any).body as string)).toContain("Tighten deploy/connect path");
+  expect(((result.chatResponse as any).body as string)).toContain("1/2 Daily Scope items complete");
+});
+
 test("task work plans preserve Flight Deck channel context for child sessions", async () => {
   const result = await builtinPipelineFunctions["dispatch.normaliseTaskWorkPlan"]({
     agentResponse: {
@@ -1424,6 +1523,7 @@ describe("memory pipeline functions", () => {
     expect(names).toEqual([
       "hydrate-chat-context",
       "prepare-intent-input",
+      "prepare-short-lookup-answer",
       "analyse-intent",
       "normalise-decision",
       "route-discussion-chat",
@@ -1442,6 +1542,7 @@ describe("memory pipeline functions", () => {
     expect(functions).not.toContain("dispatch.completeReviewTaskFromChat");
     expect(functions).not.toContain("dispatch.blockTaskIfPipelineLaunchFailed");
     expect(functions).toContain("dispatch.routeDiscussionChat");
+    expect(functions).toContain("dispatch.prepareShortLookupAnswer");
     expect(functions).toContain("dispatch.prepareChatTaskPipelineInput");
     expect(functions).toContain("dispatch.normaliseChatTaskPipelineSelection");
 

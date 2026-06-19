@@ -74,6 +74,7 @@ describe("pipeline definition version paths", () => {
     expect(definition?.spec.steps.map((step) => step.name)).toEqual([
       "hydrate-chat-context",
       "prepare-intent-input",
+      "prepare-short-lookup-answer",
       "analyse-intent",
       "normalise-decision",
       "route-discussion-chat",
@@ -88,9 +89,13 @@ describe("pipeline definition version paths", () => {
       "publish-chat-response",
     ]);
     expect(definition?.spec.steps.find((step) => step.name === "analyse-intent")).toMatchObject({
-      when: { path: "$.chatContext.shouldProceed", equals: true },
+      when: { path: "$.agentDecision.skipAgent", equals: false },
       agent: "opencode",
       model: "openrouter/deepseek/deepseek-v4-flash",
+    });
+    expect(definition?.spec.steps.find((step) => step.name === "prepare-short-lookup-answer")).toMatchObject({
+      type: "code",
+      function: "dispatch.prepareShortLookupAnswer",
     });
     expect(definition?.spec.steps.find((step) => step.name === "select-task-pipeline")).toMatchObject({
       agent: "opencode",
