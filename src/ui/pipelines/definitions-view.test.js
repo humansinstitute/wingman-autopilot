@@ -78,4 +78,62 @@ describe("pipeline definition list rendering", () => {
     expect(html).toContain("<code>Message</code>");
     expect(html).toContain("<code>Thread</code>");
   });
+
+  test("renders agent prompts in definition previews", () => {
+    const definition = {
+      id: "agent-pipeline",
+      name: "Agent Pipeline",
+      description: "Shows agent prompts",
+      scope: "user",
+      default: false,
+      tags: [],
+      steps: [{
+        name: "Decide",
+        type: "agent",
+        agent: "$.agent.defaultAgent",
+        prompt: "Read the thread and decide what happens next.",
+      }],
+    };
+
+    const html = renderDefinitionDetailPage(makeState({ definitions: [definition] }), definition);
+
+    expect(html).toContain('data-testid="pipeline-agent-prompt-preview"');
+    expect(html).toContain('data-testid="pipeline-agent-prompt-text"');
+    expect(html).toContain("Read the thread and decide what happens next.");
+    expect(html).toContain("Edit Prompt");
+  });
+
+  test("renders agent prompts as direct fields in manual edit mode", () => {
+    const definition = {
+      id: "agent-pipeline",
+      name: "Agent Pipeline",
+      description: "Shows agent prompts",
+      scope: "user",
+      default: false,
+      tags: [],
+      steps: [{
+        name: "Decide",
+        type: "agent",
+        prompt: "Use the available context.",
+      }],
+    };
+
+    const html = renderDefinitionDetailPage(makeState({
+      definitions: [definition],
+      manualEditDefinitionId: definition.id,
+      manualEditForm: {
+        name: definition.name,
+        description: definition.description,
+        tagsText: "",
+        default: false,
+        inputText: "{}",
+        stepsText: JSON.stringify(definition.steps, null, 2),
+      },
+    }), definition);
+
+    expect(html).toContain('data-testid="pipeline-manual-agent-prompts"');
+    expect(html).toContain('data-action="manual-edit-agent-prompt"');
+    expect(html).toContain('data-step-index="0"');
+    expect(html).toContain("Use the available context.");
+  });
 });

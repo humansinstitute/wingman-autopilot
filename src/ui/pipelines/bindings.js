@@ -111,8 +111,10 @@ function bindWizardActions(root, page, actions) {
   root.querySelector('[data-action="open-edit-wizard"]')?.addEventListener("click", (event) => {
     actions.openEditWizard(page, event.currentTarget?.dataset?.id ?? "");
   });
-  root.querySelector('[data-action="open-manual-edit"]')?.addEventListener("click", (event) => {
-    actions.openManualEdit(page, event.currentTarget?.dataset?.id ?? "");
+  root.querySelectorAll('[data-action="open-manual-edit"]').forEach((button) => {
+    button.addEventListener("click", (event) => {
+      actions.openManualEdit(page, event.currentTarget?.dataset?.id ?? "");
+    });
   });
   root.querySelectorAll('[data-action="cancel-manual-edit"]').forEach((button) => {
     button.addEventListener("click", () => actions.cancelManualEdit(page));
@@ -120,6 +122,11 @@ function bindWizardActions(root, page, actions) {
   root.querySelectorAll('[data-action="manual-edit-field"]').forEach((input) => {
     input.addEventListener("input", (event) => {
       actions.updateManualEditField(event.target?.dataset?.field ?? "", event.target?.value ?? "");
+    });
+  });
+  root.querySelectorAll('[data-action="manual-edit-agent-prompt"]').forEach((input) => {
+    input.addEventListener("input", (event) => {
+      actions.updateManualAgentPrompt(event.target?.dataset?.stepIndex ?? "", event.target?.value ?? "");
     });
   });
   root.querySelector('[data-action="manual-edit-default"]')?.addEventListener("change", (event) => {

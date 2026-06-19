@@ -147,6 +147,24 @@ export function createPipelineActionHandlers(deps) {
       if (!state.manualEditForm) state.manualEditForm = {};
       state.manualEditForm[field] = value;
     },
+    updateManualAgentPrompt: (stepIndex, value) => {
+      if (!state.manualEditForm) state.manualEditForm = {};
+      const index = Number(stepIndex);
+      if (!Number.isInteger(index) || index < 0) return;
+      let steps;
+      try {
+        steps = JSON.parse(state.manualEditForm.stepsText || "[]");
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : String(error), { type: "error" });
+        return;
+      }
+      if (!Array.isArray(steps) || !steps[index] || typeof steps[index] !== "object") {
+        showToast("Agent prompt cannot be updated because the workflow steps JSON is invalid.", { type: "error" });
+        return;
+      }
+      steps[index] = { ...steps[index], prompt: value };
+      state.manualEditForm.stepsText = JSON.stringify(steps, null, 2);
+    },
     updateManualEditDefault: (value) => {
       if (!state.manualEditForm) state.manualEditForm = {};
       state.manualEditForm.default = value === true;

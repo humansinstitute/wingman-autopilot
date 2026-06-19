@@ -13,6 +13,8 @@ import {
 } from "./view-utils.js";
 
 const DEFINITION_FIELD_ROW_LIMIT = 5;
+const AGENT_PROMPT_MIN_ROWS = 5;
+const AGENT_PROMPT_MAX_ROWS = 14;
 
 export function getDefinitionFlowRows(step, direction) {
   const explicitRows = getDefinitionDisplayRows(step, direction);
@@ -318,6 +320,7 @@ function renderManualEditPanel(state, definition) {
         <span>Workflow steps JSON</span>
         <textarea data-action="manual-edit-field" data-field="stepsText" rows="12" spellcheck="false" aria-label="Pipeline workflow steps JSON">${escapeHtml(form.stepsText ?? JSON.stringify(definition.steps ?? [], null, 2))}</textarea>
       </label>
+      ${renderManualAgentPromptEditors(form, definition)}
       <div class="wm-pipeline-launcher-actions">
         <button type="button" data-action="cancel-manual-edit" aria-label="Cancel manual edit">Cancel</button>
         <button type="button" data-action="save-manual-edit" data-id="${escapeAttribute(definition.id)}" aria-label="Save manual edit as next version" ${state.manualEditBusy ? "disabled" : ""}>
@@ -327,6 +330,57 @@ function renderManualEditPanel(state, definition) {
       ${state.manualEditResult ? renderManualEditResult(state.manualEditResult) : ""}
     </section>
   `;
+}
+
+function renderManualAgentPromptEditors(form, definition) {
+  const stepsText = form.stepsText ?? JSON.stringify(definition.steps ?? [], null, 2);
+  const steps = parseStepsForPromptEditors(stepsText);
+  if (!steps) {
+    return `
+      <section class="wm-pipeline-agent-prompts" aria-labelledby="pipeline-agent-prompts-title">
+        <div>
+          <h4 id="pipeline-agent-prompts-title">Agent Prompts</h4>
+          <p class="wm-muted">Fix the workflow steps JSON to edit prompts individually.</p>
+        </div>
+      </section>
+    `;
+  }
+
+  const agentSteps = steps
+    .map((step, index) => ({ step, index }))
+    .filter(({ step }) => isAgentDefinitionStep(step));
+
+  if (!agentSteps.length) return "";
+
+  return `
+    <section class="wm-pipeline-agent-prompts" aria-labelledby="pipeline-agent-prompts-title" data-testid="pipeline-manual-agent-prompts">
+      <div>
+        <h4 id="pipeline-agent-prompts-title">Agent Prompts</h4>
+        <p class="wm-muted">Edit the prompts used by agent steps. Saving creates the next pipeline version.</p>
+      </div>
+      ${agentSteps.map(({ step, index }) => `
+        <label class="wm-pipeline-field wm-pipeline-agent-prompt-editor">
+          <span>${escapeHtml(step.name || `Step ${index + 1}`)}</span>
+          <textarea
+            data-action="manual-edit-agent-prompt"
+            data-step-index="${escapeAttribute(String(index))}"
+            rows="${promptTextareaRows(step.prompt)}"
+            spellcheck="true"
+            aria-label="Agent prompt for ${escapeAttribute(step.name || `step ${index + 1}`)}"
+          >${escapeHtml(getPromptTextForEditing(step.prompt))}</textarea>
+        </label>
+      `).join("")}
+    </section>
+  `;
+}
+
+function parseStepsForPromptEditors(stepsText) {
+  try {
+    const steps = JSON.parse(stepsText || "[]");
+    return Array.isArray(steps) ? steps : null;
+  } catch {
+    return null;
+  }
 }
 
 function renderManualEditResult(result) {
@@ -344,12 +398,12 @@ function renderDefinitionFlow(definition) {
   if (!steps.length) return `<p class="wm-muted">No steps defined.</p>`;
   return `
     <div class="wm-pipeline-definition-flow">
-      ${steps.map((step, index) => renderDefinitionStep(step, index)).join("")}
+      ${steps.map((step, index) => renderDefinitionStep(step, index, definition)).join("")}
     </div>
   `;
 }
 
-function renderDefinitionStep(step, index) {
+function renderDefinitionStep(step, index, definition) {
   const inputRows = getDefinitionFlowRows(step, "in");
   const outputRows = getDefinitionFlowRows(step, "out");
   return `
@@ -363,12 +417,55 @@ function renderDefinitionStep(step, index) {
       ${step.description ? `<p>${escapeHtml(step.description)}</p>` : ""}
       ${step.target ? `<p class="wm-muted">Loops to <code>${escapeHtml(step.target)}</code>${step.iterations ? ` until <code>${escapeHtml(String(step.iterations))}</code> passes complete` : ""}</p>` : ""}
       ${step.assign ? `<p class="wm-muted">Assigns to <code>${escapeHtml(step.assign)}</code></p>` : ""}
+      ${renderAgentPromptPreview(step, definition)}
       <div class="wm-pipeline-step-flow-grid">
         ${renderDefinitionFieldSet("Definitions In", inputRows)}
         ${renderDefinitionFieldSet("Activity Out", outputRows)}
       </div>
     </article>
   `;
+}
+
+function renderAgentPromptPreview(step, definition) {
+  if (!isAgentDefinitionStep(step)) return "";
+
+  const promptText = getPromptPreviewText(step.prompt);
+  const editAction = definition?.scope === "user"
+    ? `<button type="button" data-action="open-manual-edit" data-id="${escapeAttribute(definition.id)}" aria-label="Edit agent prompt for ${escapeAttribute(step.name || "pipeline step")}">Edit Prompt</button>`
+    : `<span class="wm-muted">Create a user-owned version before editing.</span>`;
+
+  return `
+    <section class="wm-pipeline-agent-prompt-preview" aria-label="Agent prompt for ${escapeAttribute(step.name || "pipeline step")}" data-testid="pipeline-agent-prompt-preview">
+      <div class="wm-pipeline-agent-prompt-header">
+        <strong>Prompt</strong>
+        ${editAction}
+      </div>
+      <textarea readonly rows="${promptTextareaRows(step.prompt)}" spellcheck="false" data-testid="pipeline-agent-prompt-text" aria-label="Agent prompt text">${escapeHtml(promptText)}</textarea>
+    </section>
+  `;
+}
+
+function isAgentDefinitionStep(step) {
+  return step?.type === "agent" || Boolean(step?.agent);
+}
+
+function getPromptPreviewText(prompt) {
+  if (typeof prompt === "string") {
+    return prompt.trim() ? prompt : "No prompt defined for this agent step.";
+  }
+  if (prompt === undefined || prompt === null) return "No prompt defined for this agent step.";
+  return JSON.stringify(prompt, null, 2);
+}
+
+function getPromptTextForEditing(prompt) {
+  return typeof prompt === "string" ? prompt : "";
+}
+
+function promptTextareaRows(prompt) {
+  const text = getPromptPreviewText(prompt);
+  const lineCount = text.split(/\r\n|\r|\n/).length;
+  const softWrapRows = Math.ceil(text.length / 110);
+  return Math.max(AGENT_PROMPT_MIN_ROWS, Math.min(AGENT_PROMPT_MAX_ROWS, lineCount + softWrapRows));
 }
 
 function getFilteredDefinitions(state) {
