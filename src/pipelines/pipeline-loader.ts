@@ -354,7 +354,7 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
 
 const AGENT_DISPATCH_TASK_DEFINITION = {
   name: "agent-dispatch-task-response",
-  description: "Task intake dispatch pipeline. It investigates the task, chooses a longer-running software implementation or generic do-and-review child pipeline, starts it, then comments back with the launched work plan.",
+  description: "Task intake delegator. It investigates the task, chooses software-implementation-review-loop, research-and-report, or do-and-review, starts the child pipeline, then comments back with the launched work plan.",
   default: true,
   tags: ["default", "dispatch", "task", "intake", "flight-deck"],
   input: {
@@ -400,7 +400,7 @@ const AGENT_DISPATCH_TASK_DEFINITION = {
           flightDeckContext: "$.flightDeckContext",
         },
       },
-      prompt: "You are stage 1 of a Wingman task intake pipeline. Do an initial investigation from the task payload, flightDeckContext.channel.contextPrompt, and available runtime commands, then choose how the longer work should run. Treat flightDeckContext.channel.contextPrompt as channel-specific instructions for how this task should be handled. Choose workStyle as either software_implementation for repo/code/build/test work, or do_and_review for generic work such as internet research, planning, writing, booking research, or operational tasks. Return JSON fields: accepted boolean, workStyle string, taskSummary string, initialFindings array, executionPlan array, managerChecklist array, taskUpdatePlan array, risks array, confidence number from 0 to 1. The executionPlan must explicitly say when the child worker and manager should update the Flight Deck task.",
+      prompt: "You are stage 1 of a Wingman task intake delegator. Do an initial investigation from the task payload, flightDeckContext.channel.contextPrompt, and available runtime context, then choose the origin-agnostic child work pipeline. Treat flightDeckContext.channel.contextPrompt as channel-specific instructions for how this task should be handled. Choose workStyle as software_implementation for repo/code/build/test/deployment work, research_and_report for durable research that should produce a cited report or document, or do_and_review for generic operational, planning, writing, or artifact work. Do not choose dispatch, chat, comment, intake, or document-discussion pipelines. Return JSON fields: accepted boolean, workStyle string, taskSummary string, initialFindings array, executionPlan array, managerChecklist array, taskUpdatePlan array, risks array, confidence number from 0 to 1. The executionPlan must explicitly say when the child worker and manager should update the Flight Deck task.",
       assign: "$.agentResponse",
       display: {
         in: [
@@ -917,7 +917,7 @@ const AGENT_DISPATCH_COMMENT_DEFINITION = {
           flightDeckContext: "$.flightDeckContext",
         },
       },
-      prompt: "You are handling a Wingman comment dispatch. Read the comment payload and flightDeckContext.channel.contextPrompt, then draft a reply for the existing comment thread. Treat flightDeckContext.channel.contextPrompt as channel-specific instructions for how this document/task comment should be handled. Do not run any Flight Deck or Yoke CLI commands yourself; the next deterministic pipeline step will publish the reply. Return JSON fields: replyDraft string, targetNeedsWork boolean, blockers array, nextAction string, confidence number from 0 to 1.",
+      prompt: "You are handling a Wingman comment dispatch. Read the comment payload and flightDeckContext.channel.contextPrompt, then draft a reply for the existing comment thread. Treat flightDeckContext.channel.contextPrompt as channel-specific instructions for how this document/task comment should be handled. Do not run CLI commands or APIs that mutate Flight Deck state yourself; the next deterministic Flight Deck PG/Tower pipeline step will publish the reply. Return JSON fields: replyDraft string, targetNeedsWork boolean, blockers array, nextAction string, confidence number from 0 to 1.",
       assign: "$.agentResponse",
       display: {
         in: [

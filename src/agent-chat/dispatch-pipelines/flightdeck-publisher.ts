@@ -27,17 +27,10 @@ import {
   updateFlightDeckPgTaskState,
   type FlightDeckPgMessage,
 } from '../tower-client';
-import {
-  buildAgentChatYokeCommands,
-  buildAgentDocumentCommentYokeCommands,
-  buildAgentTaskCommentYokeCommands,
-  prepareAgentWorkspaceYokeRuntime,
-  runAgentWorkspaceYokeCommand,
-} from '../yoke-runtime';
 import type { DispatchPipelineEventInput } from './runtime';
 
 export interface DispatchPipelineFlightDeckRuntime {
-  mode: 'yoke' | 'flightdeck_pg' | 'unavailable';
+  mode: 'flightdeck_pg' | 'unavailable';
   yokeStateDir: string | null;
   commandPrefix: string | null;
   commands: Record<string, string>;
@@ -86,10 +79,7 @@ function canUseFlightDeckRuntime(context: DispatchPipelineFlightDeckPublisherCon
   if (!context.botIdentity) {
     return false;
   }
-  if (isFlightDeckPgPublisherContext(context)) {
-    return true;
-  }
-  return Boolean(context.agent?.workingDirectory && context.runtime.yokeStateDir);
+  return isFlightDeckPgPublisherContext(context);
 }
 
 function normaliseSpeechTranscript(value: string): string {
@@ -580,44 +570,13 @@ export async function prepareDispatchPipelineFlightDeckRuntime(input: {
       error: botIdentity ? null : 'No runtime bot identity was available.',
     };
   }
-  const workingDirectory = input.agent?.workingDirectory ?? null;
-  if (!botIdentity || !workingDirectory) {
-    return {
-      mode: 'unavailable',
-      yokeStateDir: null,
-      commandPrefix: null,
-      commands: {},
-      error: !botIdentity ? 'No runtime bot identity was available.' : 'No agent working directory was available.',
-    };
-  }
-
-  try {
-    const workspace = await prepareAgentWorkspaceYokeRuntime({
-      sessionId: `dispatch-pipeline-${safeSessionId(input.eventInput.subscription.subscriptionId)}`,
-      workingDirectory,
-      subscription: input.eventInput.subscription,
-      botIdentity,
-      options: {
-        syncMode: 'lazy',
-        minSyncIntervalMs: 5 * 60 * 1000,
-      },
-    });
-    return {
-      mode: 'yoke',
-      yokeStateDir: workspace.stateDir,
-      commandPrefix: workspace.commandPrefix,
-      commands: buildRuntimeCommands(input.eventInput, workspace.stateDir, workspace.commandPrefix),
-      error: null,
-    };
-  } catch (error) {
-    return {
-      mode: 'unavailable',
-      yokeStateDir: null,
-      commandPrefix: null,
-      commands: {},
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
+  return {
+    mode: 'unavailable',
+    yokeStateDir: null,
+    commandPrefix: null,
+    commands: {},
+    error: 'Flight Deck PG workspace context is required; Yoke fallback is disabled.',
+  };
 }
 
 export function createDispatchFlightDeckPublisher(
@@ -2696,23 +2655,10 @@ async function publishCommentReply(
 }
 
 async function runYokeJson(
-  context: DispatchPipelineFlightDeckPublisherContext,
-  args: string[],
+  _context: DispatchPipelineFlightDeckPublisherContext,
+  _args: string[],
 ): Promise<unknown> {
-  const stdout = await runAgentWorkspaceYokeCommand({
-    args,
-    workingDirectory: context.agent!.workingDirectory,
-    stateDir: context.runtime.yokeStateDir!,
-    botIdentity: context.botIdentity!,
-  });
-  if (!stdout) {
-    return null;
-  }
-  try {
-    return JSON.parse(stdout);
-  } catch {
-    return stdout;
-  }
+  throw new Error('Yoke fallback is disabled; Flight Deck PG/Tower publisher support is required.');
 }
 
 function stepNeedsFlightDeckPublisher(step: DeclarativeStep): boolean {
@@ -2745,44 +2691,11 @@ function stepNeedsFlightDeckPublisher(step: DeclarativeStep): boolean {
 }
 
 function buildRuntimeCommands(
-  eventInput: DispatchPipelineEventInput,
-  stateDir: string,
-  commandPrefix: string,
+  _eventInput: DispatchPipelineEventInput,
+  _stateDir: string,
+  _commandPrefix: string,
 ): Record<string, string> {
-  const commands: Record<string, string> = {
-    sync: `${commandPrefix} sync --json`,
-  };
-  if (eventInput.triggerKind === 'chat' && eventInput.channelId && eventInput.threadId) {
-    return {
-      ...commands,
-      ...buildAgentChatYokeCommands(stateDir, eventInput.channelId, eventInput.threadId),
-    };
-  }
-  if (eventInput.triggerKind === 'task' || eventInput.triggerKind === 'task_review') {
-    const taskId = getRecordId(eventInput);
-    if (taskId) {
-      return {
-        ...commands,
-        show: `${commandPrefix} tasks show ${shellQuote(taskId)} --json`,
-        update: `${commandPrefix} tasks update ${shellQuote(taskId)} --state ${shellQuote('<state>')} --json`,
-        comment: `${commandPrefix} tasks comment ${shellQuote(taskId)} --body ${shellQuote('<comment>')} --json`,
-      };
-    }
-  }
-  if (eventInput.triggerKind === 'comment') {
-    const commentId = getText(eventInput.payload.commentId) ?? getText(eventInput.payload.comment_id) ?? eventInput.recordId;
-    const targetRecordId = getText(eventInput.payload.targetRecordId) ?? getText(eventInput.payload.target_record_id) ?? '';
-    const family = getText(eventInput.payload.targetRecordFamilyHash)
-      ?? getText(eventInput.payload.target_record_family_hash)
-      ?? '';
-    return {
-      ...commands,
-      ...(eventInput.bindingType === 'task' || family.toLowerCase().includes('task')
-        ? buildAgentTaskCommentYokeCommands(stateDir, targetRecordId, commentId)
-        : buildAgentDocumentCommentYokeCommands(stateDir, targetRecordId, commentId)),
-    };
-  }
-  return commands;
+  return {};
 }
 
 function buildTaskCommentBody(

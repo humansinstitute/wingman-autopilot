@@ -145,20 +145,17 @@ const DEFAULT_DISPATCH_PIPELINE_ROUTES: Array<{
   {
     triggerKind: 'chat',
     capability: 'chat_intercept',
-    pipelineDefinitionId: 'agent-dispatch-chat',
-    flightDeckPgPipelineDefinitionId: 'fd-agent-dispatch-chat',
+    pipelineDefinitionId: 'fd-agent-dispatch-chat',
   },
   {
     triggerKind: 'task',
     capability: 'task_dispatch',
-    pipelineDefinitionId: 'agent-dispatch-task-response',
-    flightDeckPgPipelineDefinitionId: 'fd-agent-dispatch-task-response',
+    pipelineDefinitionId: 'fd-agent-dispatch-task-response',
   },
   {
     triggerKind: 'comment',
     capability: 'comment_dispatch',
-    pipelineDefinitionId: 'agent-dispatch-comment-response',
-    flightDeckPgPipelineDefinitionId: 'fd-agent-dispatch-comment-response',
+    pipelineDefinitionId: 'fd-agent-dispatch-comment-response',
   },
 ];
 
@@ -166,9 +163,7 @@ function getDefaultDispatchPipelineDefinitionId(
   subscription: WorkspaceSubscriptionRecord,
   routeConfig: (typeof DEFAULT_DISPATCH_PIPELINE_ROUTES)[number],
 ): string {
-  return isFlightDeckPgSubscription(subscription) && routeConfig.flightDeckPgPipelineDefinitionId
-    ? routeConfig.flightDeckPgPipelineDefinitionId
-    : routeConfig.pipelineDefinitionId;
+  return routeConfig.pipelineDefinitionId;
 }
 
 export class WorkspaceSubscriptionAccessError extends Error {
@@ -3160,7 +3155,7 @@ export class WorkspaceSubscriptionManager {
         eventType: 'chat_mention',
         scopeId,
         channelId,
-        builtInDefaultPipelineId: 'agent-dispatch-chat',
+        builtInDefaultPipelineId: 'fd-agent-dispatch-chat',
       });
       if (!profilePolicyAllowsDispatch(profileDecision)) {
         return this.appendProfilePolicySuppression({
@@ -3612,7 +3607,7 @@ export class WorkspaceSubscriptionManager {
               eventType: 'chat_mention',
               scopeId: routingContext.scopeId,
               channelId: routingContext.channelId,
-              builtInDefaultPipelineId: 'agent-dispatch-chat',
+              builtInDefaultPipelineId: 'fd-agent-dispatch-chat',
             });
             if (!profilePolicyAllowsDispatch(profileDecision)) {
               return this.appendProfilePolicySuppression({
@@ -3758,7 +3753,7 @@ export class WorkspaceSubscriptionManager {
               eventType: 'chat_mention',
               scopeId: assignment.scopeId,
               channelId: assignment.intercept.channelId,
-              builtInDefaultPipelineId: 'agent-dispatch-chat',
+              builtInDefaultPipelineId: 'fd-agent-dispatch-chat',
             });
             if (!profilePolicyAllowsLegacyPrompt(profileDecision)) {
               record = this.appendProfilePolicySuppression({
@@ -4019,7 +4014,7 @@ export class WorkspaceSubscriptionManager {
         eventType: eventTypeForTaskDispatchMode(dispatchMode),
         scopeId: getTaskScopeId(task),
         builtInDefaultPipelineId: dispatchMode === 'task_dispatch'
-          ? 'agent-dispatch-task-response'
+          ? 'fd-agent-dispatch-task-response'
           : undefined,
       });
       if (!profilePolicyAllowsDispatch(profileDecision)) {
@@ -4593,7 +4588,7 @@ export class WorkspaceSubscriptionManager {
     const profileDecision = this.resolveProfileRuntimeDecision({
       subscription: record,
       eventType: 'task_comment',
-      builtInDefaultPipelineId: 'agent-dispatch-comment-response',
+      builtInDefaultPipelineId: 'fd-agent-dispatch-comment-response',
     });
     if (!profilePolicyAllowsDispatch(profileDecision)) {
       return this.appendProfilePolicySuppression({
@@ -4774,7 +4769,7 @@ export class WorkspaceSubscriptionManager {
     const profileDecision = this.resolveProfileRuntimeDecision({
       subscription: record,
       eventType: 'document_comment_tagged',
-      builtInDefaultPipelineId: 'agent-dispatch-comment-response',
+      builtInDefaultPipelineId: 'fd-agent-dispatch-comment-response',
     });
     if (!profilePolicyAllowsDispatch(profileDecision)) {
       return this.appendProfilePolicySuppression({

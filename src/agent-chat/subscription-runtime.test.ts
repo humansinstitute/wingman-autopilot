@@ -1513,7 +1513,7 @@ describe('WorkspaceSubscriptionManager', () => {
       sourceAppNpub: subscription.sourceAppNpub,
       triggerKind: 'chat',
       capability: 'chat_intercept',
-      pipelineDefinitionId: 'agent-dispatch-chat',
+      pipelineDefinitionId: 'fd-agent-dispatch-chat',
       enabled: true,
     });
 

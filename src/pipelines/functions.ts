@@ -483,10 +483,14 @@ function isDispatchPipelineIdentifier(value: string | null): boolean {
   if (!value) return false;
   const normalized = value.toLowerCase();
   return normalized === "agent-dispatch-chat"
+    || normalized === "fd-agent-dispatch-chat"
     || normalized.startsWith("agent-dispatch-")
+    || normalized.startsWith("fd-agent-dispatch-")
     || normalized.startsWith("demo-agent-dispatch-")
+    || normalized.includes("agent-dispatch-")
     || normalized.includes("/agent-dispatch-chat.json")
     || normalized.includes("/agent-dispatch-")
+    || normalized.includes("/fd-agent-dispatch-")
     || normalized.includes("/demo-agent-dispatch-");
 }
 
@@ -1949,14 +1953,21 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     ).toLowerCase();
     const combined = `${requestedStyle} ${title} ${description}`;
     const softwareLikely = /\b(code|software|implementation|bug|fix|repo|repository|test|typescript|javascript|frontend|backend|api|database|migration|build|deploy|ui|server)\b/.test(combined);
-    const workStyle = requestedStyle.includes("do_and_review") || requestedStyle.includes("generic")
+    const researchLikely = /\b(research|report|sources?|citations?|evidence|survey|compare|comparison|market|analysis|investigate)\b/.test(combined);
+    const workStyle = requestedStyle.includes("research") || requestedStyle.includes("report")
+      ? "research_and_report"
+      : requestedStyle.includes("do_and_review") || requestedStyle.includes("generic")
       ? "do_and_review"
       : requestedStyle.includes("software") || requestedStyle.includes("implementation") || softwareLikely
         ? "software_implementation"
+        : researchLikely
+          ? "research_and_report"
         : "do_and_review";
     const childPipelineDefinitionId = workStyle === "software_implementation"
       ? "software-implementation-review-loop"
-      : "do-and-review";
+      : workStyle === "research_and_report"
+        ? "research-and-report"
+        : "do-and-review";
     const executionPlan = getStringArray(response.executionPlan);
     const managerChecklist = getStringArray(response.managerChecklist);
     const taskUpdatePlan = getStringArray(response.taskUpdatePlan);

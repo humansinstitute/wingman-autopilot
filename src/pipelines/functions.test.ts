@@ -704,6 +704,26 @@ describe("memory pipeline functions", () => {
     expect(result.childPipelineDefinitionId).toBe("software-implementation-review-loop");
   });
 
+  test("dispatch.normaliseTaskWorkPlan routes explicit research to research-and-report", async () => {
+    const result = await builtinPipelineFunctions["dispatch.normaliseTaskWorkPlan"]!({
+      agentResponse: {
+        accepted: true,
+        workStyle: "research_and_report",
+        taskSummary: "Research current API options and write a report.",
+        confidence: 0.9,
+      },
+      record: {
+        payload: {
+          title: "Research API options",
+          description: "Compare sources and produce a concise report.",
+        },
+      },
+    });
+
+    expect(result.workStyle).toBe("research_and_report");
+    expect(result.childPipelineDefinitionId).toBe("research-and-report");
+  });
+
   test("dispatch.normaliseTaskWorkPlan extracts PH1 ticket paths into software work plans", async () => {
     const ticketPath = "/Users/mini/code/wingmanbefree/flightdeck-pg/implementation/phase1/ticket_ph1_2_typed_api_contract_fixtures.md";
     const result = await builtinPipelineFunctions["dispatch.normaliseTaskWorkPlan"]!({
@@ -1219,6 +1239,18 @@ describe("memory pipeline functions", () => {
             scope: "shared",
           },
           {
+            id: "shared:fd-agent-dispatch-chat",
+            slug: "fd-agent-dispatch-chat",
+            name: "fd-agent-dispatch-chat",
+            scope: "shared",
+          },
+          {
+            id: "user:wm21-agent-dispatch-chat.v4",
+            slug: "wm21-agent-dispatch-chat.v4",
+            name: "wm21-agent-dispatch-chat",
+            scope: "user",
+          },
+          {
             id: "shared:12b50cd8ba58",
             slug: "do-and-review",
             name: "do-and-review",
@@ -1271,6 +1303,8 @@ describe("memory pipeline functions", () => {
       },
     ]);
     expect(JSON.stringify(result)).not.toContain("agent-dispatch-chat");
+    expect(JSON.stringify(result)).not.toContain("fd-agent-dispatch-chat");
+    expect(JSON.stringify(result)).not.toContain("wm21-agent-dispatch-chat");
   });
 
   test("dispatch.normaliseChatTaskPipelineSelection enables create_task after task pipeline selection", async () => {

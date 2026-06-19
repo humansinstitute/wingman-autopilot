@@ -11,7 +11,7 @@ import type {
 } from './types';
 
 const DEFAULT_DB_PATH = databaseFile;
-const BUILT_IN_DEFAULT_PIPELINE_ID = 'agent-dispatch-chat';
+const BUILT_IN_DEFAULT_PIPELINE_ID = 'fd-agent-dispatch-chat';
 
 export type AgentWorkspaceEventType =
   | 'direct_message'

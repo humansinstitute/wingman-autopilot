@@ -335,7 +335,7 @@ export class DispatchPipelineRuntime {
         };
       }
 
-      if (pipelineNeedsFlightDeckPublisher(definition.spec) && !flightDeckRuntime.yokeStateDir && input.triggerKind !== 'chat') {
+      if (pipelineNeedsFlightDeckPublisher(definition.spec) && flightDeckRuntime.mode !== 'flightdeck_pg' && input.triggerKind !== 'chat') {
         flightDeckRuntime = await prepareDispatchPipelineFlightDeckRuntime({ eventInput: input, agent });
       }
       let flightDeckChannelContext: DispatchFlightDeckChannelContext | null = null;
@@ -759,8 +759,7 @@ async function acknowledgeChatPipelineMessage(input: DispatchChatAcknowledgement
   if (!channelId) {
     return buildFailedChatAcknowledgement(input.eventInput, 'missing_channel_id');
   }
-  const runtimePrepared = input.flightDeckRuntime.mode === 'flightdeck_pg'
-    || Boolean(input.agent?.workingDirectory && input.flightDeckRuntime.yokeStateDir);
+  const runtimePrepared = input.flightDeckRuntime.mode === 'flightdeck_pg';
   if (!input.eventInput.botIdentity || !runtimePrepared) {
     return buildFailedChatAcknowledgement(
       input.eventInput,
@@ -1177,13 +1176,13 @@ function isSelfAuthoredChatEvent(
 
 function fallbackPipelineDefinitionId(route: DispatchRouteRecord): string | null {
   if (route.triggerKind === 'chat' && route.capability === 'chat_intercept') {
-    return 'agent-dispatch-chat';
+    return 'fd-agent-dispatch-chat';
   }
   if (route.triggerKind === 'task' && route.capability === 'task_dispatch') {
-    return 'agent-dispatch-task-response';
+    return 'fd-agent-dispatch-task-response';
   }
   if (route.triggerKind === 'comment' && route.capability === 'comment_dispatch') {
-    return 'agent-dispatch-comment-response';
+    return 'fd-agent-dispatch-comment-response';
   }
   return null;
 }
@@ -1211,9 +1210,9 @@ function normaliseFlightDeckRuntimeMode(
   workspaceId: string | null,
 ): DispatchPipelineFlightDeckRuntime['mode'] {
   if (value === 'flightdeck_pg' || value === 'yoke' || value === 'unavailable') {
-    return value;
+    return value === 'yoke' ? 'unavailable' : value;
   }
-  return workspaceId ? 'flightdeck_pg' : 'yoke';
+  return workspaceId ? 'flightdeck_pg' : 'unavailable';
 }
 
 function capabilityForStoredTrigger(triggerKind: DispatchTriggerKind): AgentCapability {
