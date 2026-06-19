@@ -16,8 +16,7 @@ export interface PipelineDefinitionRecord {
   spec: DeclarativePipeline;
 }
 
-const CHAT_DISPATCH_FAST_AGENT = "opencode";
-const CHAT_DISPATCH_FAST_MODEL = "openrouter/deepseek/deepseek-v4-flash";
+const CHAT_DISPATCH_CLASSIFIER_MODEL = "openai/gpt-oss-120b:nitro";
 
 const AGENT_DISPATCH_CHAT_DEFINITION = {
   name: "agent-dispatch-chat",
@@ -143,11 +142,12 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
     {
       name: "analyse-intent",
       description: "Analyse the hydrated thread and classify the request as answer_now or create_task.",
-      type: "agent",
+      type: "classifier",
       when: { path: "$.agentDecision.skipAgent", equals: false },
-      agent: CHAT_DISPATCH_FAST_AGENT,
-      model: CHAT_DISPATCH_FAST_MODEL,
-      directory: "$.agent.workingDirectory",
+      provider: "openrouter",
+      model: CHAT_DISPATCH_CLASSIFIER_MODEL,
+      retries: 3,
+      timeoutMs: 8000,
       input: {
         pick: {
           chatDispatchInput: "$.chatDispatchInput",
@@ -264,11 +264,12 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
     {
       name: "select-task-pipeline",
       description: "Choose the task-capable child pipeline only after create_task intent has been selected.",
-      type: "agent",
+      type: "classifier",
       when: { path: "$.decision.taskRoutingPending", equals: true },
-      agent: CHAT_DISPATCH_FAST_AGENT,
-      model: CHAT_DISPATCH_FAST_MODEL,
-      directory: "$.agent.workingDirectory",
+      provider: "openrouter",
+      model: CHAT_DISPATCH_CLASSIFIER_MODEL,
+      retries: 3,
+      timeoutMs: 8000,
       input: {
         pick: {
           taskPipelineInput: "$.taskPipelineInput",

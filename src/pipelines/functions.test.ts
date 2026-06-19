@@ -1545,6 +1545,18 @@ describe("memory pipeline functions", () => {
     expect(functions).toContain("dispatch.prepareShortLookupAnswer");
     expect(functions).toContain("dispatch.prepareChatTaskPipelineInput");
     expect(functions).toContain("dispatch.normaliseChatTaskPipelineSelection");
+    expect(spec.steps.find((step) => step.name === "analyse-intent")).toMatchObject({
+      type: "classifier",
+      provider: "openrouter",
+      model: "openai/gpt-oss-120b:nitro",
+      retries: 3,
+    });
+    expect(spec.steps.find((step) => step.name === "select-task-pipeline")).toMatchObject({
+      type: "classifier",
+      provider: "openrouter",
+      model: "openai/gpt-oss-120b:nitro",
+      retries: 3,
+    });
 
     const prepare = spec.steps.find((step) => step.name === "prepare-chat-response");
     expect(prepare?.input).toEqual({

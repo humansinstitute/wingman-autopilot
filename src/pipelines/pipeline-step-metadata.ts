@@ -31,8 +31,19 @@ function buildExecutorMetadata(step: DeclarativeStep): JsonObject {
     return compactObject({
       kind: "agent",
       agent: step.agent ?? null,
+      model: step.model ?? null,
       directory: step.directory ?? null,
       timeoutMs: step.timeoutMs ?? null,
+      prompt: step.prompt,
+    });
+  }
+  if (step.type === "classifier") {
+    return compactObject({
+      kind: "classifier",
+      provider: step.provider ?? "openrouter",
+      model: step.model ?? null,
+      timeoutMs: step.timeoutMs ?? null,
+      retries: step.retries ?? null,
       prompt: step.prompt,
     });
   }

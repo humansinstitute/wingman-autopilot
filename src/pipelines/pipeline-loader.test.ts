@@ -89,17 +89,21 @@ describe("pipeline definition version paths", () => {
       "publish-chat-response",
     ]);
     expect(definition?.spec.steps.find((step) => step.name === "analyse-intent")).toMatchObject({
+      type: "classifier",
       when: { path: "$.agentDecision.skipAgent", equals: false },
-      agent: "opencode",
-      model: "openrouter/deepseek/deepseek-v4-flash",
+      provider: "openrouter",
+      model: "openai/gpt-oss-120b:nitro",
+      retries: 3,
     });
     expect(definition?.spec.steps.find((step) => step.name === "prepare-short-lookup-answer")).toMatchObject({
       type: "code",
       function: "dispatch.prepareShortLookupAnswer",
     });
     expect(definition?.spec.steps.find((step) => step.name === "select-task-pipeline")).toMatchObject({
-      agent: "opencode",
-      model: "openrouter/deepseek/deepseek-v4-flash",
+      type: "classifier",
+      provider: "openrouter",
+      model: "openai/gpt-oss-120b:nitro",
+      retries: 3,
     });
     expect(JSON.stringify(definition?.spec.steps.find((step) => step.name === "analyse-intent"))).toContain(
       "Classify as answer_now, document_discussion, or create_task",

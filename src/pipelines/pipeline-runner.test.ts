@@ -29,9 +29,12 @@ afterEach(() => {
   delete process.env.PIPELINE_AGENT_INPUT_MAX_BYTES;
   delete process.env.PIPELINE_AGENT_CALLBACK_TIMEOUT_RETRIES;
   delete process.env.PIPELINE_AGENT_STEP_MAX_ATTEMPTS;
+  delete process.env.PIPELINE_CLASSIFIER_OPENROUTER_API_KEY;
+  globalThis.fetch = nativeFetch;
 });
 
 const makeStore = () => new PipelineStore(join(tempDir, "pipelines.sqlite"));
+const nativeFetch = globalThis.fetch;
 
 describe("runDeclarativePipeline", () => {
   test("runs object-in object-out code steps and records each step", async () => {
@@ -264,6 +267,130 @@ describe("runDeclarativePipeline", () => {
       actionRequired: true,
       keyPoints: ["decision point", "agent analysis"],
     });
+  });
+
+  test("runs classifier steps through OpenRouter JSON completion without launching an agent", async () => {
+    const store = makeStore();
+    const calls: Array<{ body: unknown; authorization: string | null }> = [];
+    globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      calls.push({
+        body: JSON.parse(String(init?.body ?? "{}")),
+        authorization: headers.get("authorization"),
+      });
+      return new Response(JSON.stringify({
+        choices: [
+          { message: { content: JSON.stringify({ intent: "answer_now", dispatchTask: false }) } },
+        ],
+      }), { status: 200 });
+    }) as typeof fetch;
+
+    const definition: PipelineDefinitionRecord = {
+      id: "classifier-test",
+      slug: "classifier-test",
+      name: "classifier-test",
+      scope: "user",
+      ownerAlias: "alpha-beta-gamma",
+      path: join(tempDir, "classifier-test.json"),
+      spec: {
+        name: "classifier-test",
+        input: { text: "hello" },
+        steps: [
+          {
+            name: "classify",
+            type: "classifier",
+            provider: "openrouter",
+            model: "openai/gpt-oss-120b:nitro",
+            prompt: "Classify the input.",
+            input: { pick: { text: "$.text" } },
+            assign: "$.decision",
+          },
+        ],
+      },
+    };
+
+    const run = await runDeclarativePipeline({
+      store,
+      sessionApiContext: {
+        userSettingsStore: {
+          getAll: () => ({ speech_api_key: "stored-speech-openrouter-key" }),
+        },
+      } as never,
+      definition,
+      registry: builtinPipelineFunctions,
+      input: definition.spec.input!,
+      ownerNpub: "npub-test",
+      ownerAlias: "alpha-beta-gamma",
+      callbackOrigin: "http://localhost",
+    });
+
+    expect(run.status).toBe("ok");
+    expect(run.result?.decision).toEqual({ intent: "answer_now", dispatchTask: false });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.authorization).toBe("Bearer stored-speech-openrouter-key");
+    const step = store.listSteps(run.id)[0]!;
+    expect(step.kind).toBe("classifier");
+    expect(step.wingmanSessionId).toBeNull();
+    expect(step.metadata).toMatchObject({
+      executor: {
+        kind: "classifier",
+        provider: "openrouter",
+        model: "openai/gpt-oss-120b:nitro",
+      },
+    });
+  });
+
+  test("retries classifier steps up to the configured limit before accepting valid JSON", async () => {
+    const store = makeStore();
+    process.env.PIPELINE_CLASSIFIER_OPENROUTER_API_KEY = "test-key";
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      const content = calls < 3
+        ? "not json"
+        : JSON.stringify({ recommendedPipelineId: "do-and-review", confidence: 0.9 });
+      return new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status: 200 });
+    }) as typeof fetch;
+
+    const definition: PipelineDefinitionRecord = {
+      id: "classifier-retry-test",
+      slug: "classifier-retry-test",
+      name: "classifier-retry-test",
+      scope: "user",
+      ownerAlias: "alpha-beta-gamma",
+      path: join(tempDir, "classifier-retry-test.json"),
+      spec: {
+        name: "classifier-retry-test",
+        input: { text: "build it" },
+        steps: [
+          {
+            name: "classify",
+            type: "classifier",
+            provider: "openrouter",
+            model: "openai/gpt-oss-120b:nitro",
+            prompt: "Choose a pipeline.",
+            retries: 3,
+            input: { pick: { text: "$.text" } },
+            assign: "$.selection",
+          },
+        ],
+      },
+    };
+
+    const run = await runDeclarativePipeline({
+      store,
+      sessionApiContext: {} as never,
+      definition,
+      registry: builtinPipelineFunctions,
+      input: definition.spec.input!,
+      ownerNpub: "npub-test",
+      ownerAlias: "alpha-beta-gamma",
+      callbackOrigin: "http://localhost",
+    });
+
+    expect(run.status).toBe("ok");
+    expect(calls).toBe(3);
+    expect(run.result?.selection).toEqual({ recommendedPipelineId: "do-and-review", confidence: 0.9 });
   });
 
   test("runs a flat loop-control step for a bounded number of iterations", async () => {

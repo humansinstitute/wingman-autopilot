@@ -72,6 +72,23 @@ export type DeclarativeStep =
       name: string;
       description?: string;
       display?: StepDisplaySpec;
+      type: "classifier";
+      prompt: string;
+      input?: SelectorSpec;
+      assign?: string;
+      when?: EqualsCondition;
+      provider?: "openrouter";
+      model?: string;
+      temperature?: number;
+      maxTokens?: number;
+      timeoutMs?: number | string;
+      retries?: number | string;
+    }
+  | {
+      id?: string;
+      name: string;
+      description?: string;
+      display?: StepDisplaySpec;
       type: "loop";
       iterations?: number | string;
       target?: string;

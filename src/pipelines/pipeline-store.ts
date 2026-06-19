@@ -4,7 +4,7 @@ import { mkdirSync } from "node:fs";
 
 export type JsonObject = Record<string, unknown>;
 export type PipelineScope = "shared" | "user";
-export type StepKind = "code" | "agent" | "loop" | "block" | "parallel";
+export type StepKind = "code" | "agent" | "classifier" | "loop" | "block" | "parallel";
 export type PipelineStatus = "queued" | "running" | "ok" | "needs_input" | "error" | "skipped" | "cancelled";
 
 export interface PipelineRunRecord {
