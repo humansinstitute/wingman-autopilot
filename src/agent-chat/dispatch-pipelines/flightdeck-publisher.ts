@@ -2583,12 +2583,27 @@ async function publishChatReply(
         speechFilePrefix: 'chat-reply-tts',
         userPrompt: getText(objectValue(context.eventInput.payload)?.body),
       });
-      await setFlightDeckPgThreadResponseActivity(context, {
-        status: 'cleared',
-        label: 'Response published',
-        expiresInSeconds: 5,
-      }).catch((error) => {
-        console.warn('[dispatch-publisher] failed to clear published response activity', error);
+      const childPipeline = objectValue(response.childPipeline);
+      const childPipelineStarted = childPipeline.started !== false
+        && Boolean(getText(childPipeline.pipelineRunId))
+        && !new Set(['failed', 'error', 'needs_input']).has(getText(childPipeline.status) ?? '');
+      await setFlightDeckPgThreadResponseActivity(context, childPipelineStarted
+        ? {
+            status: 'thinking',
+            label: 'Started software work',
+            expiresInSeconds: 900,
+            pipelineRunId: getText(childPipeline.pipelineRunId),
+            metadata: {
+              pipeline_definition_id: getText(childPipeline.pipelineDefinitionId ?? childPipeline.pipelineName),
+              step: 'child-pipeline-started',
+            },
+          }
+        : {
+            status: 'cleared',
+            label: 'Response published',
+            expiresInSeconds: 5,
+          }).catch((error) => {
+        console.warn('[dispatch-publisher] failed to update published response activity', error);
       });
       return {
         published: true,

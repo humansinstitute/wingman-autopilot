@@ -107,6 +107,25 @@
       "assign": "$.implementationContract"
     },
     {
+      "id": "mark-implementation-activity",
+      "name": "mark-implementation-activity",
+      "description": "Keep the originating Flight Deck chat thread visibly active while the software worker runs.",
+      "type": "code",
+      "function": "dispatch.setResponseActivity",
+      "input": {
+        "value": {
+          "status": "thinking",
+          "label": "Implementing",
+          "expiresInSeconds": 900,
+          "metadata": {
+            "pipeline_definition_id": "software-implementation-review-loop",
+            "step": "implementation-worker"
+          }
+        }
+      },
+      "assign": "$.responseActivity"
+    },
+    {
       "id": "implementation-worker",
       "name": "implementation-worker",
       "description": "Starts a focused coding worker session to implement the design or resolve manager pickups.",
@@ -140,6 +159,25 @@
       "prompt": "You are the implementation worker in a Wingmen implementation-review pipeline.\n\nInputs:\n- taskId may identify a Flight Deck task when this loop was launched from task dispatch. Direct software runs may omit it.\n- designDocumentUrl/designDocumentLocalPath identify the design baseline. If designDocument.status is loaded, read designDocument.localPath. If the local snapshot is missing or stale and the reference is a Flight Deck document, read it with the flightdeck_doc_get helper. Do not use retired local sync caches for Flight Deck PG documents. Do not paste document text into JSON.\n- targetSurface is the binding contract. Implement the named route/surface/files. Treat forbidden surfaces as out of bounds. Do not create a different page, route, repo, or nav destination to satisfy the work.\n- visualReferences are required inspection inputs when present. Open localPath items directly; download or fetch URL/storage references with the appropriate Flight Deck/storage helper before judging visual fidelity.\n- implementationPrompt is the starting goal for iteration 1.\n- On later iterations, nextWorkerPrompt and managerPickups are the focused worklist. Treat them as authoritative.\n- relevantContext is optional background only.\n\nWork rules:\n- Inspect the current git status before editing.\n- Preserve existing work and unrelated dirty files.\n- Make only scoped changes needed for the current worklist.\n- If targetSurface does not match the current repo or route, stop and return needs_input instead of guessing.\n- Run targeted validation, then broader validation when practical.\n- For UI/server/runtime changes, inspect package scripts, build output, app registry, and serving model. Run the required build or asset generation command when the repo uses built assets. If a live restart or managed app rebuild is required and explicit restart permission is not present in the current workPlan/origin, do not pretend the live app is updated; record the exact restart/build blocker in openQuestions and handoffNotes.\n- When restart permission is present, restart only the relevant managed process, smoke test the served route, and record the command and result.\n- Commit all nonignored tested state in the worktree when the software change is complete, unless the task explicitly says not to commit.\n- Do not update Flight Deck task state, post task comments, or reply to chat. Deterministic pipeline steps publish progress and closeout when reporting context opts in.\n\nCallback result object:\n{\n  \"workerSummary\": \"short summary of work performed\",\n  \"designDocumentUrl\": \"same reference\",\n  \"workingDirectory\": \"repo path\",\n  \"targetSurfaceChecked\": true,\n  \"visualReferencesChecked\": [\"label or path\"],\n  \"runtimeUpdate\": {\"buildRequired\": false, \"buildRun\": false, \"restartRequired\": false, \"restartPerformed\": false, \"smokeTested\": false, \"notes\": \"\"},\n  \"iteration\": 1,\n  \"changedFiles\": [\"repo/path.ext\"],\n  \"commandsRun\": [{\"command\":\"...\", \"status\":\"passed|failed|not_run\", \"notes\":\"...\"}],\n  \"git\": {\"branch\":\"\", \"status\":\"\", \"commits\":[], \"prUrl\":\"\"},\n  \"resolvedPickups\": [{\"title\":\"\", \"notes\":\"\"}],\n  \"openQuestions\": [],\n  \"handoffNotes\": \"specific points for manager review\"\n}\n\nReturn compact structured metadata only. Code changes stay in the repository.",
       "assign": "$.implementation",
       "timeoutMs": "$.workerTimeoutMs"
+    },
+    {
+      "id": "mark-review-activity",
+      "name": "mark-review-activity",
+      "description": "Update the originating Flight Deck chat thread while the manager reviews the implementation.",
+      "type": "code",
+      "function": "dispatch.setResponseActivity",
+      "input": {
+        "value": {
+          "status": "thinking",
+          "label": "Reviewing",
+          "expiresInSeconds": 900,
+          "metadata": {
+            "pipeline_definition_id": "software-implementation-review-loop",
+            "step": "managerial-review"
+          }
+        }
+      },
+      "assign": "$.responseActivity"
     },
     {
       "id": "managerial-review",
@@ -229,6 +267,25 @@
       }
     },
     {
+      "id": "mark-reporting-activity",
+      "name": "mark-reporting-activity",
+      "description": "Show that the software loop is preparing the final implementation report.",
+      "type": "code",
+      "function": "dispatch.setResponseActivity",
+      "input": {
+        "value": {
+          "status": "drafting",
+          "label": "Preparing report",
+          "expiresInSeconds": 900,
+          "metadata": {
+            "pipeline_definition_id": "software-implementation-review-loop",
+            "step": "final-implementation-report"
+          }
+        }
+      },
+      "assign": "$.responseActivity"
+    },
+    {
       "id": "final-implementation-report",
       "name": "final-implementation-report",
       "description": "Produces the final report for the user after manager approval or max loop exhaustion.",
@@ -284,6 +341,29 @@
       "assign": "$.finalThreadContext"
     },
     {
+      "id": "mark-final-response-drafting",
+      "name": "mark-final-response-drafting",
+      "description": "Show that the software loop is writing the final thread reply.",
+      "type": "code",
+      "function": "dispatch.setResponseActivity",
+      "when": {
+        "path": "$.createdTask.workPlan.reporting.mode",
+        "equals": "flightdeck_task"
+      },
+      "input": {
+        "value": {
+          "status": "drafting",
+          "label": "Writing a reply",
+          "expiresInSeconds": 300,
+          "metadata": {
+            "pipeline_definition_id": "software-implementation-review-loop",
+            "step": "final-thread-response"
+          }
+        }
+      },
+      "assign": "$.responseActivity"
+    },
+    {
       "id": "final-thread-response",
       "name": "final-thread-response",
       "description": "Compose the final conversational answer for the source thread.",
@@ -312,6 +392,29 @@
       "timeoutMs": "$.reporterTimeoutMs"
     },
     {
+      "id": "mark-final-response-publishing",
+      "name": "mark-final-response-publishing",
+      "description": "Show that the software loop is publishing the final Flight Deck response.",
+      "type": "code",
+      "function": "dispatch.setResponseActivity",
+      "when": {
+        "path": "$.createdTask.workPlan.reporting.mode",
+        "equals": "flightdeck_task"
+      },
+      "input": {
+        "value": {
+          "status": "publishing",
+          "label": "Publishing",
+          "expiresInSeconds": 120,
+          "metadata": {
+            "pipeline_definition_id": "software-implementation-review-loop",
+            "step": "close-review-task"
+          }
+        }
+      },
+      "assign": "$.responseActivity"
+    },
+    {
       "id": "close-review-task",
       "name": "close-review-task",
       "description": "Move the Flight Deck task to review, post the final task comment, and notify the original chat thread or configured channel.",
@@ -336,6 +439,29 @@
         }
       },
       "assign": "$.closeout"
+    },
+    {
+      "id": "clear-response-activity",
+      "name": "clear-response-activity",
+      "description": "Clear the originating Flight Deck response activity after the final response has been published.",
+      "type": "code",
+      "function": "dispatch.setResponseActivity",
+      "when": {
+        "path": "$.createdTask.workPlan.reporting.mode",
+        "equals": "flightdeck_task"
+      },
+      "input": {
+        "value": {
+          "status": "cleared",
+          "label": "Response published",
+          "expiresInSeconds": 5,
+          "metadata": {
+            "pipeline_definition_id": "software-implementation-review-loop",
+            "step": "clear-response-activity"
+          }
+        }
+      },
+      "assign": "$.responseActivity"
     }
   ]
 }

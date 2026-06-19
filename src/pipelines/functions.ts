@@ -2955,6 +2955,7 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     return {
       shouldRespond: !(needsInput && needsInputUpdate.chatNotified === true),
       responseDraft,
+      childPipeline: Object.keys(childPipeline).length > 0 ? childPipeline : null,
       reasoningSummary: getText(decision.clarifyingQuestion)
         ? "Asked a clarifying question instead of dispatching work."
         : taskCreationFailed

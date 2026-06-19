@@ -21,6 +21,7 @@ const pgTaskCommentCreateCalls: Array<Record<string, unknown>> = [];
 const pgLeaseAcquireCalls: Array<Record<string, unknown>> = [];
 const pgWorkspaceMemberFetchCalls: Array<Record<string, unknown>> = [];
 const pgTaskAssignmentCalls: Array<Record<string, unknown>> = [];
+const pgResponseActivityUpsertCalls: Array<Record<string, unknown>> = [];
 let failChatContextCount = 0;
 let failReactionCount = 0;
 let failTaskCreateCount = 0;
@@ -254,14 +255,17 @@ mock.module('../tower-client', () => ({
       },
     };
   }),
-  upsertFlightDeckPgResponseActivity: mock(async (input: Record<string, unknown>) => ({
-    response_activity: {
-      id: `activity-${input.status || 'unknown'}`,
-      target_type: input.targetType,
-      target_id: input.targetId,
-      status: input.status,
-    },
-  })),
+  upsertFlightDeckPgResponseActivity: mock(async (input: Record<string, unknown>) => {
+    pgResponseActivityUpsertCalls.push(input);
+    return {
+      response_activity: {
+        id: `activity-${input.status || 'unknown'}`,
+        target_type: input.targetType,
+        target_id: input.targetId,
+        status: input.status,
+      },
+    };
+  }),
   createFlightDeckPgChannelTask: mock(async (input: Record<string, unknown>) => {
     pgTaskCreateCalls.push(input);
     return {
@@ -442,6 +446,7 @@ describe('dispatch pipeline Flight Deck publisher', () => {
     pgWorkspaceMemberFetchCalls.length = 0;
     pgHydratedMessageBody = 'Hydrated PG thread body.';
     pgTaskAssignmentCalls.length = 0;
+    pgResponseActivityUpsertCalls.length = 0;
     failChatContextCount = 0;
     failReactionCount = 0;
     failTaskCreateCount = 0;
@@ -1076,6 +1081,51 @@ describe('dispatch pipeline Flight Deck publisher', () => {
       published: true,
       status: 'ok',
       operation: 'chat.reply-current',
+    });
+  });
+
+  test('chat reply publishing keeps response activity alive for started child pipelines', async () => {
+    const publish = createDispatchFlightDeckPublisher(buildChatPublisherContext({
+      subscription: {
+        subscriptionId: 'sub-pg-1',
+        workspaceOwnerNpub: 'npub1workspace',
+        sourceAppNpub: 'npub1source',
+        backendBaseUrl: 'https://tower.example.com',
+        workspaceId: 'workspace-pg-1',
+        botNpub: 'npub1bot',
+        wsKeyNpub: null,
+      },
+      runtime: {
+        mode: 'flightdeck_pg',
+        yokeStateDir: null,
+        commandPrefix: null,
+        commands: {},
+        error: null,
+      },
+    }));
+
+    await publish({
+      agentResponse: {
+        shouldRespond: true,
+        responseDraft: 'I created a task and started the software loop.',
+        childPipeline: {
+          started: true,
+          status: 'started',
+          pipelineRunId: 'child-run-1',
+          pipelineDefinitionId: 'software-implementation-review-loop',
+        },
+      },
+    });
+
+    expect(pgResponseActivityUpsertCalls.at(-1)).toMatchObject({
+      status: 'thinking',
+      label: 'Started software work',
+      pipelineRunId: 'child-run-1',
+      expiresInSeconds: 900,
+      metadata: {
+        pipeline_definition_id: 'software-implementation-review-loop',
+        step: 'child-pipeline-started',
+      },
     });
   });
 
