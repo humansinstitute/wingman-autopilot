@@ -428,12 +428,18 @@ export class WappStore {
       throw new Error(`Unknown WApp Tower binding: ${nextBindingId}`);
     }
     const existingNsec = this.getAppNsec(existing.id);
-    if (appKeyMode === undefined && appNsec === undefined && existingNsec && existing.towerBindingId === nextBindingId) {
+    if (existingNsec) {
+      if (appKeyMode !== undefined || appNsec !== undefined) {
+        throw new Error("WApp app key replacement is not supported for existing assignments");
+      }
       return {
         towerBindingId: nextBindingId,
         appNpub: existing.appNpub,
         encryptedAppNsec: encryptSettingValue(existingNsec),
       };
+    }
+    if (existing.towerBindingId || existing.appNpub) {
+      throw new Error("Existing Tower-backed WApp assignment is missing encrypted APP_NSEC");
     }
     const nsec = createAppNsec(appKeyMode, appNsec);
     return {

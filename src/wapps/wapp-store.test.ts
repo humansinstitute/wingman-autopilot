@@ -136,6 +136,52 @@ describe("WApp store and helpers", () => {
     expect(store.getDefaultTowerBinding()?.id).toBe("binding-1");
   }));
 
+  test("preserves existing Tower app keys across binding updates and rejects replacement", () => withStore((store) => {
+    const firstBinding = store.createTowerBinding({
+      id: "binding-1",
+      label: "Dev Tower",
+      towerUrl: "https://tower-dev.example",
+      workspaceOwnerNpub: "npub1workspace",
+    });
+    const secondBinding = store.createTowerBinding({
+      id: "binding-2",
+      label: "Stage Tower",
+      towerUrl: "https://tower-stage.example",
+      workspaceOwnerNpub: "npub1workspace",
+    });
+    const importedSecret = generateSecretKey();
+    const importedNsec = nip19.nsecEncode(importedSecret);
+    const importedNpub = nip19.npubEncode(getPublicKey(importedSecret));
+    const replacementNsec = nip19.nsecEncode(generateSecretKey());
+    const record = store.create({
+      id: "wapp-tower-switch",
+      appId: "app-tower-switch",
+      title: "Tower Switch",
+      ownerNpub: "npub1owner",
+      createdByNpub: "npub1creator",
+      workspaceOwnerNpub: "npub1workspace",
+      scopeId: "scope-tower-switch",
+      allowedNpubs: ["npub1owner"],
+      launchUrl: "/host/tower-switch",
+      towerBindingId: firstBinding.id,
+      appKeyMode: "import",
+      appNsec: importedNsec,
+    });
+
+    const switched = store.update(record.id, {
+      title: "Tower Switch Updated",
+      towerBindingId: secondBinding.id,
+    });
+
+    expect(switched?.towerBindingId).toBe(secondBinding.id);
+    expect(switched?.appNpub).toBe(importedNpub);
+    expect(store.getAppNsec(record.id)).toBe(importedNsec);
+    expect(() => store.update(record.id, { appKeyMode: "generate" })).toThrow("WApp app key replacement is not supported");
+    expect(() => store.update(record.id, { appKeyMode: "import", appNsec: replacementNsec })).toThrow("WApp app key replacement is not supported");
+    expect(store.get(record.id)?.appNpub).toBe(importedNpub);
+    expect(store.getAppNsec(record.id)).toBe(importedNsec);
+  }));
+
   test("publishes WApp payload through configured SuperBased sync", async () => {
     const ownerHex = "a".repeat(64);
     const delegateHex = "b".repeat(64);

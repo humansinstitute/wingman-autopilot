@@ -142,6 +142,60 @@ describe("handleWappsApi", () => {
     }
   });
 
+  test("rejects Tower app key replacement on existing WApps", async () => {
+    const { ctx, cleanup } = makeContext();
+    try {
+      const secret = generateSecretKey();
+      const appNsec = nip19.nsecEncode(secret);
+      const appNpub = nip19.npubEncode(getPublicKey(secret));
+      const replacementNsec = nip19.nsecEncode(generateSecretKey());
+      ctx.wappStore.createTowerBinding({
+        id: "tower-dev",
+        label: "Tower Dev",
+        towerUrl: "https://tower.example",
+        workspaceOwnerNpub: "npub1workspace",
+      });
+      const createRequest = new Request("http://localhost:3000/api/wapps", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          appId: "app-1",
+          title: "Ops Board",
+          workspaceOwnerNpub: "npub1workspace",
+          scopeId: "scope-1",
+          towerBindingId: "tower-dev",
+          appKeyMode: "import",
+          appNsec,
+        }),
+      });
+      const createResponse = await handleWappsApi(createRequest, new URL(createRequest.url), "POST", authContext, ctx);
+      const created = await createResponse!.json() as any;
+
+      const regenerateRequest = new Request(`http://localhost:3000/api/wapps/${created.wapp.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ appKeyMode: "generate" }),
+      });
+      const regenerateResponse = await handleWappsApi(regenerateRequest, new URL(regenerateRequest.url), "PATCH", authContext, ctx);
+      expect(regenerateResponse?.status).toBe(400);
+      expect(await regenerateResponse!.json()).toMatchObject({
+        error: "WApp app key replacement is not supported for existing assignments",
+      });
+
+      const importRequest = new Request(`http://localhost:3000/api/wapps/${created.wapp.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ appKeyMode: "import", appNsec: replacementNsec }),
+      });
+      const importResponse = await handleWappsApi(importRequest, new URL(importRequest.url), "PATCH", authContext, ctx);
+      expect(importResponse?.status).toBe(400);
+      expect(ctx.wappStore.get(created.wapp.id)?.appNpub).toBe(appNpub);
+      expect(ctx.wappStore.getAppNsec(created.wapp.id)).toBe(appNsec);
+    } finally {
+      cleanup();
+    }
+  });
+
   test("creates and refreshes WApp allowlists from resolved scope members", async () => {
     const { ctx, cleanup, published } = makeContext();
     try {
