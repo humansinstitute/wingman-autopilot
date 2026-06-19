@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, test } from "bun:test";
+import { generateSecretKey, nip19 } from "nostr-tools";
 
 import type { AppRecord } from "../apps/app-registry";
 import type { WingmanConfig } from "../config";
@@ -98,6 +99,54 @@ describe("createUserAppEcosystemConfig WApp env injection", () => {
       const plainCommand = plainConfig.args[1] ?? "";
       expect(plainCommand).not.toContain("WAPP_ID=");
       expect(plainCommand).not.toContain("WAPP_DB_PATH=");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("injects Tower runtime vars for Tower-backed WApps without local db fallback", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ecosystem-wapp-tower-"));
+    try {
+      const store = new WappStore(join(dir, "wapps.sqlite"));
+      const appNsec = nip19.nsecEncode(generateSecretKey());
+      const binding = store.createTowerBinding({
+        id: "tower-dev",
+        label: "Tower Dev",
+        towerUrl: "https://tower.example",
+        workspaceOwnerNpub: "npub1workspace",
+        userAlias: "tester",
+        isDefault: true,
+      });
+      store.create({
+        id: "wapp-tower",
+        appId: "wapp-app",
+        title: "Tower WApp",
+        ownerNpub: "npub1owner",
+        createdByNpub: "npub1owner",
+        workspaceOwnerNpub: "npub1workspace",
+        scopeId: "scope-1",
+        allowedNpubs: ["npub1owner"],
+        launchUrl: "https://apps.example/wapp",
+        towerBindingId: binding.id,
+        appKeyMode: "import",
+        appNsec,
+      });
+
+      const wappConfig = await createUserAppEcosystemConfig({
+        app: makeApp("wapp-app", join(dir, "wapp-root")),
+        userAlias: "tester",
+        userRootDir: dir,
+        isAdmin: false,
+        wappStore: store,
+      });
+
+      const command = wappConfig.args[1] ?? "";
+      expect(command).toContain("APP_NPUB=");
+      expect(command).toContain(`APP_NSEC='${appNsec}'`);
+      expect(command).toContain("TOWER_URL='https://tower.example'");
+      expect(command).toContain("WORKSPACE_OWNER_NPUB='npub1workspace'");
+      expect(command).toContain("WAPP_DB_MODE='tower-api'");
+      expect(command).not.toContain("WAPP_DB_PATH=");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

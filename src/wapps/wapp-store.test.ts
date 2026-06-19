@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, test } from "bun:test";
+import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
 
 import { resolveWappAllowedNpubs } from "./scope-access";
 import { buildFlightDeckWappRecordPayload, SuperbasedWappPublisher } from "./wapp-publisher";
@@ -94,6 +95,45 @@ describe("WApp store and helpers", () => {
       WAPP_APP_ID: "app-3",
       WAPP_DB_PATH: "/tmp/wapp/data/db.sqlite",
     });
+  }));
+
+  test("stores Tower binding app keys encrypted and derives app npub", () => withStore((store) => {
+    const binding = store.createTowerBinding({
+      id: "binding-1",
+      label: "Dev Tower",
+      towerUrl: "https://tower.example",
+      workspaceOwnerNpub: "npub1workspace",
+      userAlias: "tester",
+      isDefault: true,
+    });
+    const importedSecret = generateSecretKey();
+    const importedNsec = nip19.nsecEncode(importedSecret);
+    const importedNpub = nip19.npubEncode(getPublicKey(importedSecret));
+
+    const record = store.create({
+      id: "wapp-tower",
+      appId: "app-tower",
+      title: "Tower App",
+      ownerNpub: "npub1owner",
+      createdByNpub: "npub1creator",
+      workspaceOwnerNpub: "npub1workspace",
+      scopeId: "scope-tower",
+      allowedNpubs: ["npub1owner"],
+      launchUrl: "/host/tower",
+      towerBindingId: binding.id,
+      appKeyMode: "import",
+      appNsec: importedNsec,
+    });
+
+    expect(record.towerBinding).toMatchObject({ id: "binding-1", towerUrl: "https://tower.example" });
+    expect(record.appNpub).toBe(importedNpub);
+    expect(store.getAppNsec(record.id)).toBe(importedNsec);
+    expect(JSON.stringify(record)).not.toContain(importedNsec);
+
+    const regenerated = store.update(record.id, { title: "Tower App Updated" });
+    expect(regenerated?.appNpub).toBe(importedNpub);
+    expect(store.getAppNsec(record.id)).toBe(importedNsec);
+    expect(store.getDefaultTowerBinding()?.id).toBe("binding-1");
   }));
 
   test("publishes WApp payload through configured SuperBased sync", async () => {

@@ -10,7 +10,20 @@
 import { parseCommonFlags, buildConfig, requestJson, requestJsonBotCrypto, resolveBaseUrl } from "./lib/auth";
 
 type AppAction = "start" | "stop" | "restart" | "build" | "setup";
-type Command = "list" | "status" | AppAction | "register" | "unregister" | "help";
+type Command =
+  | "list"
+  | "status"
+  | AppAction
+  | "register"
+  | "unregister"
+  | "clone"
+  | "starters"
+  | "starters-create"
+  | "starters-delete"
+  | "tower-bindings"
+  | "tower-binding-create"
+  | "tower-binding-default"
+  | "help";
 
 const USAGE = `Wingman app lifecycle CLI (NIP-98)
 
@@ -31,6 +44,9 @@ Commands:
   starters             List starter project templates
   starters-create      Create a starter template (requires --name, --git-url)
   starters-delete <id> Delete a starter template
+  tower-bindings       List WApp Tower bindings
+  tower-binding-create Create WApp Tower binding (requires --name, --tower-url, --workspace-owner-npub)
+  tower-binding-default <id> Select default WApp Tower binding
 
 Options:
   --url <url>          Wingman URL (env: WINGMAN_URL, default: http://localhost:3000)
@@ -38,6 +54,10 @@ Options:
   --directory <path>   App directory (for register) or folder name (for clone)
   --name <name>        Starter project name (for starters-create)
   --git-url <url>      Git repo URL (for starters-create)
+  --tower-url <url>    Tower base URL (for tower-binding-create)
+  --workspace-owner-npub <npub> Workspace owner npub (for tower-binding-create)
+  --user-alias <alias> User alias to inject into Tower-backed WApps
+  --default            Mark created WApp Tower binding as default
   --web-app            Mark as a web app (for register and starters-create)
   --bot-crypto         Sign via bot-crypto API (for agent sessions)
   --json               Print raw JSON response
@@ -96,6 +116,10 @@ async function run() {
   let directory: string | undefined;
   let starterName: string | undefined;
   let gitUrl: string | undefined;
+  let towerUrl: string | undefined;
+  let workspaceOwnerNpub: string | undefined;
+  let userAlias: string | undefined;
+  let makeDefault = false;
   let webApp = false;
   const filteredArgs: string[] = [];
   for (let i = 0; i < args.length; i++) {
@@ -109,6 +133,17 @@ async function run() {
     } else if (flag === "--git-url") {
       gitUrl = args[++i];
       if (!gitUrl) throw new Error("--git-url requires a value");
+    } else if (flag === "--tower-url") {
+      towerUrl = args[++i];
+      if (!towerUrl) throw new Error("--tower-url requires a value");
+    } else if (flag === "--workspace-owner-npub") {
+      workspaceOwnerNpub = args[++i];
+      if (!workspaceOwnerNpub) throw new Error("--workspace-owner-npub requires a value");
+    } else if (flag === "--user-alias") {
+      userAlias = args[++i];
+      if (!userAlias) throw new Error("--user-alias requires a value");
+    } else if (flag === "--default") {
+      makeDefault = true;
     } else if (flag === "--web-app") {
       webApp = true;
     } else {
@@ -120,7 +155,8 @@ async function run() {
   const commandStr = filteredArgs[0]?.toLowerCase() ?? "help";
   const validCommands = [
     "list", "status", "start", "stop", "restart", "build", "setup",
-    "register", "unregister", "clone", "starters", "starters-create", "starters-delete", "help",
+    "register", "unregister", "clone", "starters", "starters-create", "starters-delete",
+    "tower-bindings", "tower-binding-create", "tower-binding-default", "help",
   ];
   if (!validCommands.includes(commandStr)) {
     throw new Error(`Unknown command: ${commandStr}`);
@@ -178,6 +214,50 @@ async function run() {
     return;
   }
 
+  if (command === "tower-bindings") {
+    const payload = await req<{ bindings?: Array<Record<string, unknown>>; defaultBinding?: Record<string, unknown> | null }>(
+      "GET", "/api/wapps/tower-bindings",
+    );
+    if (asJson) {
+      console.log(JSON.stringify(payload, null, 2));
+    } else {
+      const bindings = Array.isArray(payload.bindings) ? payload.bindings : [];
+      if (bindings.length === 0) {
+        console.log("No WApp Tower bindings.");
+      } else {
+        for (const binding of bindings) {
+          const marker = binding.isDefault ? "*" : " ";
+          console.log(`${marker}\t${binding.id ?? ""}\t${binding.label ?? ""}\t${binding.towerUrl ?? ""}\t${binding.workspaceOwnerNpub ?? ""}`);
+        }
+      }
+    }
+    return;
+  }
+
+  if (command === "tower-binding-create") {
+    if (!starterName) throw new Error("tower-binding-create requires --name <name>");
+    if (!towerUrl) throw new Error("tower-binding-create requires --tower-url <url>");
+    if (!workspaceOwnerNpub) throw new Error("tower-binding-create requires --workspace-owner-npub <npub>");
+    const payload = await req<Record<string, unknown>>(
+      "POST",
+      "/api/wapps/tower-bindings",
+      {
+        label: starterName,
+        towerUrl,
+        workspaceOwnerNpub,
+        userAlias,
+        isDefault: makeDefault,
+      },
+    );
+    if (asJson) {
+      console.log(JSON.stringify(payload, null, 2));
+    } else {
+      const binding = payload.binding as Record<string, unknown> | undefined;
+      console.log(`Created WApp Tower binding: ${binding?.id ?? starterName}`);
+    }
+    return;
+  }
+
   if (command === "starters-create") {
     if (!starterName) throw new Error("starters-create requires --name <name>");
     if (!gitUrl) throw new Error("starters-create requires --git-url <url>");
@@ -215,6 +295,20 @@ async function run() {
   if (command === "starters-delete") {
     await req("DELETE", `/api/admin/starter-projects/${encodeURIComponent(appId)}`);
     console.log(`Deleted starter: ${appId}`);
+    return;
+  }
+
+  if (command === "tower-binding-default") {
+    const payload = await req<Record<string, unknown>>(
+      "PATCH",
+      `/api/wapps/tower-bindings/${encodeURIComponent(appId)}`,
+      { isDefault: true },
+    );
+    if (asJson) {
+      console.log(JSON.stringify(payload, null, 2));
+    } else {
+      console.log(`Selected default WApp Tower binding: ${appId}`);
+    }
     return;
   }
 

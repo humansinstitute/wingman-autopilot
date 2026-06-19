@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, test } from "bun:test";
+import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
 
 import type { RequestAuthContext } from "../auth/request-context";
 import type { AppRecord } from "../apps/app-registry";
@@ -92,6 +93,55 @@ function makeContext(): {
 }
 
 describe("handleWappsApi", () => {
+  test("creates Tower bindings and Tower-backed WApps without exposing APP_NSEC", async () => {
+    const { ctx, cleanup } = makeContext();
+    try {
+      const secret = generateSecretKey();
+      const appNsec = nip19.nsecEncode(secret);
+      const appNpub = nip19.npubEncode(getPublicKey(secret));
+      const bindingRequest = new Request("http://localhost:3000/api/wapps/tower-bindings", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          id: "tower-dev",
+          label: "Tower Dev",
+          towerUrl: "https://tower.example",
+          workspaceOwnerNpub: "npub1workspace",
+          userAlias: "tester",
+          isDefault: true,
+        }),
+      });
+      const bindingResponse = await handleWappsApi(bindingRequest, new URL(bindingRequest.url), "POST", authContext, ctx);
+      expect(bindingResponse?.status).toBe(201);
+
+      const createRequest = new Request("http://localhost:3000/api/wapps", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          appId: "app-1",
+          title: "Ops Board",
+          workspaceOwnerNpub: "npub1workspace",
+          scopeId: "scope-1",
+          towerBindingId: "tower-dev",
+          appKeyMode: "import",
+          appNsec,
+        }),
+      });
+      const createResponse = await handleWappsApi(createRequest, new URL(createRequest.url), "POST", authContext, ctx);
+      expect(createResponse?.status).toBe(201);
+      const created = await createResponse!.json() as any;
+      expect(created.wapp).toMatchObject({
+        towerBindingId: "tower-dev",
+        appNpub,
+        towerBinding: { id: "tower-dev", towerUrl: "https://tower.example" },
+      });
+      expect(JSON.stringify(created)).not.toContain(appNsec);
+      expect(ctx.wappStore.getAppNsec(created.wapp.id)).toBe(appNsec);
+    } finally {
+      cleanup();
+    }
+  });
+
   test("creates and refreshes WApp allowlists from resolved scope members", async () => {
     const { ctx, cleanup, published } = makeContext();
     try {

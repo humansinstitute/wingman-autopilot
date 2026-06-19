@@ -9,6 +9,18 @@ export interface WappScopeLineage {
 
 export type WappRecordState = "active" | "archived" | "deleted";
 export type WappStatus = "active" | "archived";
+export type WappAppKeyMode = "generate" | "import";
+
+export interface WappTowerBinding {
+  id: string;
+  label: string;
+  towerUrl: string;
+  workspaceOwnerNpub: string;
+  userAlias: string | null;
+  isDefault: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface WappScheduleWindow {
   days?: number[];
@@ -37,6 +49,9 @@ export interface WappRecord {
   launchUrl: string;
   sourceWingmanUrl: string | null;
   subdomainAlias: string | null;
+  towerBindingId: string | null;
+  towerBinding: WappTowerBinding | null;
+  appNpub: string | null;
   status: WappStatus;
   schedule: WappSchedule | null;
   recordState: WappRecordState;
@@ -59,6 +74,9 @@ export interface CreateWappInput {
   launchUrl: string;
   sourceWingmanUrl?: string | null;
   subdomainAlias?: string | null;
+  towerBindingId?: string | null;
+  appKeyMode?: WappAppKeyMode;
+  appNsec?: string | null;
   status?: WappStatus;
   schedule?: WappSchedule | null;
 }
@@ -73,8 +91,28 @@ export interface UpdateWappInput {
   launchUrl?: string;
   sourceWingmanUrl?: string | null;
   subdomainAlias?: string | null;
+  towerBindingId?: string | null;
+  appKeyMode?: WappAppKeyMode;
+  appNsec?: string | null;
   status?: WappStatus;
   schedule?: WappSchedule | null;
   recordState?: WappRecordState;
   lastPublishedAt?: string | null;
+}
+
+export interface CreateWappTowerBindingInput {
+  id?: string;
+  label: string;
+  towerUrl: string;
+  workspaceOwnerNpub: string;
+  userAlias?: string | null;
+  isDefault?: boolean;
+}
+
+export interface UpdateWappTowerBindingInput {
+  label?: string;
+  towerUrl?: string;
+  workspaceOwnerNpub?: string;
+  userAlias?: string | null;
+  isDefault?: boolean;
 }

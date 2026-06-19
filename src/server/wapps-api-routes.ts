@@ -8,7 +8,7 @@ import {
 } from "../wapps/scope-access";
 import { buildFlightDeckWappRecordPayload, type WappPublisher } from "../wapps/wapp-publisher";
 import { createWappTemplate } from "../wapps/wapp-template";
-import type { WappRecord, WappSchedule, WappScheduleWindow, WappStatus } from "../wapps/types";
+import type { WappAppKeyMode, WappRecord, WappSchedule, WappScheduleWindow, WappStatus } from "../wapps/types";
 import type { WappStore } from "../wapps/wapp-store";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "HEAD";
@@ -44,6 +44,13 @@ function status(value: unknown): WappStatus | undefined {
   const normalized = text(value);
   if (normalized === "archived") return "archived";
   if (normalized === "active") return "active";
+  return undefined;
+}
+
+function appKeyMode(value: unknown): WappAppKeyMode | undefined {
+  const normalized = text(value);
+  if (normalized === "generate") return "generate";
+  if (normalized === "import") return "import";
   return undefined;
 }
 
@@ -115,6 +122,10 @@ function scopeAccessErrorResponse(error: unknown): Response {
   return Response.json({ error: (error as Error).message }, { status: 400 });
 }
 
+function wappInputErrorResponse(error: unknown): Response {
+  return Response.json({ error: (error as Error).message }, { status: 400 });
+}
+
 export async function handleWappsApi(
   request: Request,
   url: URL,
@@ -130,6 +141,37 @@ export async function handleWappsApi(
   if (url.pathname === "/api/wapps" && method === "GET") {
     const wapps = ctx.wappStore.list().filter((wapp) => canAccessWapp(ctx, wapp));
     return Response.json({ wapps });
+  }
+
+  if (url.pathname === "/api/wapps/tower-bindings" && method === "GET") {
+    return Response.json({
+      bindings: ctx.wappStore.listTowerBindings(),
+      defaultBinding: ctx.wappStore.getDefaultTowerBinding(),
+    });
+  }
+
+  if (url.pathname === "/api/wapps/tower-bindings" && method === "POST") {
+    const body = await parseBody(request);
+    if (!body) return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    const label = text(body.label);
+    const towerUrl = text(body.towerUrl ?? body.tower_url);
+    const workspaceOwnerNpub = normaliseNpub(text(body.workspaceOwnerNpub ?? body.workspace_owner_npub));
+    if (!label) return Response.json({ error: "label is required" }, { status: 400 });
+    if (!towerUrl) return Response.json({ error: "towerUrl is required" }, { status: 400 });
+    if (!workspaceOwnerNpub) return Response.json({ error: "workspaceOwnerNpub is required" }, { status: 400 });
+    try {
+      const binding = ctx.wappStore.createTowerBinding({
+        id: text(body.id) ?? undefined,
+        label,
+        towerUrl,
+        workspaceOwnerNpub,
+        userAlias: text(body.userAlias ?? body.user_alias),
+        isDefault: body.isDefault === true || body.is_default === true,
+      });
+      return Response.json({ binding }, { status: 201 });
+    } catch (error) {
+      return wappInputErrorResponse(error);
+    }
   }
 
   if (url.pathname === "/api/wapps" && method === "POST") {
@@ -157,23 +199,30 @@ export async function handleWappsApi(
       appRoot: app.root,
     }).catch((error) => error);
     if (scopeAccess instanceof Error) return scopeAccessErrorResponse(scopeAccess);
-    const wapp = ctx.wappStore.create({
-      appId: app.id,
-      title,
-      description: text(body.description),
-      ownerNpub,
-      createdByNpub,
-      workspaceOwnerNpub,
-      scopeId: scopeAccess.scopeId,
-      scopeLineage: scopeAccess.scopeLineage,
-      allowedNpubs: scopeAccess.allowedNpubs,
-      launchUrl: ctx.buildLaunchUrl(alias, app),
-      sourceWingmanUrl: ctx.sourceWingmanUrl,
-      subdomainAlias: alias,
-      status: status(body.status) ?? "active",
-      schedule: normalizeSchedule(body.schedule) ?? null,
-    });
-    return Response.json({ wapp }, { status: 201 });
+    try {
+      const wapp = ctx.wappStore.create({
+        appId: app.id,
+        title,
+        description: text(body.description),
+        ownerNpub,
+        createdByNpub,
+        workspaceOwnerNpub,
+        scopeId: scopeAccess.scopeId,
+        scopeLineage: scopeAccess.scopeLineage,
+        allowedNpubs: scopeAccess.allowedNpubs,
+        launchUrl: ctx.buildLaunchUrl(alias, app),
+        sourceWingmanUrl: ctx.sourceWingmanUrl,
+        subdomainAlias: alias,
+        towerBindingId: text(body.towerBindingId ?? body.tower_binding_id),
+        appKeyMode: appKeyMode(body.appKeyMode ?? body.app_key_mode),
+        appNsec: text(body.appNsec ?? body.app_nsec ?? body.APP_NSEC),
+        status: status(body.status) ?? "active",
+        schedule: normalizeSchedule(body.schedule) ?? null,
+      });
+      return Response.json({ wapp }, { status: 201 });
+    } catch (error) {
+      return wappInputErrorResponse(error);
+    }
   }
 
   if (url.pathname === "/api/wapps/templates/create" && method === "POST") {
@@ -186,6 +235,31 @@ export async function handleWappsApi(
       return Response.json({ template: await createWappTemplate(resolvedRoot, { force: body.force === true }) }, { status: 201 });
     } catch (error) {
       return Response.json({ error: (error as Error).message }, { status: 400 });
+    }
+  }
+
+  const bindingMatch = url.pathname.match(/^\/api\/wapps\/tower-bindings\/([^/]+)$/);
+  if (bindingMatch) {
+    const bindingId = decodeURIComponent(bindingMatch[1]!);
+    if (method !== "PUT" && method !== "PATCH") {
+      return Response.json({ error: "Method not allowed" }, { status: 405 });
+    }
+    const body = await parseBody(request);
+    if (!body) return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+    try {
+      const binding = ctx.wappStore.updateTowerBinding(bindingId, {
+        label: text(body.label) ?? undefined,
+        towerUrl: text(body.towerUrl ?? body.tower_url) ?? undefined,
+        workspaceOwnerNpub: normaliseNpub(text(body.workspaceOwnerNpub ?? body.workspace_owner_npub)) ?? undefined,
+        userAlias: body.userAlias === null || body.user_alias === null ? null : text(body.userAlias ?? body.user_alias) ?? undefined,
+        isDefault: body.isDefault === undefined && body.is_default === undefined
+          ? undefined
+          : body.isDefault === true || body.is_default === true,
+      });
+      if (!binding) return Response.json({ error: "WApp Tower binding not found" }, { status: 404 });
+      return Response.json({ binding });
+    } catch (error) {
+      return wappInputErrorResponse(error);
     }
   }
 
@@ -218,17 +292,24 @@ export async function handleWappsApi(
       }).catch((error) => error)
       : null;
     if (scopeAccess instanceof Error) return scopeAccessErrorResponse(scopeAccess);
-    const updated = ctx.wappStore.update(id, {
-      title: text(body.title) ?? undefined,
-      description: body.description === null ? null : text(body.description) ?? undefined,
-      workspaceOwnerNpub: nextWorkspaceOwnerNpub,
-      scopeId: nextScopeId,
-      scopeLineage: scopeAccess ? scopeAccess.scopeLineage : undefined,
-      allowedNpubs: scopeAccess ? scopeAccess.allowedNpubs : undefined,
-      status: status(body.status),
-      schedule: normalizeSchedule(body.schedule),
-    });
-    return Response.json({ wapp: updated });
+    try {
+      const updated = ctx.wappStore.update(id, {
+        title: text(body.title) ?? undefined,
+        description: body.description === null ? null : text(body.description) ?? undefined,
+        workspaceOwnerNpub: nextWorkspaceOwnerNpub,
+        scopeId: nextScopeId,
+        scopeLineage: scopeAccess ? scopeAccess.scopeLineage : undefined,
+        allowedNpubs: scopeAccess ? scopeAccess.allowedNpubs : undefined,
+        towerBindingId: body.towerBindingId === null || body.tower_binding_id === null ? null : text(body.towerBindingId ?? body.tower_binding_id) ?? undefined,
+        appKeyMode: appKeyMode(body.appKeyMode ?? body.app_key_mode),
+        appNsec: text(body.appNsec ?? body.app_nsec ?? body.APP_NSEC) ?? undefined,
+        status: status(body.status),
+        schedule: normalizeSchedule(body.schedule),
+      });
+      return Response.json({ wapp: updated });
+    } catch (error) {
+      return wappInputErrorResponse(error);
+    }
   }
 
   if (!action && method === "DELETE") {
