@@ -519,6 +519,12 @@ function isSoftwareImplementationPipelineIdentifier(value: string | null): boole
     || normalized.includes("/software-implementation-review-loop");
 }
 
+function isPlaceholderSoftwareWorkdir(value: string | null): boolean {
+  if (!value) return true;
+  return value === "/Users/mini/code/wingmen"
+    || value.includes("/data/agent-chat-workspaces/");
+}
+
 const coreChatChildPipelineSlugs = new Set([
   "do-and-review",
   "software-implementation-review-loop",
@@ -2299,7 +2305,9 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const effectiveManagerChecklist = managerChecklist.length > 0 ? managerChecklist : (promotedDraft?.managerChecklist ?? []);
     const clarifyingQuestion = getText(raw.clarifyingQuestion);
     const selectedDispatchPipeline = isDispatchPipelineIdentifier(pipelineDefinitionId);
-    const selectedSoftwareImplementationPipeline = isSoftwareImplementationPipelineIdentifier(pipelineDefinitionId);
+    const selectedSoftwareImplementationPipeline = isSoftwareImplementationPipelineIdentifier(pipelineDefinitionId)
+      || isSoftwareImplementationPipelineIdentifier(requestedPipelineId)
+      || isSoftwareImplementationPipelineIdentifier(getText(taskDraft.pipelineSlug ?? taskDraft.pipelineName));
     const targetSurface = objectValue(raw.targetSurface ?? taskDraft.targetSurface);
     const hasTargetSurface = Object.keys(targetSurface).length > 0;
     const missing = dispatchTask && pipelineDefinitionId
@@ -2307,7 +2315,8 @@ export const builtinPipelineFunctions: FunctionRegistry = {
           !pipelineDefinitionId ? "pipeline" : "",
           selectedDispatchPipeline ? "downstream work pipeline" : "",
           selectedSoftwareImplementationPipeline && !hasTargetSurface ? "targetSurface" : "",
-          !workdir ? "workdir" : "",
+          selectedSoftwareImplementationPipeline && isPlaceholderSoftwareWorkdir(workdir) ? "non-placeholder workdir" : "",
+          !selectedSoftwareImplementationPipeline && !workdir ? "workdir" : "",
           !instructions ? "instructions" : "",
         ].filter(Boolean)
       : [];
@@ -2399,9 +2408,17 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const pipelineDefinitionId = getText(selectedPipeline?.id)
       ?? getText(selectedPipeline?.slug)
       ?? requestedPipelineId;
-    const selectedDispatchPipeline = isDispatchPipelineIdentifier(pipelineDefinitionId);
-    const selectedDiscussionPipeline = isDiscussionPipelineIdentifier(pipelineDefinitionId);
-    const selectedSoftwareImplementationPipeline = isSoftwareImplementationPipelineIdentifier(pipelineDefinitionId);
+    const selectedPipelineSlug = getText(selectedPipeline?.slug);
+    const selectedPipelineName = getText(selectedPipeline?.name);
+    const selectedDispatchPipeline = isDispatchPipelineIdentifier(pipelineDefinitionId)
+      || isDispatchPipelineIdentifier(selectedPipelineSlug)
+      || isDispatchPipelineIdentifier(selectedPipelineName);
+    const selectedDiscussionPipeline = isDiscussionPipelineIdentifier(pipelineDefinitionId)
+      || isDiscussionPipelineIdentifier(selectedPipelineSlug)
+      || isDiscussionPipelineIdentifier(selectedPipelineName);
+    const selectedSoftwareImplementationPipeline = isSoftwareImplementationPipelineIdentifier(pipelineDefinitionId)
+      || isSoftwareImplementationPipelineIdentifier(selectedPipelineSlug)
+      || isSoftwareImplementationPipelineIdentifier(selectedPipelineName);
     const taskDraft = objectValue(decision.taskDraft);
     const workPlan = objectValue(decision.workPlan);
     const workdir = getText(raw.workdir ?? taskDraft.workdir ?? decision.workdir ?? workPlan.workdir);
@@ -2419,7 +2436,8 @@ export const builtinPipelineFunctions: FunctionRegistry = {
       !pipelineDefinitionId ? "pipeline" : "",
       selectedDispatchPipeline || selectedDiscussionPipeline ? "task-capable downstream pipeline" : "",
       selectedSoftwareImplementationPipeline && !hasTargetSurface ? "targetSurface" : "",
-      !workdir ? "workdir" : "",
+      selectedSoftwareImplementationPipeline && isPlaceholderSoftwareWorkdir(workdir) ? "non-placeholder workdir" : "",
+      !selectedSoftwareImplementationPipeline && !workdir ? "workdir" : "",
       !instructions ? "instructions" : "",
     ].filter(Boolean);
     const clarifyingQuestion = getText(raw.clarifyingQuestion ?? decision.clarifyingQuestion);

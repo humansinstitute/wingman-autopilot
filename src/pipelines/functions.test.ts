@@ -245,6 +245,98 @@ test("task work plans preserve Flight Deck channel context for child sessions", 
   });
 });
 
+test("chat task pipeline selection treats hashed software pipeline ids as requiring a target surface", async () => {
+  const result = await builtinPipelineFunctions["dispatch.normaliseChatTaskPipelineSelection"]!({
+    decision: {
+      requestedDispatchTask: true,
+      taskRoutingPending: true,
+      intent: "create_task",
+      responseDraft: "Starting the implementation task.",
+      taskDraft: {
+        title: "Fix mobile focus rendering",
+        instructions: "Fix the focus component on mobile.",
+      },
+      workPlan: {
+        taskSummary: "Fix mobile focus rendering",
+        instructions: "Fix the focus component on mobile.",
+      },
+    },
+    taskPipelineInput: {
+      validChildPipelines: [
+        {
+          id: "shared:1ced4704717e",
+          slug: "software-implementation-review-loop",
+          name: "software-implementation-review-loop",
+        },
+      ],
+    },
+    taskPipelineDecision: {
+      recommendedPipelineId: "shared:1ced4704717e",
+      workdir: "/Users/mini/code/wingmanbefree/autopilot/data/agent-chat-workspaces/fd-test",
+      confidence: 0.99,
+    },
+  });
+
+  expect(result).toMatchObject({
+    dispatchTask: false,
+    pipelineDefinitionId: null,
+    taskRoutingPending: false,
+    missing: ["targetSurface", "non-placeholder workdir"],
+  });
+  expect(String(result.responseDraft)).toContain("targetSurface");
+});
+
+test("chat task pipeline selection accepts hashed software pipeline ids with a concrete contract", async () => {
+  const result = await builtinPipelineFunctions["dispatch.normaliseChatTaskPipelineSelection"]!({
+    decision: {
+      requestedDispatchTask: true,
+      taskRoutingPending: true,
+      intent: "create_task",
+      responseDraft: "Starting the implementation task.",
+      taskDraft: {
+        title: "Fix mobile focus rendering",
+        instructions: "Fix the focus component on mobile.",
+      },
+      workPlan: {
+        taskSummary: "Fix mobile focus rendering",
+        instructions: "Fix the focus component on mobile.",
+      },
+    },
+    taskPipelineInput: {
+      validChildPipelines: [
+        {
+          id: "shared:1ced4704717e",
+          slug: "software-implementation-review-loop",
+          name: "software-implementation-review-loop",
+        },
+      ],
+    },
+    taskPipelineDecision: {
+      recommendedPipelineId: "shared:1ced4704717e",
+      workdir: "/Users/mini/code/wingmanbefree/wm-fd-2",
+      scopeId: "scope-1",
+      targetSurface: {
+        surface: "Daily focus mobile view",
+        existingFiles: ["src/app.js", "src/styles.css"],
+      },
+      confidence: 0.99,
+    },
+  });
+
+  expect(result).toMatchObject({
+    dispatchTask: true,
+    pipelineDefinitionId: "shared:1ced4704717e",
+    workdir: "/Users/mini/code/wingmanbefree/wm-fd-2",
+    taskRoutingPending: false,
+    workPlan: {
+      targetSurface: {
+        surface: "Daily focus mobile view",
+        existingFiles: ["src/app.js", "src/styles.css"],
+      },
+    },
+  });
+});
+
 test("morning Daily Scope extraction preserves completed items and caps checklist", async () => {
   const result = await builtinPipelineFunctions["daily.extractMorningScope"]!({
     ownerNpub: "npub-human",

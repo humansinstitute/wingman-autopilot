@@ -2044,13 +2044,16 @@ function resolveImplementationDesignDocumentReference(
     ?? getText(workPlan.documentUrl)
     ?? getText(input.documentUrl);
   if (explicit) return explicit;
-  return [
+  const referencedDocument = [
     getText(workPlan.instructions),
     getText(workPlan.taskSummary),
     getText(workPlan.originalPrompt),
     getText(input.implementationPrompt),
     getText(input.taskTitle),
   ].map((candidate) => candidate ? extractFlightDeckDocumentReference(candidate) : null).find(Boolean) ?? null;
+  if (referencedDocument) return referencedDocument;
+  const taskId = getText(workPlan.taskId ?? input.taskId);
+  return taskId ? `flightdeck-task://${taskId}` : null;
 }
 
 function extractFlightDeckDocumentReference(text: string): string | null {
