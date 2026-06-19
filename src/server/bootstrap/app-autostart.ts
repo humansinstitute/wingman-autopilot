@@ -59,10 +59,6 @@ export async function autostartApps(
 
     try {
       const status = await processManager.getStatus(app.id);
-      if (status.running) {
-        result.skippedRunning++;
-        continue;
-      }
       if (status.inProgressAction) {
         result.skippedInProgress++;
         logger.warn(
@@ -73,7 +69,8 @@ export async function autostartApps(
 
       await processManager.restart(app.id);
       result.started++;
-      logger.log(`[apps-autostart] restarted ${app.label} (${app.id})`);
+      const previousState = status.running ? "running" : "stopped";
+      logger.log(`[apps-autostart] restarted ${app.label} (${app.id}) from ${previousState} state`);
     } catch (error) {
       const message = errorMessage(error);
       result.failed.push({ appId: app.id, label: app.label, error: message });

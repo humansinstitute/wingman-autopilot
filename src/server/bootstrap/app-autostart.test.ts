@@ -66,13 +66,12 @@ describe("autostartApps", () => {
     expect(result.checked).toBe(1);
   });
 
-  test("skips apps that are already running or missing a start script", async () => {
+  test("restarts running apps marked for autostart", async () => {
     const restarted: string[] = [];
     const result = await autostartApps(
       {
         listApps: async () => [
           app({ id: "running", label: "Running", autoStart: true }),
-          app({ id: "missing", label: "Missing", autoStart: true, scripts: {} }),
         ],
       },
       {
@@ -85,8 +84,37 @@ describe("autostartApps", () => {
       { log: () => undefined, warn: () => undefined },
     );
 
+    expect(restarted).toEqual(["running"]);
+    expect(result.started).toBe(1);
+    expect(result.skippedRunning).toBe(0);
+  });
+
+  test("skips apps that are missing a start script or already have an action in progress", async () => {
+    const restarted: string[] = [];
+    const result = await autostartApps(
+      {
+        listApps: async () => [
+          app({ id: "missing", label: "Missing", autoStart: true, scripts: {} }),
+          app({ id: "busy", label: "Busy", autoStart: true }),
+        ],
+      },
+      {
+        getStatus: async (appId) => status({
+          appId,
+          status: appId === "busy" ? "restarting" : "idle",
+          running: false,
+          inProgressAction: appId === "busy" ? "restart" : null,
+        }),
+        restart: async (appId) => {
+          restarted.push(appId);
+          return status({ appId, status: "running", running: true });
+        },
+      },
+      { log: () => undefined, warn: () => undefined },
+    );
+
     expect(restarted).toEqual([]);
-    expect(result.skippedRunning).toBe(1);
+    expect(result.skippedInProgress).toBe(1);
     expect(result.skippedMissingStartScript).toBe(1);
   });
 });
