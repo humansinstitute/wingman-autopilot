@@ -10,8 +10,7 @@ import { dirname, join } from "node:path";
 
 import type { AgentType, WingmanConfig } from "../config";
 import type { AppRecord } from "../apps/app-registry";
-import { getWappRuntimeEnvForApp } from "../wapps/runtime-env";
-import type { WappStore } from "../wapps/wapp-store";
+import { wappStore, type WappStore } from "../wapps/wapp-store";
 
 export interface EcosystemApp {
   name: string;
@@ -73,6 +72,7 @@ export interface SessionConfig {
 
 const ECOSYSTEM_FILENAME = "ecosystem.config.cjs";
 const ADMIN_DATA_DIR = "./data/admin";
+const USER_APP_RUNNER_PATH = new URL("../apps/app-runner.ts", import.meta.url).pathname;
 const BILLING_COMPATIBLE_AGENTS = new Set<AgentType>(["codex", "claude", "goose"]);
 const PROVIDER_AUTH_ENV_KEYS = [
   "OPENAI_BASE_URL",
@@ -438,7 +438,7 @@ export async function findAppBySessionId(
 
   try {
     const config = await readEcosystemConfig(ecosystemPath);
-    return config.apps.find((app) => app.env.SESSION_ID === sessionId) ?? null;
+    return config.apps.find((app) => app.env?.SESSION_ID === sessionId) ?? null;
   } catch {
     return null;
   }
@@ -504,33 +504,40 @@ export async function createUserAppEcosystemConfig(config: UserAppConfig): Promi
     throw new Error(`App ${app.id} has no start script defined`);
   }
 
-  // Metadata vars set as env prefixes (available to child process)
-  const meta = [
-    `APP_ID='${app.id}'`,
-    `APP_LABEL='${app.label}'`,
-    `USER_ALIAS='${userAlias}'`,
+  const store = config.wappStore ?? wappStore;
+  const wapp = store.getByAppId(app.id);
+  const args = [
+    USER_APP_RUNNER_PATH,
+    "--app-id",
+    app.id,
+    "--app-label",
+    app.label,
+    "--app-root",
+    app.root,
+    "--start-script",
+    startScript,
+    "--user-alias",
+    userAlias,
   ];
   if (app.webApp && app.webAppPort) {
-    meta.push(`PORT=${app.webAppPort}`);
+    args.push("--port", String(app.webAppPort));
   }
-  const wappEnv = getWappRuntimeEnvForApp(app.id, app.root, config.wappStore);
-  const wappExport = shellExport(wappEnv);
-  if (wappExport) {
-    meta.push(wappExport);
+  if (wapp) {
+    args.push("--wapp-id", wapp.id);
   }
-
-  // Prefer Redshift if configured, fall back to sourcing .env
-  const hasRedshift = await Bun.file(join(app.root, "redshift.yaml")).exists();
-  const command = hasRedshift
-    ? `${meta.join(" ")} redshift run -- ${startScript}`
-    : `set -a; [ -f .env ] && . ./.env; set +a; export ${meta.join(" ")}; ${startScript}`;
 
   return {
     name: processName,
     namespace: PM2_NAMESPACE_APPS,
-    script: "bash",
-    args: ["-c", command],
+    script: "bun",
+    args,
     cwd: app.root,
+    env: {
+      WINGMAN_PROCESS_KIND: "user-app",
+      APP_ID: app.id,
+      USER_ALIAS: userAlias,
+      ...(wapp ? { WAPP_ID: wapp.id } : {}),
+    },
     out_file: join(logsDir, `${processName}-out.log`),
     error_file: join(logsDir, `${processName}-error.log`),
     log_date_format: "YYYY-MM-DD HH:mm:ss",

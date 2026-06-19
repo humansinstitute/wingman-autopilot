@@ -7,6 +7,7 @@ import { generateSecretKey, nip19 } from "nostr-tools";
 import type { AppRecord } from "../apps/app-registry";
 import type { WingmanConfig } from "../config";
 import { WappStore } from "../wapps/wapp-store";
+import { buildUserAppSpawnPlan } from "../apps/app-runner";
 import {
   addAppToEcosystem,
   addUserAppToEcosystem,
@@ -90,11 +91,32 @@ describe("createUserAppEcosystemConfig WApp env injection", () => {
         wappStore: store,
       });
 
-      const wappCommand = wappConfig.args[1] ?? "";
-      expect(wappCommand).toContain("WAPP_ID='wapp-1'");
-      expect(wappCommand).toContain("WAPP_APP_ID='wapp-app'");
-      expect(wappCommand).toContain(`WAPP_DB_PATH='${join(wappRoot, "data", "db.sqlite")}'`);
-      expect(wappCommand).toContain("WAPP_ALLOWED_NPUBS_JSON='[\"npub1member\",\"npub1owner\"]'");
+      const wappCommand = wappConfig.args.join(" ");
+      expect(wappConfig.script).toBe("bun");
+      expect(wappCommand).toContain("app-runner.ts");
+      expect(wappConfig.args).toContain("--wapp-id");
+      expect(wappConfig.args).toContain("wapp-1");
+      expect(JSON.stringify(wappConfig)).not.toContain("WAPP_DB_PATH");
+
+      const runnerPlan = await buildUserAppSpawnPlan({
+        appId: "wapp-app",
+        appLabel: "WApp App",
+        appRoot: wappRoot,
+        startScript: "bun src/server.ts",
+        userAlias: "tester",
+        port: "4010",
+        wappId: "wapp-1",
+      }, {
+        store,
+        hostEnv: {},
+        envFileReader: async () => ({}),
+        redshiftDetector: async () => false,
+      });
+      expect(runnerPlan.env.WAPP_ID).toBe("wapp-1");
+      expect(runnerPlan.env.WAPP_APP_ID).toBe("wapp-app");
+      expect(runnerPlan.env.WAPP_DB_PATH).toBe(join(wappRoot, "data", "db.sqlite"));
+      expect(runnerPlan.env.WAPP_ALLOWED_NPUBS_JSON).toBe("[\"npub1member\",\"npub1owner\"]");
+      expect(runnerPlan.env.PORT).toBe("4010");
 
       const plainCommand = plainConfig.args[1] ?? "";
       expect(plainCommand).not.toContain("WAPP_ID=");
@@ -140,13 +162,36 @@ describe("createUserAppEcosystemConfig WApp env injection", () => {
         wappStore: store,
       });
 
-      const command = wappConfig.args[1] ?? "";
-      expect(command).toContain("APP_NPUB=");
-      expect(command).toContain(`APP_NSEC='${appNsec}'`);
-      expect(command).toContain("TOWER_URL='https://tower.example'");
-      expect(command).toContain("WORKSPACE_OWNER_NPUB='npub1workspace'");
-      expect(command).toContain("WAPP_DB_MODE='tower-api'");
-      expect(command).not.toContain("WAPP_DB_PATH=");
+      const command = wappConfig.args.join(" ");
+      const serializedConfig = JSON.stringify(wappConfig);
+      expect(command).toContain("app-runner.ts");
+      expect(serializedConfig).toContain("--wapp-id");
+      expect(serializedConfig).toContain("wapp-tower");
+      expect(serializedConfig).not.toContain(appNsec);
+      expect(serializedConfig).not.toContain("APP_NSEC");
+      expect(serializedConfig).not.toContain("WAPP_APP_NSEC");
+
+      const runnerPlan = await buildUserAppSpawnPlan({
+        appId: "wapp-app",
+        appLabel: "WApp App",
+        appRoot: join(dir, "wapp-root"),
+        startScript: "bun src/server.ts",
+        userAlias: "tester",
+        port: "4010",
+        wappId: "wapp-tower",
+      }, {
+        store,
+        hostEnv: {},
+        envFileReader: async () => ({}),
+        redshiftDetector: async () => false,
+      });
+      expect(runnerPlan.env.APP_NPUB).toBeDefined();
+      expect(runnerPlan.env.APP_NSEC).toBe(appNsec);
+      expect(runnerPlan.env.WAPP_APP_NSEC).toBe(appNsec);
+      expect(runnerPlan.env.TOWER_URL).toBe("https://tower.example");
+      expect(runnerPlan.env.WORKSPACE_OWNER_NPUB).toBe("npub1workspace");
+      expect(runnerPlan.env.WAPP_DB_MODE).toBe("tower-api");
+      expect(runnerPlan.env.WAPP_DB_PATH).toBeUndefined();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

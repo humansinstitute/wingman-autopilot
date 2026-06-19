@@ -36,13 +36,13 @@ export function buildWappRuntimeEnv(wapp: WappRecord, wappRoot: string): Record<
   };
 }
 
-export function getWappRuntimeEnvForApp(
-  appId: string,
+export function getWappRuntimeEnvForWapp(
+  wappId: string,
   appRoot: string,
   store: WappStore = wappStore,
 ): Record<string, string> {
-  const wapp = store.getByAppId(appId);
-  if (!wapp) return {};
+  const wapp = store.get(wappId);
+  if (!wapp || wapp.recordState !== "active") return {};
   const env = buildWappRuntimeEnv(wapp, appRoot);
   if (wapp.towerBindingId) {
     const appNsec = store.getAppNsec(wapp.id);
@@ -53,4 +53,14 @@ export function getWappRuntimeEnvForApp(
     env.WAPP_APP_NSEC = appNsec;
   }
   return env;
+}
+
+export function getWappRuntimeEnvForApp(
+  appId: string,
+  appRoot: string,
+  store: WappStore = wappStore,
+): Record<string, string> {
+  const wapp = store.getByAppId(appId);
+  if (!wapp) return {};
+  return getWappRuntimeEnvForWapp(wapp.id, appRoot, store);
 }
