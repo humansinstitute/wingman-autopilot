@@ -89,6 +89,12 @@ describe("pipeline definition version paths", () => {
     ]);
     expect(definition?.spec.steps.find((step) => step.name === "analyse-intent")).toMatchObject({
       when: { path: "$.chatContext.shouldProceed", equals: true },
+      agent: "opencode",
+      model: "openrouter/deepseek/deepseek-v4-flash",
+    });
+    expect(definition?.spec.steps.find((step) => step.name === "select-task-pipeline")).toMatchObject({
+      agent: "opencode",
+      model: "openrouter/deepseek/deepseek-v4-flash",
     });
     expect(JSON.stringify(definition?.spec.steps.find((step) => step.name === "analyse-intent"))).toContain(
       "Classify as answer_now, document_discussion, or create_task",

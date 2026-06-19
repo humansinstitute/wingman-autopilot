@@ -16,6 +16,9 @@ export interface PipelineDefinitionRecord {
   spec: DeclarativePipeline;
 }
 
+const CHAT_DISPATCH_FAST_AGENT = "opencode";
+const CHAT_DISPATCH_FAST_MODEL = "openrouter/deepseek/deepseek-v4-flash";
+
 const AGENT_DISPATCH_CHAT_DEFINITION = {
   name: "agent-dispatch-chat",
   description: "Default dispatch pipeline for chat advisories. It acknowledges receipt, hydrates the source thread, classifies answer_now, think_then_answer, or create_task, then only loads task pipeline candidates for create_task.",
@@ -118,7 +121,8 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
       description: "Analyse the hydrated thread and classify the request as answer_now or create_task.",
       type: "agent",
       when: { path: "$.chatContext.shouldProceed", equals: true },
-      agent: "$.agent.defaultAgent",
+      agent: CHAT_DISPATCH_FAST_AGENT,
+      model: CHAT_DISPATCH_FAST_MODEL,
       directory: "$.agent.workingDirectory",
       input: {
         pick: {
@@ -238,7 +242,8 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
       description: "Choose the task-capable child pipeline only after create_task intent has been selected.",
       type: "agent",
       when: { path: "$.decision.taskRoutingPending", equals: true },
-      agent: "$.agent.defaultAgent",
+      agent: CHAT_DISPATCH_FAST_AGENT,
+      model: CHAT_DISPATCH_FAST_MODEL,
       directory: "$.agent.workingDirectory",
       input: {
         pick: {
