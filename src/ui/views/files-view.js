@@ -323,6 +323,7 @@ export function initFilesView(deps) {
     wrapper.dataset.surface = filesSurface;
     wrapper.setAttribute("aria-labelledby", "files-page-title");
 
+    const surfaceCopy = getFilesSurfaceCopy(filesSurface);
     const pageHeader = createFilesPageHeader(filesSurface);
 
     const layout = document.createElement("div");
@@ -342,7 +343,7 @@ export function initFilesView(deps) {
     headerButton.className = "wm-files-browser__info";
     headerButton.setAttribute("aria-expanded", "true");
     const headerTitle = document.createElement("h2");
-    headerTitle.textContent = "Files";
+    headerTitle.textContent = surfaceCopy.title;
     const pathLabel = document.createElement("span");
     pathLabel.className = "wm-files-browser__path";
     pathLabel.textContent = files.displayPath ?? "Workspace";
