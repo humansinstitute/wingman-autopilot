@@ -4,10 +4,10 @@ import { dirname } from "node:path";
 
 import { Database } from "bun:sqlite";
 import type { SQLQueryBindings } from "bun:sqlite";
-import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
 
 import { databaseFile } from "../storage/message-store";
 import { decryptSettingValue, encryptSettingValue, isEncryptedSettingValue } from "../storage/setting-value-crypto";
+import { createWappAppNsec, deriveWappAppNpubFromNsec } from "./app-key";
 import { normalizeWappScopeLineage } from "./scope-access";
 import type {
   CreateWappInput,
@@ -68,40 +68,6 @@ function parseJson<T>(value: string | null, fallback: T): T {
   } catch {
     return fallback;
   }
-}
-
-function decodeNsec(value: string): Uint8Array {
-  const raw = value.trim();
-  if (raw.startsWith("nsec1")) {
-    const decoded = nip19.decode(raw);
-    if (decoded.type !== "nsec" || !(decoded.data instanceof Uint8Array)) {
-      throw new Error("APP_NSEC must be a valid nsec value");
-    }
-    return decoded.data;
-  }
-  if (/^[a-fA-F0-9]{64}$/.test(raw)) {
-    return Uint8Array.from(Buffer.from(raw, "hex"));
-  }
-  throw new Error("APP_NSEC must be nsec1... or 64-char hex");
-}
-
-function deriveNpubFromNsec(nsec: string): string {
-  return nip19.npubEncode(getPublicKey(decodeNsec(nsec)));
-}
-
-function createAppNsec(mode: WappAppKeyMode | undefined, importedNsec: string | null | undefined): string {
-  if (mode === "import") {
-    if (!importedNsec?.trim()) {
-      throw new Error("APP_NSEC is required when importing a WApp app key");
-    }
-    decodeNsec(importedNsec);
-    return importedNsec.trim();
-  }
-  if (importedNsec?.trim()) {
-    decodeNsec(importedNsec);
-    return importedNsec.trim();
-  }
-  return nip19.nsecEncode(generateSecretKey());
 }
 
 function rowToTowerBinding(row: WappTowerBindingRow): WappTowerBinding {
@@ -406,10 +372,10 @@ export class WappStore {
     if (!this.getTowerBinding(towerBindingId)) {
       throw new Error(`Unknown WApp Tower binding: ${towerBindingId}`);
     }
-    const nsec = createAppNsec(appKeyMode, appNsec);
+    const nsec = createWappAppNsec(appKeyMode, appNsec);
     return {
       towerBindingId,
-      appNpub: deriveNpubFromNsec(nsec),
+      appNpub: deriveWappAppNpubFromNsec(nsec),
       encryptedAppNsec: encryptSettingValue(nsec),
     };
   }
@@ -441,10 +407,10 @@ export class WappStore {
     if (existing.towerBindingId || existing.appNpub) {
       throw new Error("Existing Tower-backed WApp assignment is missing encrypted APP_NSEC");
     }
-    const nsec = createAppNsec(appKeyMode, appNsec);
+    const nsec = createWappAppNsec(appKeyMode, appNsec);
     return {
       towerBindingId: nextBindingId,
-      appNpub: deriveNpubFromNsec(nsec),
+      appNpub: deriveWappAppNpubFromNsec(nsec),
       encryptedAppNsec: encryptSettingValue(nsec),
     };
   }

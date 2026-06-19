@@ -2602,6 +2602,13 @@ const handleApi = createApiRouteHandler({
       wappStore,
       publisher: wappPublisher,
       scopeAccessResolver: wappScopeAccessResolver,
+      towerRegistrationIdentity: wingmanInstanceIdentity
+        ? {
+          botNpub: wingmanInstanceIdentity.npub,
+          botPubkeyHex: wingmanInstanceIdentity.pubkeyHex,
+          botSecret: wingmanInstanceIdentity.secretKey,
+        }
+        : null,
       buildLaunchUrl: (alias, app) => {
         const aliasUrl = buildAppHostUrl(alias);
         if (aliasUrl) {

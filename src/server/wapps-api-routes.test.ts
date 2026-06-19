@@ -34,10 +34,13 @@ function makeContext(): {
   ctx: WappsApiContext;
   cleanup: () => void;
   published: unknown[];
+  registrations: unknown[];
   scopeMembers: Map<string, string[]>;
 } {
   const dir = mkdtempSync(join(tmpdir(), "wapps-api-"));
   const published: unknown[] = [];
+  const registrations: unknown[] = [];
+  const authoritySecret = generateSecretKey();
   const scopeMembers = new Map<string, string[]>([
     ["scope-1", ["npub1member", "npub1owner", " npub1member "]],
     ["scope-2", ["npub1other"]],
@@ -45,6 +48,7 @@ function makeContext(): {
   return {
     cleanup: () => rmSync(dir, { recursive: true, force: true }),
     published,
+    registrations,
     scopeMembers,
     ctx: {
       adminNpub: null,
@@ -87,6 +91,17 @@ function makeContext(): {
           });
         },
       },
+      towerRegistrationIdentity: {
+        botNpub: nip19.npubEncode(getPublicKey(authoritySecret)),
+        botPubkeyHex: getPublicKey(authoritySecret),
+        botSecret: authoritySecret,
+      },
+      towerWappRegistrar: {
+        register: async (input) => {
+          registrations.push(input);
+          return { workspaceOwnerNpub: input.workspaceOwnerNpub, appNpub: input.appNpub, app: { app_npub: input.appNpub } };
+        },
+      },
       buildLaunchUrl: (alias) => `http://localhost:3000/host/${alias}`,
     },
   };
@@ -94,7 +109,7 @@ function makeContext(): {
 
 describe("handleWappsApi", () => {
   test("creates Tower bindings and Tower-backed WApps without exposing APP_NSEC", async () => {
-    const { ctx, cleanup } = makeContext();
+    const { ctx, cleanup, registrations } = makeContext();
     try {
       const secret = generateSecretKey();
       const appNsec = nip19.nsecEncode(secret);
@@ -134,6 +149,13 @@ describe("handleWappsApi", () => {
         towerBindingId: "tower-dev",
         appNpub,
         towerBinding: { id: "tower-dev", towerUrl: "https://tower.example" },
+      });
+      expect(registrations).toHaveLength(1);
+      expect(registrations[0]).toMatchObject({
+        towerUrl: "https://tower.example",
+        workspaceOwnerNpub: "npub1workspace",
+        appNpub,
+        appName: "Ops Board",
       });
       expect(JSON.stringify(created)).not.toContain(appNsec);
       expect(ctx.wappStore.getAppNsec(created.wapp.id)).toBe(appNsec);
@@ -191,6 +213,99 @@ describe("handleWappsApi", () => {
       expect(importResponse?.status).toBe(400);
       expect(ctx.wappStore.get(created.wapp.id)?.appNpub).toBe(appNpub);
       expect(ctx.wappStore.getAppNsec(created.wapp.id)).toBe(appNsec);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("registers existing Tower app npub when updating Tower binding", async () => {
+    const { ctx, cleanup, registrations } = makeContext();
+    try {
+      const secret = generateSecretKey();
+      const appNsec = nip19.nsecEncode(secret);
+      const appNpub = nip19.npubEncode(getPublicKey(secret));
+      ctx.wappStore.createTowerBinding({
+        id: "tower-dev",
+        label: "Tower Dev",
+        towerUrl: "https://tower-dev.example",
+        workspaceOwnerNpub: "npub1workspace",
+      });
+      ctx.wappStore.createTowerBinding({
+        id: "tower-stage",
+        label: "Tower Stage",
+        towerUrl: "https://tower-stage.example",
+        workspaceOwnerNpub: "npub1workspace",
+      });
+      const createRequest = new Request("http://localhost:3000/api/wapps", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          appId: "app-1",
+          title: "Ops Board",
+          workspaceOwnerNpub: "npub1workspace",
+          scopeId: "scope-1",
+          towerBindingId: "tower-dev",
+          appKeyMode: "import",
+          appNsec,
+        }),
+      });
+      const createResponse = await handleWappsApi(createRequest, new URL(createRequest.url), "POST", authContext, ctx);
+      const created = await createResponse!.json() as any;
+      registrations.length = 0;
+
+      const updateRequest = new Request(`http://localhost:3000/api/wapps/${created.wapp.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ towerBindingId: "tower-stage" }),
+      });
+      const updateResponse = await handleWappsApi(updateRequest, new URL(updateRequest.url), "PATCH", authContext, ctx);
+      expect(updateResponse?.status).toBe(200);
+      const updated = await updateResponse!.json() as any;
+      expect(updated.wapp).toMatchObject({ towerBindingId: "tower-stage", appNpub });
+      expect(registrations).toHaveLength(1);
+      expect(registrations[0]).toMatchObject({
+        towerUrl: "https://tower-stage.example",
+        workspaceOwnerNpub: "npub1workspace",
+        appNpub,
+      });
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("returns a clear error when Tower app registration fails", async () => {
+    const { ctx, cleanup } = makeContext();
+    try {
+      ctx.wappStore.createTowerBinding({
+        id: "tower-dev",
+        label: "Tower Dev",
+        towerUrl: "https://tower.example",
+        workspaceOwnerNpub: "npub1workspace",
+      });
+      ctx.towerWappRegistrar = {
+        register: async () => {
+          throw new Error("Tower registration failed: Not authorized to manage this workspace");
+        },
+      };
+      const createRequest = new Request("http://localhost:3000/api/wapps", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          appId: "app-1",
+          title: "Ops Board",
+          workspaceOwnerNpub: "npub1workspace",
+          scopeId: "scope-1",
+          towerBindingId: "tower-dev",
+          appKeyMode: "generate",
+        }),
+      });
+      const createResponse = await handleWappsApi(createRequest, new URL(createRequest.url), "POST", authContext, ctx);
+      expect(createResponse?.status).toBe(502);
+      expect(await createResponse!.json()).toMatchObject({
+        error: "wapp-tower-registration-failed",
+        message: "Tower registration failed: Not authorized to manage this workspace",
+      });
+      expect(ctx.wappStore.list()).toHaveLength(0);
     } finally {
       cleanup();
     }
