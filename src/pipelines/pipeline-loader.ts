@@ -20,7 +20,7 @@ const CHAT_DISPATCH_CLASSIFIER_MODEL = "openai/gpt-oss-120b:nitro";
 
 const AGENT_DISPATCH_CHAT_DEFINITION = {
   name: "agent-dispatch-chat",
-  description: "Default dispatch pipeline for chat advisories. It acknowledges receipt, hydrates the source thread, classifies answer_now, think_then_answer, or create_task, then only loads task pipeline candidates for create_task.",
+  description: "Default dispatch pipeline for chat advisories. It hydrates the source thread, uses a fast classifier only for answer-now versus agent-needed, then lets a proper agent decide whether to reply, clarify, do direct work, create a task, or start a child pipeline.",
   default: true,
   tags: ["default", "dispatch", "chat", "flight-deck"],
   input: {
@@ -53,6 +53,18 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
     },
   },
   steps: [
+    {
+      name: "mark-response-thinking",
+      description: "Tell Flight Deck that the agent is preparing a thread response.",
+      type: "code",
+      function: "dispatch.setResponseActivity",
+      input: {
+        status: "thinking",
+        label: "Thinking",
+        expiresInSeconds: 90,
+      },
+      assign: "$.responseActivity",
+    },
     {
       name: "hydrate-chat-context",
       description: "Fetch the latest thread, referenced Flight Deck records, and visible scopes before asking the agent to classify intent.",
@@ -141,7 +153,7 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
     },
     {
       name: "analyse-intent",
-      description: "Analyse the hydrated thread and classify the request as answer_now or create_task.",
+      description: "Fast gate: decide whether this can be answered immediately or needs a proper agent session.",
       type: "classifier",
       when: { path: "$.agentDecision.skipAgent", equals: false },
       provider: "openrouter",
@@ -153,7 +165,7 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
           chatDispatchInput: "$.chatDispatchInput",
         },
       },
-      prompt: "You are stage 1 of agent-dispatch-chat: Analyse Intent. The selected input contains chatDispatchInput, a compact decision packet. Use chatDispatchInput.latestThread as the authoritative latest conversation, chatDispatchInput.channelContext.contextPrompt as channel-specific instructions for how this work should be handled, referencedRecords as supporting Flight Deck context, and scopes only as immediate context. The pipeline catalog is intentionally unavailable at this stage. Classify as answer_now, document_discussion, or create_task. Use answer_now only when the complete final reply can be written immediately in chatResponse.body: direct conversational answers, explanations, summaries, recommendations, status answers already known from the supplied context, quick drafts, or focused follow-up questions. Use document_discussion for feature/design/planning/spec/document iteration where the expected output is a Flight Deck document plus an in-thread reply, especially when channelContext says to develop or iterate on a doc instead of building. For document_discussion set dispatchTask false, recommendedPipelineId document-discussion, and put a brief acknowledgement in chatResponse.body. Use create_task for code changes, implementation, WApp/system changes, migrations, operational changes, concrete work that needs task tracking and review, or any investigation that requires inspecting sessions, logs, pipelines, files, projects, Tower/Flight Deck state, Autopilot runtime state, or other external context before reporting back. Do not use think_then_answer for future-action acknowledgements; if the answer would be 'I will review/check/investigate and report back', classify create_task unless it is document_discussion. Do not classify discussion, planning, design thinking, explanations, summaries, opinions, document iteration, or chat-only research as create_task unless the user asks for implementation/operations or the answer requires external inspection before it can be completed. For answer_now, set dispatchTask false and put the complete chat reply or focused follow-up in chatResponse.body. For create_task, set dispatchTask true and provide taskDraft with title, instructions string, acceptanceCriteria, executionPlan, managerChecklist, assignerNpub, and reviewerNpub; do not choose a child task pipeline or include recommendedPipelineId. Return JSON only with: intent string, dispatchTask boolean, recommendedPipelineId string|null, taskDraft object|null, chatResponse object with body string, clarifyingQuestion string|null, confidence number from 0 to 1. Do not include responseOnly.",
+      prompt: "You are stage 1 of agent-dispatch-chat: Fast Gate. The selected input contains chatDispatchInput, a compact decision packet. Use chatDispatchInput.latestThread as the authoritative latest conversation, chatDispatchInput.channelContext.contextPrompt as channel-specific instructions, and referencedRecords as supporting context. Do not plan work. Do not create task drafts. Do not choose child pipelines. Do not guess repositories, target surfaces, or implementation contracts. Classify only as answer_now, agent, or ignore. Use answer_now only when the complete final reply can be written immediately from supplied context in chatResponse.body. Use agent when any real thinking, tool use, external inspection, Flight Deck/Tower/Autopilot/session lookup, repository inspection, file/doc/image analysis, task creation, or child pipeline dispatch may be needed. Use ignore for self-authored or non-actionable dispatches. Return JSON only with: intent string exactly answer_now|agent|ignore, chatResponse object with body string|null, clarifyingQuestion string|null, confidence number from 0 to 1.",
       assign: "$.agentDecision",
       display: {
         in: [
@@ -162,7 +174,6 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
         ],
         out: [
           { label: "Intent", path: "$.intent", format: "text" },
-          { label: "Dispatch Task", path: "$.dispatchTask" },
           { label: "Reply", path: "$.chatResponse.body", format: "text" },
         ],
       },
@@ -201,6 +212,67 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
           { label: "Clarifying Question", path: "$.clarifyingQuestion", format: "text" },
         ],
       },
+    },
+    {
+      name: "dispatch-agent",
+      description: "Let a real agent inspect context and decide whether to reply, clarify, do direct work, create a task, or start a structured child pipeline.",
+      type: "agent",
+      agent: "$.agent.defaultAgent",
+      directory: "$.agent.workingDirectory",
+      timeoutMs: 600000,
+      when: { path: "$.decision.dispatchAgent", equals: true },
+      input: {
+        pick: {
+          dispatch: "$.dispatch",
+          workspace: "$.workspace",
+          agent: "$.agent",
+          chat: "$.chat",
+          record: "$.record",
+          routing: "$.routing",
+          runtime: "$.runtime",
+          chatContext: "$.chatContext",
+          chatDispatchInput: "$.chatDispatchInput",
+          decision: "$.decision",
+          flightDeckContext: "$.flightDeckContext",
+        },
+      },
+      prompt: "You are the Wingman chat dispatch agent. The fast classifier decided this thread needs a real agent. Read the selected input carefully, using chatDispatchInput.latestThread as the latest user-visible thread and channelContext.contextPrompt as channel policy. You may inspect current Autopilot/Flight Deck/Tower/session state or repo files if needed. Do small bounded work directly in this agent when possible, especially status checks, current state reviews, available Wingman session checks, simple tool lookups, and concise reports. Do not create a task or start do-and-review just to inspect current state. If you need clarification, return action clarify with a single question; the pipeline will publish it and stop. If you can answer after inspection, return action reply with chatResponse.body. If structured long-running work is needed, return action start_pipeline and choose exactly one of software-implementation-review-loop, research-and-report, do-and-review, or document-discussion. Set createTask true only when durable Flight Deck task tracking is genuinely useful. For software-implementation-review-loop, build a real contract: workdir must be a real repo, instructions must be concrete, targetSurface must identify route/surface/files/selectors/visualReferences, and any Flight Deck doc/image should be copied to local project tmp paths using the available Wingman CLI helper before worker handoff when possible; include designDocument.localPath/sourceRef or explain what is missing in clarifyingQuestion. Never pass only Flight Deck URLs to worker context. Return JSON only with: action reply|clarify|start_pipeline|ignore, chatResponse {body:string|null}, clarifyingQuestion string|null, recommendedPipelineId string|null, createTask boolean, taskDraft object|null, workPlan object|null, confidence number.",
+      assign: "$.agentWorkDecision",
+      display: {
+        in: [
+          { label: "Thread", path: "$.chatDispatchInput.latestThread", format: "messages", limit: 6, empty: "No thread messages" },
+        ],
+        out: [
+          { label: "Action", path: "$.action", format: "text" },
+          { label: "Pipeline", path: "$.recommendedPipelineId", format: "text" },
+          { label: "Reply", path: "$.chatResponse.body", format: "text" },
+          { label: "Clarifying Question", path: "$.clarifyingQuestion", format: "text" },
+        ],
+      },
+    },
+    {
+      name: "normalise-agent-work-decision",
+      description: "Turn the dispatch agent's decision into deterministic reply, clarification, task creation, or child pipeline launch state.",
+      type: "code",
+      function: "dispatch.normaliseChatAgentWorkDecision",
+      when: { path: "$.decision.dispatchAgent", equals: true },
+      input: {
+        pick: {
+          dispatch: "$.dispatch",
+          workspace: "$.workspace",
+          agent: "$.agent",
+          chat: "$.chat",
+          record: "$.record",
+          routing: "$.routing",
+          runtime: "$.runtime",
+          chatContext: "$.chatContext",
+          chatDispatchInput: "$.chatDispatchInput",
+          decision: "$.decision",
+          agentWorkDecision: "$.agentWorkDecision",
+          flightDeckContext: "$.flightDeckContext",
+        },
+      },
+      assign: "$.decision",
     },
     {
       name: "route-discussion-chat",
@@ -262,38 +334,6 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
       assign: "$.taskPipelineInput",
     },
     {
-      name: "select-task-pipeline",
-      description: "Choose the task-capable child pipeline only after create_task intent has been selected.",
-      type: "classifier",
-      when: { path: "$.decision.taskRoutingPending", equals: true },
-      provider: "openrouter",
-      model: CHAT_DISPATCH_CLASSIFIER_MODEL,
-      retries: 3,
-      timeoutMs: 8000,
-      input: {
-        pick: {
-          taskPipelineInput: "$.taskPipelineInput",
-        },
-      },
-      prompt: "You are stage 2 of agent-dispatch-chat: Select Task Pipeline. The initial chat classifier already decided create_task, so choose exactly one task-capable downstream pipeline from taskPipelineInput.validChildPipelines. Do not choose any dispatch, intake, discussion, or chat-only pipeline. Prefer software-implementation-review-loop for code/repository/build/test/deployment/implementation work, research-and-report for explicit durable research reports/documents, and do-and-review for generic durable operational or artifact work. For software-implementation-review-loop you must return a real repository workdir, a targetSurface object with route/surface/files/selectors/visualReferences when known, and a clarifyingQuestion if the repo or target surface cannot be identified from the thread. Return JSON only with: recommendedPipelineId string, scopeId string|null, workdir string|null, targetSurface object|null, visualReferences array|null, chatResponse object with body string|null, clarifyingQuestion string|null, confidence number from 0 to 1.",
-      assign: "$.taskPipelineDecision",
-    },
-    {
-      name: "normalise-task-pipeline-selection",
-      description: "Merge the selected task pipeline into the pending create_task decision.",
-      type: "code",
-      function: "dispatch.normaliseChatTaskPipelineSelection",
-      when: { path: "$.decision.taskRoutingPending", equals: true },
-      input: {
-        pick: {
-          decision: "$.decision",
-          taskPipelineInput: "$.taskPipelineInput",
-          taskPipelineDecision: "$.taskPipelineDecision",
-        },
-      },
-      assign: "$.decision",
-    },
-    {
       name: "create-in-progress-task",
       type: "code",
       function: "dispatch.createChatTask",
@@ -328,6 +368,20 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
       assign: "$.childPipeline",
     },
     {
+      name: "start-direct-pipeline",
+      type: "code",
+      function: "dispatch.startChildPipeline",
+      when: { path: "$.decision.dispatchPipeline", equals: true },
+      input: {
+        pick: {
+          pipelineDefinitionId: "$.decision.pipelineDefinitionId",
+          workPlan: "$.decision.workPlan",
+          childInput: "$",
+        },
+      },
+      assign: "$.childPipeline",
+    },
+    {
       name: "reload-chat-thread-before-reply",
       type: "code",
       function: "dispatch.reloadChatThread",
@@ -346,6 +400,19 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
         },
       },
       assign: "$.closeoutContext",
+    },
+    {
+      name: "mark-response-drafting",
+      description: "Tell Flight Deck that the agent is drafting the reply that will be posted to the thread.",
+      type: "code",
+      function: "dispatch.setResponseActivity",
+      when: { path: "$.chatContext.shouldProceed", equals: true },
+      input: {
+        status: "drafting",
+        label: "Writing a reply",
+        expiresInSeconds: 90,
+      },
+      assign: "$.responseActivity",
     },
     {
       name: "prepare-chat-response",

@@ -284,6 +284,7 @@ export interface FlightDeckPgWriteResult {
   comment?: FlightDeckPgTaskComment;
   lease?: FlightDeckPgEditLease;
   reaction?: Record<string, unknown>;
+  response_activity?: Record<string, unknown>;
   event?: FlightDeckPgEvent;
   [key: string]: unknown;
 }
@@ -735,6 +736,63 @@ export async function createFlightDeckPgChannelMessage(params: {
   });
   if (!response.ok) {
     const error = await parseTowerError(response, 'flightdeck_pg_channel_message_create');
+    throw Object.assign(new Error(error.message), error);
+  }
+  return await response.json() as FlightDeckPgWriteResult;
+}
+
+export async function upsertFlightDeckPgResponseActivity(params: {
+  backendBaseUrl: string;
+  workspaceId: string;
+  appNpub: string;
+  botIdentity: RuntimeBotIdentity;
+  targetType: 'chat_thread' | 'task_comment' | 'doc_comment';
+  targetId: string;
+  status: 'queued' | 'thinking' | 'drafting' | 'publishing' | 'failed' | 'cleared';
+  severity?: 'info' | 'warning' | 'error';
+  label?: string | null;
+  message?: string | null;
+  activityType?: string | null;
+  pipelineRunId?: string | null;
+  sourceMessageId?: string | null;
+  metadata?: Record<string, unknown> | null;
+  expiresInSeconds?: number;
+  signal?: AbortSignal;
+}): Promise<FlightDeckPgWriteResult> {
+  const path = `/api/v4/flightdeck-pg/workspaces/${encodeURIComponent(params.workspaceId)}/response-activities`;
+  const url = buildFlightDeckPgUrl(params.backendBaseUrl, path);
+  const body = {
+    target_type: params.targetType,
+    target_id: params.targetId,
+    status: params.status,
+    ...(params.severity ? { severity: params.severity } : {}),
+    ...(params.label ? { label: params.label } : {}),
+    ...(params.message ? { message: params.message } : {}),
+    ...(params.activityType ? { activity_type: params.activityType } : {}),
+    ...(params.pipelineRunId ? { pipeline_run_id: params.pipelineRunId } : {}),
+    ...(params.sourceMessageId ? { source_message_id: params.sourceMessageId } : {}),
+    ...(params.metadata ? { metadata: params.metadata } : {}),
+    ...(params.expiresInSeconds ? { expires_in_seconds: params.expiresInSeconds } : {}),
+  };
+  const authorization = await signFlightDeckPgBotRequest({
+    botIdentity: params.botIdentity,
+    url,
+    method: 'POST',
+    body,
+  });
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      Authorization: authorization,
+      'Content-Type': 'application/json',
+      'x-flightdeck-pg-app-npub': params.appNpub,
+    },
+    body: JSON.stringify(body),
+    signal: params.signal,
+  });
+  if (!response.ok) {
+    const error = await parseTowerError(response, 'flightdeck_pg_response_activity_upsert');
     throw Object.assign(new Error(error.message), error);
   }
   return await response.json() as FlightDeckPgWriteResult;

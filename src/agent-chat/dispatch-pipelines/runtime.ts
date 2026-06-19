@@ -40,6 +40,7 @@ import {
   createDispatchImplementationReviewProgressCommenter,
   createDispatchImplementationReviewTaskEnsurer,
   createDispatchNeedsInputPublisher,
+  createDispatchResponseActivityPublisher,
   createDispatchReviewTaskCompleter,
   createDispatchTaskStateUpdater,
   acknowledgeChatDispatchMessage,
@@ -509,6 +510,12 @@ export class DispatchPipelineRuntime {
         runtime: input.flightDeckRuntime,
       });
       registry['dispatch.publishNeedsInput'] = createDispatchNeedsInputPublisher({
+        eventInput: input.eventInput,
+        agent: input.agent,
+        botIdentity: input.eventInput.botIdentity ?? null,
+        runtime: input.flightDeckRuntime,
+      });
+      registry['dispatch.setResponseActivity'] = createDispatchResponseActivityPublisher({
         eventInput: input.eventInput,
         agent: input.agent,
         botIdentity: input.eventInput.botIdentity ?? null,

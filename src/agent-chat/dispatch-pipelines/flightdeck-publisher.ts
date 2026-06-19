@@ -24,6 +24,7 @@ import {
   fetchFlightDeckPgWorkspaceMembers,
   listFlightDeckPgChannelDocs,
   uploadFlightDeckPgStorageObject,
+  upsertFlightDeckPgResponseActivity,
   updateFlightDeckPgTaskState,
   type FlightDeckPgMessage,
 } from '../tower-client';
@@ -391,6 +392,91 @@ async function createFlightDeckPgChannelMessageFromContext(
   return {
     ...objectValue(result),
     speech,
+  };
+}
+
+async function setFlightDeckPgThreadResponseActivity(
+  context: DispatchPipelineFlightDeckPublisherContext,
+  input: {
+    status: 'queued' | 'thinking' | 'drafting' | 'publishing' | 'failed' | 'cleared';
+    label?: string | null;
+    message?: string | null;
+    severity?: 'info' | 'warning' | 'error';
+    expiresInSeconds?: number;
+    pipelineRunId?: string | null;
+    metadata?: Record<string, unknown> | null;
+  },
+): Promise<JsonObject> {
+  if (!canUseFlightDeckRuntime(context)) {
+    return {
+      updated: false,
+      status: 'skipped',
+      operation: 'response-activity.set',
+      reason: context.runtime.error ?? 'Flight Deck runtime was not prepared.',
+    };
+  }
+  const threadId = context.eventInput.threadId ?? getText(context.eventInput.payload.thread_id);
+  if (!threadId) {
+    return {
+      updated: false,
+      status: 'skipped',
+      operation: 'response-activity.set',
+      reason: 'missing_thread_id',
+    };
+  }
+  const pg = getFlightDeckPgPublishContext(context);
+  const result = await upsertFlightDeckPgResponseActivity({
+    ...pg,
+    targetType: 'chat_thread',
+    targetId: threadId,
+    status: input.status,
+    severity: input.severity ?? (input.status === 'failed' ? 'error' : 'info'),
+    label: input.label ?? null,
+    message: input.message ?? null,
+    pipelineRunId: input.pipelineRunId ?? null,
+    sourceMessageId: context.eventInput.recordId,
+    activityType: 'agent_response',
+    expiresInSeconds: input.expiresInSeconds ?? (input.status === 'failed' ? 300 : 90),
+    metadata: {
+      autopilot_dispatch: true,
+      trigger_kind: context.eventInput.triggerKind,
+      subscription_id: context.eventInput.subscription.subscriptionId,
+      ...(input.metadata ?? {}),
+    },
+  });
+  return {
+    updated: true,
+    status: input.status,
+    operation: 'response-activity.set',
+    targetType: 'chat_thread',
+    targetId: threadId,
+    result,
+  };
+}
+
+export function createDispatchResponseActivityPublisher(
+  context: DispatchPipelineFlightDeckPublisherContext,
+): DeclarativeFunction {
+  return async (input) => {
+    const status = getText(input.status) as 'queued' | 'thinking' | 'drafting' | 'publishing' | 'failed' | 'cleared' | null;
+    const allowed = new Set(['queued', 'thinking', 'drafting', 'publishing', 'failed', 'cleared']);
+    if (!status || !allowed.has(status)) {
+      return {
+        updated: false,
+        status: 'skipped',
+        operation: 'response-activity.set',
+        reason: 'status must be queued, thinking, drafting, publishing, failed, or cleared',
+      };
+    }
+    return await setFlightDeckPgThreadResponseActivity(context, {
+      status,
+      label: getText(input.label),
+      message: getText(input.message),
+      severity: getText(input.severity) as 'info' | 'warning' | 'error' | undefined,
+      expiresInSeconds: Number(input.expiresInSeconds ?? input.expires_in_seconds) || undefined,
+      pipelineRunId: getText(input.pipelineRunId ?? input.pipeline_run_id),
+      metadata: objectValue(input.metadata),
+    });
   };
 }
 
@@ -2433,6 +2519,13 @@ async function publishChatReply(
 ): Promise<JsonObject> {
   const response = objectValue(input.agentResponse ?? input.response ?? input);
   if (response.shouldRespond === false) {
+    await setFlightDeckPgThreadResponseActivity(context, {
+      status: 'cleared',
+      label: 'Response skipped',
+      expiresInSeconds: 5,
+    }).catch((error) => {
+      console.warn('[dispatch-publisher] failed to clear skipped response activity', error);
+    });
     return {
       published: false,
       status: 'skipped',
@@ -2452,33 +2545,58 @@ async function publishChatReply(
   }
 
   if (isFlightDeckPgPublisherContext(context)) {
-    const result = await createFlightDeckPgChannelMessageFromContext(context, {
-      channelId,
-      body: normalizedBody,
-      threadId,
-      metadata: {
-        autopilot_dispatch: true,
-        source_message_id: context.eventInput.recordId,
-        subscription_id: context.eventInput.subscription.subscriptionId,
-      },
-      speechMode: 'background',
-      speechTitle: 'TTS reply summary',
-      speechFilePrefix: 'chat-reply-tts',
-      userPrompt: getText(objectValue(context.eventInput.payload)?.body),
-    });
-    return {
-      published: true,
-      status: 'ok',
-      operation: 'chat.reply-current',
-      channelId,
-      threadId,
-      result,
-      speech: objectValue(result).speech,
-      agentResponse: {
-        ...response,
-        responseDraft: normalizedBody,
-      },
-    };
+    try {
+      await setFlightDeckPgThreadResponseActivity(context, {
+        status: 'publishing',
+        label: 'Publishing',
+        expiresInSeconds: 60,
+      });
+      const result = await createFlightDeckPgChannelMessageFromContext(context, {
+        channelId,
+        body: normalizedBody,
+        threadId,
+        metadata: {
+          autopilot_dispatch: true,
+          source_message_id: context.eventInput.recordId,
+          subscription_id: context.eventInput.subscription.subscriptionId,
+        },
+        speechMode: 'background',
+        speechTitle: 'TTS reply summary',
+        speechFilePrefix: 'chat-reply-tts',
+        userPrompt: getText(objectValue(context.eventInput.payload)?.body),
+      });
+      await setFlightDeckPgThreadResponseActivity(context, {
+        status: 'cleared',
+        label: 'Response published',
+        expiresInSeconds: 5,
+      }).catch((error) => {
+        console.warn('[dispatch-publisher] failed to clear published response activity', error);
+      });
+      return {
+        published: true,
+        status: 'ok',
+        operation: 'chat.reply-current',
+        channelId,
+        threadId,
+        result,
+        speech: objectValue(result).speech,
+        agentResponse: {
+          ...response,
+          responseDraft: normalizedBody,
+        },
+      };
+    } catch (error) {
+      await setFlightDeckPgThreadResponseActivity(context, {
+        status: 'failed',
+        label: 'Response failed',
+        message: error instanceof Error ? error.message : String(error),
+        severity: 'error',
+        expiresInSeconds: 300,
+      }).catch((activityError) => {
+        console.warn('[dispatch-publisher] failed to publish response failure activity', activityError);
+      });
+      throw error;
+    }
   }
 
   const result = await runYokeJson(context, [

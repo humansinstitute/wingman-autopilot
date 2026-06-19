@@ -254,6 +254,14 @@ mock.module('../tower-client', () => ({
       },
     };
   }),
+  upsertFlightDeckPgResponseActivity: mock(async (input: Record<string, unknown>) => ({
+    response_activity: {
+      id: `activity-${input.status || 'unknown'}`,
+      target_type: input.targetType,
+      target_id: input.targetId,
+      status: input.status,
+    },
+  })),
   createFlightDeckPgChannelTask: mock(async (input: Record<string, unknown>) => {
     pgTaskCreateCalls.push(input);
     return {

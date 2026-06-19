@@ -72,19 +72,22 @@ describe("pipeline definition version paths", () => {
     expect(definition?.slug).toBe("agent-dispatch-chat");
     expect(definition?.name).toBe("agent-dispatch-chat");
     expect(definition?.spec.steps.map((step) => step.name)).toEqual([
+      "mark-response-thinking",
       "hydrate-chat-context",
       "prepare-intent-input",
       "prepare-short-lookup-answer",
       "analyse-intent",
       "normalise-decision",
+      "dispatch-agent",
+      "normalise-agent-work-decision",
       "route-discussion-chat",
       "start-discussion-pipeline",
       "prepare-task-pipeline-input",
-      "select-task-pipeline",
-      "normalise-task-pipeline-selection",
       "create-in-progress-task",
       "start-selected-pipeline",
+      "start-direct-pipeline",
       "reload-chat-thread-before-reply",
+      "mark-response-drafting",
       "prepare-chat-response",
       "publish-chat-response",
     ]);
@@ -99,21 +102,18 @@ describe("pipeline definition version paths", () => {
       type: "code",
       function: "dispatch.prepareShortLookupAnswer",
     });
-    expect(definition?.spec.steps.find((step) => step.name === "select-task-pipeline")).toMatchObject({
-      type: "classifier",
-      provider: "openrouter",
-      model: "openai/gpt-oss-120b:nitro",
-      retries: 3,
+    expect(definition?.spec.steps.find((step) => step.name === "dispatch-agent")).toMatchObject({
+      type: "agent",
+      when: { path: "$.decision.dispatchAgent", equals: true },
     });
     expect(JSON.stringify(definition?.spec.steps.find((step) => step.name === "analyse-intent"))).toContain(
-      "Classify as answer_now, document_discussion, or create_task",
+      "Classify only as answer_now, agent, or ignore",
     );
     expect(JSON.stringify(definition?.spec.steps.find((step) => step.name === "analyse-intent"))).toContain(
-      "pipeline catalog is intentionally unavailable",
+      "Do not plan work",
     );
-    expect(JSON.stringify(definition?.spec.steps.find((step) => step.name === "select-task-pipeline"))).toContain(
-      "choose exactly one task-capable downstream pipeline",
-    );
+    expect(definition?.spec.steps.map((step) => step.name)).not.toContain("select-task-pipeline");
+    expect(definition?.spec.steps.map((step) => step.name)).not.toContain("normalise-task-pipeline-selection");
     expect(JSON.stringify(definition?.spec.steps.find((step) => step.name === "analyse-intent"))).toContain(
       "chatDispatchInput.channelContext.contextPrompt",
     );
