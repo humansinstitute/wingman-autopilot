@@ -1,6 +1,4 @@
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
-
 import { nip19, verifyEvent, type Event as NostrEvent } from 'nostr-tools';
 import { normaliseNpub } from '../identity/npub-utils';
 import { generateBotKey, unlockViaEscrow } from '../identity/bot-key-manager';
@@ -43,7 +41,6 @@ import {
   agentProfilePolicyStore,
   type AgentProfilePolicyStore,
 } from './agent-profile-policy-store';
-import { bootstrapAgentWorkspace } from './agent-workspace-bootstrap';
 import type { DispatchPipelineRuntime, DispatchPipelineRuntimeResult } from './dispatch-pipelines/runtime';
 import type { AgentChatSessionRuntime } from './session-runtime';
 import { workspaceSubscriptionStore, type WorkspaceSubscriptionStore } from './workspace-subscription-store';
@@ -126,7 +123,6 @@ const CHAT_ADVISORY_PIPELINE_TIMEOUT_MS = 60_000;
 const WORKSPACE_KEY_MAPPING_CACHE_MS = 30_000;
 const FLIGHT_DECK_PG_EVENT_POLL_INTERVAL_MS = 2_100;
 const FLIGHT_DECK_PG_EVENT_POLL_TIMEOUT_MS = 10_000;
-const DEFAULT_AUTO_AGENT_WORKSPACE_ROOT = new URL('../../data/agent-chat-workspaces', import.meta.url).pathname;
 const AGENT_INSTRUCTION_SIGNATURE_METADATA_KEY = 'agent_instruction_signature';
 const AGENT_INSTRUCTION_SIGNATURE_PROTOCOL = 'flightdeck_pg_message_instruction';
 const AGENT_INSTRUCTION_SIGNATURE_KIND = 33358;
@@ -732,7 +728,7 @@ export interface WorkspaceSubscriptionManagerDependencies {
   chatRecordPullTimeoutMs?: number;
   chatRecordPullMaxAttempts?: number;
   chatRecordPullRetryDelayMs?: number;
-  autoAgentWorkspaceRoot?: string;
+  dispatchAgentWorkingDirectory?: string;
   isAuthorizedDispatchActorNpub?: (npub: string) => boolean;
   botKeyStore: {
     getActiveKeyForUser: (npub: string) => BotKeyStoreRecord | null;
@@ -876,7 +872,7 @@ export class WorkspaceSubscriptionManager {
   private readonly chatRecordPullTimeoutMs: number;
   private readonly chatRecordPullMaxAttempts: number;
   private readonly chatRecordPullRetryDelayMs: number;
-  private readonly autoAgentWorkspaceRoot: string;
+  private readonly dispatchAgentWorkingDirectory: string;
   private readonly isAuthorizedDispatchActorNpub: (npub: string) => boolean;
   private readonly runtimes = new Map<string, RuntimeContext>();
   private readonly workspaceKeyOwnerCache = new Map<string, { fetchedAt: number; owners: Map<string, string> }>();
@@ -908,8 +904,13 @@ export class WorkspaceSubscriptionManager {
     this.chatRecordPullTimeoutMs = Math.max(1, deps.chatRecordPullTimeoutMs ?? CHAT_ADVISORY_RECORD_PULL_TIMEOUT_MS);
     this.chatRecordPullMaxAttempts = Math.max(1, deps.chatRecordPullMaxAttempts ?? CHAT_ADVISORY_RECORD_PULL_MAX_ATTEMPTS);
     this.chatRecordPullRetryDelayMs = Math.max(0, deps.chatRecordPullRetryDelayMs ?? CHAT_ADVISORY_RECORD_PULL_RETRY_DELAY_MS);
-    this.autoAgentWorkspaceRoot = (deps.autoAgentWorkspaceRoot ?? Bun.env.AGENT_CHAT_WORKSPACE_ROOT ?? DEFAULT_AUTO_AGENT_WORKSPACE_ROOT).trim()
-      || DEFAULT_AUTO_AGENT_WORKSPACE_ROOT;
+    this.dispatchAgentWorkingDirectory = (deps.dispatchAgentWorkingDirectory
+      ?? Bun.env.WINGMAN_AGENT_DISPATCH_DIRECTORY
+      ?? Bun.env.AGENT_DISPATCH_DIRECTORY
+      ?? process.cwd()).trim();
+    if (!this.dispatchAgentWorkingDirectory) {
+      throw new Error('Agent dispatch working directory is required.');
+    }
     this.isAuthorizedDispatchActorNpub = deps.isAuthorizedDispatchActorNpub ?? (() => true);
   }
 
@@ -1487,10 +1488,6 @@ export class WorkspaceSubscriptionManager {
     return `fd-${botPart}-${workspacePart}-${appPart}`;
   }
 
-  private buildOnboardedAgentWorkingDirectory(agentId: string): string {
-    return join(this.autoAgentWorkspaceRoot, agentId);
-  }
-
   private deriveGroupNpubsFromSubscription(subscription: WorkspaceSubscriptionRecord): string[] {
     if (!subscription.wrappedGroupKeysJson) {
       return [];
@@ -1559,17 +1556,9 @@ export class WorkspaceSubscriptionManager {
     const label = input.agentProfile?.label
       || (input.botIdentity.botNpub === subscription.botNpub ? 'Flight Deck Agent' : 'Agent Dispatch');
     const workingDirectory = existingById?.workingDirectory?.trim()
-      || this.buildOnboardedAgentWorkingDirectory(agentId);
+      || input.agentProfile?.workingDirectory?.trim()
+      || this.dispatchAgentWorkingDirectory;
     const capabilities = this.onboardedAgentCapabilities(subscription);
-
-    await bootstrapAgentWorkspace({
-      agentId,
-      label,
-      botNpub: subscription.botNpub,
-      workspaceOwnerNpub: this.getEffectiveWorkspaceNpub(subscription),
-      workingDirectory,
-      createdAt: existingById?.createdAt ?? now,
-    });
 
     const saved = this.agentStore.save({
       agentId,
@@ -1634,14 +1623,6 @@ export class WorkspaceSubscriptionManager {
     if (existing && existing.managedByNpub && existing.managedByNpub !== input.managedByNpub) {
       throw new Error(`Agent ${agentId} is owned by another manager.`);
     }
-    await bootstrapAgentWorkspace({
-      agentId,
-      label,
-      botNpub,
-      workspaceOwnerNpub,
-      workingDirectory,
-    });
-
     const now = new Date().toISOString();
     const saved = this.agentStore.save({
       agentId,

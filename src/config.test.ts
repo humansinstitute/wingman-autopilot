@@ -13,11 +13,15 @@ const ENV_KEYS = [
   "APP_ROUTING",
   "CODEX_CLI",
   "DEFAULT_AGENT",
+  "DIRECTORY_DEF",
+  "AGENT_DISPATCH_DIRECTORY",
+  "FOLDERACCESS",
   "GLOVES",
   "PI_CLI",
   "SUBDOMAIN_BASE_DOMAIN",
   "SUBDOMAIN_PROXY_ENABLED",
   "WINGMAN_APP_ROUTING",
+  "WINGMAN_AGENT_DISPATCH_DIRECTORY",
   "WINGMAN_SUBDOMAIN_BASE_DOMAIN",
   "WINGMAN_SUBDOMAIN_PROXY_ENABLED",
 ] as const;
@@ -176,6 +180,42 @@ describe("loadConfig", () => {
     const config = loadConfig();
 
     expect(config.defaultAgent).toBe("codex");
+  });
+
+  test("uses DIRECTORY_DEF as the default dispatch agent directory", () => {
+    applyEnv({
+      AGENTAPI_BIN: "/tmp/custom-agentapi",
+      DIRECTORY_DEF: "~/code",
+      AGENT_DISPATCH_DIRECTORY: undefined,
+      WINGMAN_AGENT_DISPATCH_DIRECTORY: undefined,
+      FOLDERACCESS: undefined,
+      AGENT_MODE: undefined,
+      AGENT_SPAWN_MODE: undefined,
+      GLOVES: undefined,
+    });
+
+    const config = loadConfig();
+
+    expect(config.agentDispatchWorkingDirectory).toBe(join(Bun.env.HOME ?? "~", "code"));
+    expect(config.allowedDirectories).toContain(config.agentDispatchWorkingDirectory);
+  });
+
+  test("accepts an explicit dispatch agent directory", () => {
+    applyEnv({
+      AGENTAPI_BIN: "/tmp/custom-agentapi",
+      DIRECTORY_DEF: "~/code",
+      AGENT_DISPATCH_DIRECTORY: "~/wingmen/wingman21",
+      WINGMAN_AGENT_DISPATCH_DIRECTORY: undefined,
+      FOLDERACCESS: undefined,
+      AGENT_MODE: undefined,
+      AGENT_SPAWN_MODE: undefined,
+      GLOVES: undefined,
+    });
+
+    const config = loadConfig();
+
+    expect(config.agentDispatchWorkingDirectory).toBe(join(Bun.env.HOME ?? "~", "wingmen", "wingman21"));
+    expect(config.allowedDirectories).toContain(config.agentDispatchWorkingDirectory);
   });
 
   test("passes explicit agentapi type flags for command-backed agents", () => {

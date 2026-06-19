@@ -624,6 +624,7 @@ const workspaceSubscriptionManager = new WorkspaceSubscriptionManager({
   botKeyStore,
   getInstanceIdentity: () => wingmanInstanceIdentity,
   isAuthorizedDispatchActorNpub: isTrustedAgentDispatchActor,
+  dispatchAgentWorkingDirectory: config.agentDispatchWorkingDirectory,
 });
 accessGrantListener = createAccessGrantListener({
   relays: config.connectRelays,

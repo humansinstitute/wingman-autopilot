@@ -191,10 +191,15 @@ export const validateNonInteractiveSetupConfig = (
 
 const normalizeNonInteractiveRuntimeEnv = (values: Map<string, string>): void => {
   const directory = readFirstConfiguredValue(values, ["DIRECTORY_DEF", "WINGMAN_DIRECTORY_DEF"]);
+  const agentDispatchDirectory = readFirstConfiguredValue(
+    values,
+    ["AGENT_DISPATCH_DIRECTORY", "WINGMAN_AGENT_DISPATCH_DIRECTORY"],
+  );
   const sessionSecret = readFirstConfiguredValue(values, ["IDENTITY_SESSION_SECRET", "WINGMAN_IDENTITY_SESSION_SECRET"]);
   const adminNpub = readFirstConfiguredValue(values, ["ADMIN_NPUB", "WINGMAN_ADMIN_NPUB"]);
 
   if (directory) values.set("DIRECTORY_DEF", directory);
+  if (agentDispatchDirectory) values.set("AGENT_DISPATCH_DIRECTORY", agentDispatchDirectory);
   if (sessionSecret) values.set("IDENTITY_SESSION_SECRET", sessionSecret);
   if (adminNpub) values.set("ADMIN_NPUB", adminNpub);
 };
@@ -295,10 +300,20 @@ export const runSetupWizard = async (): Promise<boolean> => {
     );
     values.set("DIRECTORY_DEF", directoryDef);
 
+    // AGENT_DISPATCH_DIRECTORY
+    console.log("\n--- Agent Dispatch Directory ---");
+    console.log("Default directory for Flight Deck dispatch agents.");
+    const agentDispatchDirectory = await promptWithDefault(
+      rl,
+      "Agent dispatch directory",
+      existingEnv.get("AGENT_DISPATCH_DIRECTORY") || directoryDef
+    );
+    values.set("AGENT_DISPATCH_DIRECTORY", agentDispatchDirectory);
+
     // FOLDERACCESS
     console.log("\n--- Folder Access ---");
     console.log("Comma-separated list of directories Wingman can access.");
-    const defaultFolders = existingEnv.get("FOLDERACCESS") || `${directoryDef},~/Documents`;
+    const defaultFolders = existingEnv.get("FOLDERACCESS") || `${directoryDef},${agentDispatchDirectory},~/Documents`;
     const folderAccess = await promptWithDefault(
       rl,
       "Allowed folders",

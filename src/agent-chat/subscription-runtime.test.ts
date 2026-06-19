@@ -210,7 +210,7 @@ function createTestManager(
     },
     getInstanceIdentity: () => instanceIdentity,
     dispatchPipelineRuntime,
-    autoAgentWorkspaceRoot: makeTempDb(),
+    dispatchAgentWorkingDirectory: join(tmpdir(), 'wingman-dispatch-agent'),
     ...overrides,
   });
 
@@ -748,7 +748,7 @@ describe('WorkspaceSubscriptionManager', () => {
     expect(subscription.sseStatus).toBe('connected');
     const agents = agentStore.listByWorkspaceAndBot('npub1workspaceservice', instanceIdentity.npub);
     expect(agents).toHaveLength(1);
-    expect(agents[0]?.workingDirectory).toContain(agents[0]?.agentId ?? '');
+    expect(agents[0]?.workingDirectory).toBe(join(tmpdir(), 'wingman-dispatch-agent'));
     expect(routeStore.listForSubscription(subscription.subscriptionId)).toHaveLength(3);
   });
 

@@ -22,7 +22,6 @@ import type {
   ResolvedAppendedContext,
   ResolvedPipelineSelection,
 } from '../agent-profile-policy-store';
-import { bootstrapAgentDefinitionWorkspace } from '../agent-workspace-bootstrap';
 import { fetchFlightDeckPgScopeChannels, type FlightDeckPgChannel } from '../tower-client';
 import {
   DEFAULT_DISPATCH_PIPELINE_VERSION_POLICY,
@@ -287,23 +286,6 @@ export class DispatchPipelineRuntime {
 
     this.pendingDispatchDedupeKeys.add(pendingDedupeKey);
     try {
-      try {
-        await ensureAgentWorkingDirectory(agent);
-      } catch (error) {
-        return {
-          handled: true,
-          historyEntries: [
-            this.buildHistoryEntry(input, route, {
-              action: `${input.triggerKind}_pipeline_failed`,
-              status: 'failed',
-              pipelineRunId: null,
-              diagnosticSummary: `Agent working directory is not usable: ${error instanceof Error ? error.message : String(error)}`,
-            }),
-          ],
-          lastPipelineRunId: null,
-        };
-      }
-
       let flightDeckRuntime = emptyFlightDeckRuntime();
       let chatAcknowledgement: JsonObject | null = null;
       if (input.triggerKind === 'chat') {
@@ -1033,10 +1015,6 @@ function buildProfilePolicyRoutes(input: DispatchPipelineEventInput, configuredR
     createdAt: now,
     updatedAt: now,
   }];
-}
-
-async function ensureAgentWorkingDirectory(agent: AgentDefinitionRecord | null): Promise<void> {
-  await bootstrapAgentDefinitionWorkspace(agent);
 }
 
 function normaliseDefaultAgent(value: string | undefined): string {

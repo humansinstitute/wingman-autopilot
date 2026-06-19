@@ -46,6 +46,8 @@ export interface WingmanConfig {
   agents: Record<AgentType, AgentDefinition>;
   /** Default agent for AI features (e.g., "Fix with AI", "Edit with AI") */
   defaultAgent: AgentType;
+  /** Working directory used by default Flight Deck dispatch agents. */
+  agentDispatchWorkingDirectory: string;
   agentStatusPollIntervalMs: number;
   agentStatusPollMaxIntervalMs: number;
   agentStatusPollTimeoutMs: number;
@@ -378,6 +380,11 @@ export const loadConfig = (): WingmanConfig => {
   const agentPortMax = sanitizeInteger(Bun.env.AGENT_MAX, DEFAULT_AGENT_MAX);
   const defaultDirectoryInput = Bun.env.DIRECTORY_DEF ?? DEFAULT_DIRECTORY;
   const defaultWorkingDirectory = normaliseDirectory(defaultDirectoryInput, process.cwd());
+  const agentDispatchDirectoryInput = readWingmanOverrideEnvValue(Bun.env, "AGENT_DISPATCH_DIRECTORY");
+  const agentDispatchWorkingDirectory = normaliseDirectory(
+    agentDispatchDirectoryInput ?? defaultDirectoryInput,
+    defaultWorkingDirectory,
+  );
   const allowedDirectoryInput = Bun.env.FOLDERACCESS;
   const configuredAllowedDirectories = allowedDirectoryInput
     ? allowedDirectoryInput
@@ -390,6 +397,7 @@ export const loadConfig = (): WingmanConfig => {
     new Set([
       ...configuredAllowedDirectories,
       defaultWorkingDirectory,
+      agentDispatchWorkingDirectory,
     ]),
   );
   const hostUrlBase = parseEnvironmentString(Bun.env.HOST_URL_BASE, DEFAULT_HOST_URL_BASE);
@@ -509,6 +517,7 @@ export const loadConfig = (): WingmanConfig => {
     allowedHosts,
     agents,
     defaultAgent,
+    agentDispatchWorkingDirectory,
     agentStatusPollIntervalMs,
     agentStatusPollMaxIntervalMs,
     agentStatusPollTimeoutMs,

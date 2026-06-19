@@ -228,6 +228,7 @@ function main(): void {
     WINGMAN_AGENT_PORTS: String(DEFAULT_AGENT_PORT_START),
     WINGMAN_AGENT_MAX: String(DEFAULT_AGENT_MAX),
     WINGMAN_DIRECTORY_DEF: "/workspace",
+    WINGMAN_AGENT_DISPATCH_DIRECTORY: "/workspace",
     WINGMAN_FOLDERACCESS: "/workspace",
     WINGMAN_WORKSPACE_HOST_PATH: workspaceHostPath,
     WINGMAN_BASE_URL: baseUrl,

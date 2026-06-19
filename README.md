@@ -259,6 +259,7 @@ Options:
 | `AGENT_MAX` | Total number of concurrent agent ports available | `10` |
 | `HOST_URL_BASE` | Template for app links; `<port>` is replaced with the app's assigned port | `https://host.otherstuff.ai/<port>` |
 | `DIRECTORY_DEF` | Working directory used when launching agent subprocesses | `~/code` |
+| `AGENT_DISPATCH_DIRECTORY` | Working directory used by default Flight Deck dispatch agents | `DIRECTORY_DEF` |
 | `FOLDERACCESS` | Comma-separated directories exposed to file browsers and pickers | `DIRECTORY_DEF` |
 | `APP_ROUTING` | Hosted app routing mode: `path` or `subdomain` | `subdomain` |
 | `SUBDOMAIN_BASE_DOMAIN` | Base domain for hosted app aliases, e.g. `wmd.otherstuff.ai` | unset |
