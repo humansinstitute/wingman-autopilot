@@ -112,7 +112,7 @@ async function fetchPipelineStepDetail(runId, stepId) {
 
 async function fetchPipelineRunSummaries() {
   const { fetchPipelineRuns } = await import("./api.js");
-  return fetchPipelineRuns();
+  return fetchPipelineRuns({ includeDefinitionMeta: false });
 }
 
 async function fetchPipelineDefinitionSummaries() {

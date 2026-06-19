@@ -161,6 +161,35 @@ describe("pipeline run API visibility", () => {
     expect(body.runs).toHaveLength(0);
   });
 
+  test("can skip definition metadata when listing pipeline runs", async () => {
+    const store = makeStore();
+    const definitionPath = join(process.env.WINGMEN_PIPELINES_ROOT!, "shared", "definitions", "review-loop-v2.json");
+    const run = store.createRun({
+      definitionId: "review-loop",
+      definitionPath,
+      name: "review loop run",
+      ownerNpub: "npub1viewer",
+      ownerAlias: "viewer-alias",
+      scope: "shared",
+      input: {},
+    });
+    writeSharedPipelineDefinition("review-loop-v2", {
+      name: "Review Loop",
+      default: true,
+      tags: ["review"],
+      steps: [],
+    });
+
+    const response = await handleGet("/api/pipelines/runs?includeDefinitionMeta=0", makeContext(store, true));
+    const body = await response.json() as { runs: Array<{ id: string; definitionSlug: string | null; definitionDefault: boolean; tags: string[] }> };
+    const summary = body.runs.find((entry) => entry.id === run.id);
+
+    expect(response.status).toBe(200);
+    expect(summary?.definitionSlug).toBe("review-loop-v2");
+    expect(summary?.definitionDefault).toBe(false);
+    expect(summary?.tags).toEqual([]);
+  });
+
   test("allows shared instance viewers to open shared run and step details", async () => {
     const store = makeStore();
     const run = store.createRun({

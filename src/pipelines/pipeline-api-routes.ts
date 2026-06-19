@@ -1,5 +1,5 @@
 import { readFile, realpath } from "node:fs/promises";
-import { join, sep } from "node:path";
+import { basename, join, sep } from "node:path";
 import type { AccessAction } from "../auth/access-control";
 import type { RequestAuthContext } from "../auth/request-context";
 import { getEffectiveOwnerNpub } from "../auth/effective-owner";
@@ -298,7 +298,8 @@ export async function handlePipelineApi(
       ownerNpub,
       includeShared: Boolean(ctx.sharedInstanceAccess),
     });
-    const definitions = await listLatestPipelineDefinitions(ownerAlias);
+    const includeDefinitionMeta = url.searchParams.get("includeDefinitionMeta") !== "0";
+    const definitions = includeDefinitionMeta ? await listLatestPipelineDefinitions(ownerAlias) : [];
     return Response.json({ runs: runs.map((run) => serializeRunSummary(run, definitions)) });
   }
 
@@ -542,7 +543,7 @@ function serializeRunSummary(
   ));
   return {
     ...run,
-    definitionSlug: definition?.slug ?? null,
+    definitionSlug: definition?.slug ?? fallbackDefinitionSlug(run),
     definitionDefault: definition?.spec.default === true,
     tags: definition ? normalizeTags(definition.spec.tags) : [],
   };
@@ -550,6 +551,15 @@ function serializeRunSummary(
 
 function pipelineSupersedes(definition: PipelineDefinitionRecord, id: string): boolean {
   return typeof definition.spec.supersedes === "string" && definition.spec.supersedes === id;
+}
+
+function fallbackDefinitionSlug(run: PipelineRunSummary): string | null {
+  const fromPath = typeof run.definitionPath === "string" && run.definitionPath.trim()
+    ? basename(run.definitionPath.trim(), ".json")
+    : "";
+  if (fromPath) return fromPath;
+  const definitionId = typeof run.definitionId === "string" ? run.definitionId.trim() : "";
+  return definitionId || null;
 }
 
 function normalizeTags(value: unknown): string[] {

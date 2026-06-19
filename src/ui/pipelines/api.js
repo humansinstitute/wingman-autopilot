@@ -17,8 +17,11 @@ export async function fetchPipelineDefinitions() {
   return res.json();
 }
 
-export async function fetchPipelineRuns() {
-  const res = await fetch("/api/pipelines/runs", { credentials: "include" });
+export async function fetchPipelineRuns(options = {}) {
+  const params = new URLSearchParams();
+  if (options.includeDefinitionMeta === false) params.set("includeDefinitionMeta", "0");
+  const query = params.toString();
+  const res = await fetch(`/api/pipelines/runs${query ? `?${query}` : ""}`, { credentials: "include" });
   if (!res.ok) throw new Error(`Failed to fetch pipeline runs: ${res.status}`);
   return res.json();
 }

@@ -496,6 +496,9 @@ export class PipelineStore {
     this.ensureColumn("pipeline_runs", "cursor_index", "INTEGER NOT NULL DEFAULT 0");
     this.ensureColumn("pipeline_runs", "active_step_id", "TEXT");
     this.db.run(`UPDATE pipeline_runs SET current_json = input_json WHERE status = 'running' AND cursor_index = 0 AND current_json = '{}'`);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_pipeline_runs_started ON pipeline_runs(started_at DESC)`);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_pipeline_runs_owner_started ON pipeline_runs(owner_npub, started_at DESC)`);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_pipeline_runs_scope_started ON pipeline_runs(scope, started_at DESC)`);
     this.ensureColumn("pipeline_steps", "parent_step_id", "TEXT");
     this.ensureColumn("pipeline_steps", "logical_key", "TEXT");
     this.ensureColumn("pipeline_steps", "output_json", "TEXT");
