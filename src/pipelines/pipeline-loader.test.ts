@@ -233,8 +233,8 @@ describe("pipeline definition version paths", () => {
     });
     expect(generic?.spec.steps.find((step) => step.name === "do-work")?.input).toEqual({
       pick: {
-        createdTask: "$.createdTask",
-        workPlan: "$.workPlan",
+        createdTask: "$.workContext.createdTask",
+        workPlan: "$.workContext.workPlan",
       },
     });
     expect(generic?.spec.steps.find((step) => step.name === "do-work")?.prompt).toContain(
@@ -245,8 +245,8 @@ describe("pipeline definition version paths", () => {
     );
     expect(research?.spec.steps.find((step) => step.name === "report-writer")?.input).toEqual({
       pick: {
-        createdTask: "$.createdTask",
-        workPlan: "$.workPlan",
+        createdTask: "$.workContext.createdTask",
+        workPlan: "$.workContext.workPlan",
         researchResult: "$.researchResult",
       },
     });

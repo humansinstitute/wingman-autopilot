@@ -589,6 +589,71 @@ describe("memory pipeline functions", () => {
     });
   });
 
+  test("dispatch.normaliseWorkPlanContext supports direct generic runs", async () => {
+    const result = await builtinPipelineFunctions["dispatch.normaliseWorkPlanContext"]!({
+      workdir: "/repo/ops",
+      instructions: "Write the operator handoff.",
+      workPlan: {
+        taskSummary: "Prepare a handoff",
+        acceptanceCriteria: ["Handoff is written"],
+      },
+    });
+
+    expect(result).toMatchObject({
+      status: "ready",
+      operation: "work-plan-context.normalise",
+      taskBacked: false,
+      workPlan: {
+        taskSummary: "Prepare a handoff",
+        origin: { kind: "direct" },
+        workdir: "/repo/ops",
+        instructions: "Write the operator handoff.",
+        acceptanceCriteria: ["Handoff is written"],
+        reporting: { mode: "pipeline_result" },
+      },
+      createdTask: {
+        workPlan: {
+          taskSummary: "Prepare a handoff",
+          reporting: { mode: "pipeline_result" },
+        },
+      },
+    });
+  });
+
+  test("dispatch.normaliseWorkPlanContext enables Flight Deck closeout for task dispatch", async () => {
+    const result = await builtinPipelineFunctions["dispatch.normaliseWorkPlanContext"]!({
+      dispatch: { routeId: "route-1" },
+      record: { recordId: "task-1" },
+      taskId: "task-1",
+      workPlan: {
+        taskSummary: "Research options",
+        workdir: "/repo/research",
+        instructions: "Research the options.",
+        reporting: { mode: "pipeline_result" },
+      },
+    });
+
+    expect(result).toMatchObject({
+      status: "not_configured",
+      operation: "work-plan-context.normalise",
+      taskId: "task-1",
+      taskBacked: true,
+      workPlan: {
+        taskId: "task-1",
+        taskSummary: "Research options",
+        origin: { kind: "flightdeck_task" },
+        reporting: { mode: "flightdeck_task" },
+      },
+      createdTask: {
+        taskId: "task-1",
+        workPlan: {
+          taskId: "task-1",
+          reporting: { mode: "flightdeck_task" },
+        },
+      },
+    });
+  });
+
   test("dispatch.normaliseTaskWorkPlan normalises list fields", async () => {
     const result = await builtinPipelineFunctions["dispatch.normaliseTaskWorkPlan"]!({
       agentResponse: {

@@ -204,6 +204,83 @@ function getStringArray(value: unknown): string[] {
   return [];
 }
 
+function normaliseDispatchWorkPlanContext(
+  input: JsonObject,
+  options: {
+    operation: string;
+    defaultTaskSummary: string;
+    directReason: string;
+    taskBackedReason: string;
+  },
+): JsonObject {
+  const createdTask = objectValue(input.createdTask);
+  const suppliedWorkPlan = objectValue(input.workPlan ?? createdTask.workPlan);
+  const taskId = getText(suppliedWorkPlan.taskId ?? input.taskId ?? createdTask.taskId);
+  const taskTitle = getText(input.taskTitle ?? createdTask.title ?? suppliedWorkPlan.taskTitle ?? suppliedWorkPlan.taskSummary);
+  const reporting = objectValue(suppliedWorkPlan.reporting ?? input.reporting ?? input.reportTarget);
+  const hasFlightDeckDispatchContext = Object.keys(objectValue(input.dispatch)).length > 0
+    || Object.keys(objectValue(input.workspace)).length > 0
+    || Object.keys(objectValue(input.record)).length > 0
+    || Object.keys(objectValue(input.routing)).length > 0
+    || Object.keys(objectValue(input.runtime)).length > 0;
+  const rawReportingMode = getText(reporting.mode ?? reporting.type);
+  const reportingMode = hasFlightDeckDispatchContext
+    && (!rawReportingMode || rawReportingMode === "pipeline_result" || rawReportingMode === "pipeline-result")
+    ? "flightdeck_task"
+    : rawReportingMode ?? (hasFlightDeckDispatchContext ? "flightdeck_task" : "pipeline_result");
+  const origin = objectValue(suppliedWorkPlan.origin ?? input.origin);
+  const originKind = getText(origin.kind)
+    ?? (hasFlightDeckDispatchContext ? "flightdeck_task" : "direct");
+  const workPlan = {
+    ...suppliedWorkPlan,
+    ...(taskId ? { taskId } : {}),
+    ...(taskTitle ? { taskTitle } : {}),
+    taskSummary: getText(suppliedWorkPlan.taskSummary ?? taskTitle) ?? options.defaultTaskSummary,
+    origin: {
+      ...origin,
+      kind: originKind,
+    },
+    workdir: getText(suppliedWorkPlan.workdir ?? suppliedWorkPlan.workingDirectory ?? input.workingDirectory ?? input.workdir)
+      ?? suppliedWorkPlan.workdir,
+    instructions: getText(suppliedWorkPlan.instructions ?? input.implementationPrompt ?? input.instructions)
+      ?? suppliedWorkPlan.instructions,
+    designDocumentUrl: getText(suppliedWorkPlan.designDocumentUrl ?? input.designDocumentUrl)
+      ?? suppliedWorkPlan.designDocumentUrl,
+    designDocumentUnavailableReason: getText(suppliedWorkPlan.designDocumentUnavailableReason ?? input.designDocumentUnavailableReason)
+      ?? suppliedWorkPlan.designDocumentUnavailableReason,
+    designDocument: suppliedWorkPlan.designDocument ?? input.designDocument ?? null,
+    designDocumentAccessInstructions: getText(suppliedWorkPlan.designDocumentAccessInstructions ?? input.designDocumentAccessInstructions)
+      ?? suppliedWorkPlan.designDocumentAccessInstructions,
+    targetSurface: objectValue(suppliedWorkPlan.targetSurface ?? input.targetSurface),
+    visualReferences: Array.isArray(suppliedWorkPlan.visualReferences)
+      ? suppliedWorkPlan.visualReferences
+      : Array.isArray(input.visualReferences)
+        ? input.visualReferences
+        : [],
+    reporting: {
+      ...reporting,
+      mode: reportingMode,
+    },
+  };
+  return {
+    published: false,
+    status: hasFlightDeckDispatchContext ? "not_configured" : "ready",
+    operation: options.operation,
+    reason: hasFlightDeckDispatchContext ? options.taskBackedReason : options.directReason,
+    taskId: taskId ?? null,
+    title: taskTitle ?? null,
+    createdTask: {
+      ...createdTask,
+      ...(taskId ? { taskId } : {}),
+      ...(taskTitle ? { title: taskTitle } : {}),
+      workPlan,
+    },
+    workPlan,
+    reporting: workPlan.reporting,
+    taskBacked: hasFlightDeckDispatchContext,
+  };
+}
+
 function resolvePipelineSpeechSettings(input: JsonObject): {
   provider?: "openrouter" | "local";
   apiKey?: string;
@@ -1779,68 +1856,21 @@ export const builtinPipelineFunctions: FunctionRegistry = {
   },
 
   async "dispatch.ensureImplementationReviewTask"(input) {
-    const createdTask = objectValue(input.createdTask);
-    const suppliedWorkPlan = objectValue(input.workPlan ?? createdTask.workPlan);
-    const taskId = getText(suppliedWorkPlan.taskId ?? input.taskId ?? createdTask.taskId);
-    const taskTitle = getText(input.taskTitle ?? createdTask.title ?? suppliedWorkPlan.taskTitle ?? suppliedWorkPlan.taskSummary);
-    const reporting = objectValue(suppliedWorkPlan.reporting ?? input.reporting ?? input.reportTarget);
-    const hasFlightDeckDispatchContext = Object.keys(objectValue(input.dispatch)).length > 0
-      || Object.keys(objectValue(input.workspace)).length > 0
-      || Object.keys(objectValue(input.record)).length > 0
-      || Object.keys(objectValue(input.routing)).length > 0
-      || Object.keys(objectValue(input.runtime)).length > 0;
-    const rawReportingMode = getText(reporting.mode ?? reporting.type);
-    const reportingMode = hasFlightDeckDispatchContext
-      && (!rawReportingMode || rawReportingMode === "pipeline_result" || rawReportingMode === "pipeline-result")
-      ? "flightdeck_task"
-      : rawReportingMode ?? (hasFlightDeckDispatchContext ? "flightdeck_task" : "pipeline_result");
-    const origin = objectValue(suppliedWorkPlan.origin ?? input.origin);
-    const originKind = getText(origin.kind)
-      ?? (hasFlightDeckDispatchContext ? "flightdeck_task" : "direct");
-    const workPlan = {
-      ...suppliedWorkPlan,
-      ...(taskId ? { taskId } : {}),
-      ...(taskTitle ? { taskTitle } : {}),
-      taskSummary: getText(suppliedWorkPlan.taskSummary ?? taskTitle) ?? "Software implementation",
-      origin: {
-        ...origin,
-        kind: originKind,
-      },
-      workdir: getText(suppliedWorkPlan.workdir ?? suppliedWorkPlan.workingDirectory ?? input.workingDirectory)
-        ?? suppliedWorkPlan.workdir,
-      instructions: getText(suppliedWorkPlan.instructions ?? input.implementationPrompt)
-        ?? suppliedWorkPlan.instructions,
-      designDocumentUrl: getText(suppliedWorkPlan.designDocumentUrl ?? input.designDocumentUrl)
-        ?? suppliedWorkPlan.designDocumentUrl,
-      designDocumentUnavailableReason: getText(suppliedWorkPlan.designDocumentUnavailableReason ?? input.designDocumentUnavailableReason)
-        ?? suppliedWorkPlan.designDocumentUnavailableReason,
-      designDocument: suppliedWorkPlan.designDocument ?? input.designDocument ?? null,
-      designDocumentAccessInstructions: getText(suppliedWorkPlan.designDocumentAccessInstructions ?? input.designDocumentAccessInstructions)
-        ?? suppliedWorkPlan.designDocumentAccessInstructions,
-      targetSurface: objectValue(suppliedWorkPlan.targetSurface ?? input.targetSurface),
-      visualReferences: Array.isArray(suppliedWorkPlan.visualReferences)
-        ? suppliedWorkPlan.visualReferences
-        : Array.isArray(input.visualReferences)
-          ? input.visualReferences
-          : [],
-      reporting: {
-        ...reporting,
-        mode: reportingMode,
-      },
-    };
-    return {
-      published: false,
-      status: hasFlightDeckDispatchContext ? "not_configured" : "ready",
+    return normaliseDispatchWorkPlanContext(input, {
       operation: "implementation-review-context.normalise",
-      reason: hasFlightDeckDispatchContext
-        ? "Flight Deck task mutation is handled by dispatch route bindings; preserving the supplied implementation work plan for the review loop."
-        : "Direct pipeline launch; no Flight Deck task mutation required.",
-      taskId: taskId ?? null,
-      title: taskTitle ?? null,
-      workPlan,
-      reporting: workPlan.reporting,
-      taskBacked: hasFlightDeckDispatchContext,
-    };
+      defaultTaskSummary: "Software implementation",
+      taskBackedReason: "Flight Deck task mutation is handled by dispatch route bindings; preserving the supplied implementation work plan for the review loop.",
+      directReason: "Direct pipeline launch; no Flight Deck task mutation required.",
+    });
+  },
+
+  async "dispatch.normaliseWorkPlanContext"(input) {
+    return normaliseDispatchWorkPlanContext(input, {
+      operation: "work-plan-context.normalise",
+      defaultTaskSummary: "Pipeline work",
+      taskBackedReason: "Flight Deck task reporting is available; preserving the supplied work plan and enabling Flight Deck closeout.",
+      directReason: "Direct pipeline launch; no Flight Deck task reporting required.",
+    });
   },
 
   async "dispatch.validateImplementationContract"(input) {
