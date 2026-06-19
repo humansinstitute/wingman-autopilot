@@ -88,6 +88,14 @@ async function dispatch(client: FlightDeckPgClient, args: string[], flags: FlagM
   if (area === 'docs' && action === 'list') return await client.listDocs(workspaceId, requiredValue(flags, defaults, '--channel', 'channel id'), limit);
   if (area === 'doc' && action === 'create') return await client.createDoc(workspaceId, requiredValue(flags, defaults, '--channel', 'channel id'), requiredFlag(flags, '--title', 'title'), readTextFile(requiredFlag(flags, '--body-file', 'body file')));
   if (area === 'doc' && action === 'show') return await client.showDoc(workspaceId, requiredArg(id, 'doc id'), flags.has('--body'));
+  if (area === 'doc' && action === 'download') return await client.downloadDoc(workspaceId, requiredArg(id, 'doc ref'), requiredFlag(flags, '--out', 'output path'), {
+    includeComments: !flags.has('--no-comments'),
+    downloadStorage: !flags.has('--no-storage'),
+  });
+  if (area === 'doc-download') return await client.downloadDoc(workspaceId, requiredArg(action, 'doc ref'), requiredArg(id ?? stringFlag(flags, '--out') ?? undefined, 'output path'), {
+    includeComments: !flags.has('--no-comments'),
+    downloadStorage: !flags.has('--no-storage'),
+  });
   if (area === 'doc' && action === 'update') return await client.updateDoc(workspaceId, requiredArg(id, 'doc id'), readTextFile(requiredFlag(flags, '--body-file', 'body file')));
   if (area === 'doc' && action === 'comments') return await client.listDocComments(workspaceId, requiredArg(id, 'doc id'), limit);
   if (area === 'doc' && action === 'reply') return await client.replyDoc(workspaceId, requiredArg(id, 'doc id'), requiredFlag(flags, '--body', 'body'), stringFlag(flags, '--comment'));
@@ -109,6 +117,7 @@ async function resolveCommandDefaults(client: FlightDeckPgClient, args: string[]
 
 function commandUsesDispatchContext(args: string[]): boolean {
   const [area, action] = args;
+  if (area === 'doc-download') return true;
   return [
     'scopes:list',
     'scope:show',
@@ -128,6 +137,7 @@ function commandUsesDispatchContext(args: string[]): boolean {
     'docs:list',
     'doc:create',
     'doc:show',
+    'doc:download',
     'doc:update',
     'doc:comments',
     'doc:reply',
@@ -149,6 +159,8 @@ function hasAllRequiredDispatchFlags(args: string[], flags: FlagMap): boolean {
   if (['thread:read'].includes(`${area}:${action}`)) return Boolean(stringFlag(flags, '--channel') && id);
   if (['chat:reply'].includes(`${area}:${action}`)) return Boolean(stringFlag(flags, '--channel') && stringFlag(flags, '--thread'));
   if (['task:show', 'task:patch', 'task:state', 'task:comments', 'task:comment', 'task:assign'].includes(`${area}:${action}`)) return Boolean(id);
+  if (['doc:download'].includes(`${area}:${action}`)) return Boolean(id);
+  if (area === 'doc-download') return Boolean(action);
   if (['task:create', 'doc:create', 'file:upload', 'audio:create'].includes(`${area}:${action}`)) return Boolean(stringFlag(flags, '--channel'));
   return true;
 }
@@ -278,5 +290,6 @@ Usage:
   bun clis/wingman.ts flightdeck thread read <thread-id> --workspace <workspace-id> --channel <channel-id> --json
   bun clis/wingman.ts flightdeck chat reply --workspace <workspace-id> --channel <channel-id> --thread <thread-id> --body "..." --json
   bun clis/wingman.ts flightdeck doc create --workspace <workspace-id> --channel <channel-id> --title "..." --body-file file.md --json
+  bun clis/wingman.ts flightdeck doc download <doc-ref> --workspace <workspace-id> --out ./tmp/design.md --json
   bun clis/wingman.ts flightdeck file upload --workspace <workspace-id> --channel <channel-id> --path ./artifact.png --json`;
 }

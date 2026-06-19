@@ -1,4 +1,5 @@
-import { basename } from 'node:path';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { basename, dirname, parse, relative, sep } from 'node:path';
 
 import { getPublicKey, nip19 } from 'nostr-tools';
 
@@ -264,6 +265,45 @@ export class FlightDeckPgClient {
     return await createFlightDeckPgDocumentComment({ ...this.base({ workspaceId }), documentId, body, parentCommentId });
   }
 
+  async downloadDoc(workspaceId: string, documentRef: string, outPath: string, input: {
+    includeComments?: boolean;
+    downloadStorage?: boolean;
+  } = {}) {
+    const documentId = extractFlightDeckDocumentId(documentRef);
+    if (!documentId) throw new Error(`Could not extract Flight Deck document id from ${documentRef}`);
+    const result = await this.showDoc(workspaceId, documentId, true);
+    const doc = objectValue(result.doc);
+    const title = stringValue(doc.title) ?? documentId;
+    let body = typeof result.body_text === 'string' ? result.body_text : '';
+    const downloadedStorage: Array<Record<string, unknown>> = [];
+    if (input.downloadStorage !== false) {
+      const replaced = await this.downloadStorageReferences(workspaceId, body, outPath);
+      body = replaced.body;
+      downloadedStorage.push(...replaced.downloads);
+    }
+    const commentsResult = input.includeComments === false
+      ? { comments: [] as Record<string, unknown>[] }
+      : await this.listDocComments(workspaceId, documentId, 500) as { comments?: Record<string, unknown>[] };
+    const comments = Array.isArray(commentsResult.comments) ? commentsResult.comments : [];
+    const markdown = buildDownloadedDocumentMarkdown({
+      documentId,
+      title,
+      rowVersion: doc.row_version ?? doc.rowVersion ?? null,
+      body,
+      comments,
+    });
+    await mkdir(dirname(outPath), { recursive: true });
+    await writeFile(outPath, markdown, 'utf8');
+    return {
+      ok: true,
+      documentId,
+      title,
+      outPath,
+      comments: comments.length,
+      storageDownloads: downloadedStorage,
+    };
+  }
+
   async listFiles(workspaceId: string, channelId: string, limit?: number) {
     return await this.signedJson('GET', `/api/v4/flightdeck-pg/workspaces/${encodeURIComponent(workspaceId)}/channels/${encodeURIComponent(channelId)}/files`, { limit });
   }
@@ -359,6 +399,232 @@ export class FlightDeckPgClient {
     });
     return await readJsonResponse(response, `${method} ${path}`);
   }
+
+  private async downloadStorageReferences(workspaceId: string, body: string, outPath: string): Promise<{
+    body: string;
+    downloads: Array<Record<string, unknown>>;
+  }> {
+    const matches = Array.from(body.matchAll(/storage:\/\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})/gi));
+    const uniqueIds = [...new Set(matches.map((match) => match[1]).filter(Boolean))];
+    if (uniqueIds.length === 0) return { body, downloads: [] };
+    const out = parse(outPath);
+    const assetsDir = `${out.dir ? `${out.dir}/` : ''}${out.name}.assets`;
+    await mkdir(assetsDir, { recursive: true });
+    const replacements = new Map<string, string>();
+    const downloads: Array<Record<string, unknown>> = [];
+    for (const objectId of uniqueIds) {
+      const downloaded = await this.downloadStorageObject(workspaceId, objectId);
+      const fileName = `${objectId}${extensionForContentType(downloaded.contentType)}`;
+      const assetPath = `${assetsDir}/${fileName}`;
+      await writeFile(assetPath, downloaded.bytes);
+      const relativePath = relative(dirname(outPath), assetPath).split(sep).join('/');
+      replacements.set(objectId, relativePath);
+      downloads.push({
+        objectId,
+        path: assetPath,
+        relativePath,
+        contentType: downloaded.contentType,
+        sizeBytes: downloaded.bytes.byteLength,
+      });
+    }
+    return {
+      body: body.replace(/storage:\/\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})/gi, (_match, objectId: string) => replacements.get(objectId) ?? _match),
+      downloads,
+    };
+  }
+
+  private async downloadStorageObject(workspaceId: string, objectId: string): Promise<{
+    bytes: Uint8Array;
+    contentType: string;
+  }> {
+    const response = await this.signedRaw('GET', `/api/v4/storage/${encodeURIComponent(objectId)}`, undefined, undefined, workspaceId);
+    const contentType = response.headers.get('content-type') ?? 'application/octet-stream';
+    if (contentType.includes('application/json')) {
+      const payload = await response.json() as Record<string, unknown>;
+      const base64 = stringValue(payload.base64_data)
+        ?? stringValue(objectValue(payload.body).base64_data)
+        ?? stringValue(objectValue(payload.object).base64_data);
+      const downloadUrl = stringValue(payload.download_url)
+        ?? stringValue(payload.downloadUrl)
+        ?? stringValue(objectValue(payload.object).download_url);
+      if (base64) {
+        return {
+          bytes: new Uint8Array(Buffer.from(base64, 'base64')),
+          contentType: stringValue(payload.content_type)
+            ?? stringValue(payload.contentType)
+            ?? stringValue(objectValue(payload.body).content_type)
+            ?? 'application/octet-stream',
+        };
+      }
+      if (downloadUrl) {
+        const downloaded = await this.fetchImpl(downloadUrl);
+        if (!downloaded.ok) throw new Error(`Storage download URL failed (${downloaded.status}): ${downloaded.statusText}`);
+        return {
+          bytes: new Uint8Array(await downloaded.arrayBuffer()),
+          contentType: downloaded.headers.get('content-type') ?? 'application/octet-stream',
+        };
+      }
+      throw new Error(`Storage object ${objectId} JSON response did not include base64_data or download_url.`);
+    }
+    return {
+      bytes: new Uint8Array(await response.arrayBuffer()),
+      contentType,
+    };
+  }
+
+  private async signedRaw(method: string, path: string, query?: Record<string, string | number | null | undefined>, body?: unknown, workspaceId?: string) {
+    const url = new URL(path, this.config.towerUrl);
+    for (const [key, value] of Object.entries(query ?? {})) {
+      if (value !== undefined && value !== null && String(value).trim()) url.searchParams.set(key, String(value));
+    }
+    const authorization = buildAuthHeader(url.toString(), method, this.config.botIdentity.botSecret, body);
+    const response = await this.fetchImpl(url.toString(), {
+      method,
+      headers: {
+        Accept: '*/*',
+        Authorization: authorization,
+        'x-flightdeck-pg-app-npub': this.config.appNpub,
+        ...(workspaceId ? { 'x-flightdeck-pg-workspace-id': workspaceId } : {}),
+        ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(`${method} ${path} failed (${response.status}): ${text || response.statusText}`);
+    }
+    return response;
+  }
+}
+
+function extractFlightDeckDocumentId(reference: string): string | null {
+  const trimmed = reference.trim();
+  const mention = trimmed.match(/mention:(?:document|doc):([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})/i);
+  if (mention?.[1]) return mention[1];
+  const scheme = trimmed.match(/flightdeck-(?:document|doc):\/\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})/i);
+  if (scheme?.[1]) return scheme[1];
+  const path = trimmed.match(/\/docs?\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})(?:\b|[/?#])/i);
+  if (path?.[1]) return path[1];
+  const bare = trimmed.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  return bare?.[0] ?? null;
+}
+
+function buildDownloadedDocumentMarkdown(input: {
+  documentId: string;
+  title: string;
+  rowVersion: unknown;
+  body: string;
+  comments: Record<string, unknown>[];
+}): string {
+  const lines = input.body.split('\n');
+  const inline = new Map<number, Record<string, unknown>[]>();
+  const trailing: Record<string, unknown>[] = [];
+  for (const comment of input.comments) {
+    const line = resolveCommentLine(comment);
+    if (line && line >= 1 && line <= lines.length) {
+      const existing = inline.get(line) ?? [];
+      existing.push(comment);
+      inline.set(line, existing);
+    } else {
+      trailing.push(comment);
+    }
+  }
+  const output: string[] = [
+    '<!--',
+    'Local snapshot of Flight Deck document.',
+    `Document ID: ${input.documentId}`,
+    `Title: ${input.title}`,
+    `Row version: ${input.rowVersion ?? ''}`,
+    '-->',
+    '',
+  ];
+  for (let index = 0; index < lines.length; index += 1) {
+    output.push(lines[index] ?? '');
+    for (const comment of inline.get(index + 1) ?? []) {
+      output.push('', formatDownloadedComment(comment), '');
+    }
+  }
+  if (trailing.length > 0) {
+    output.push('', '---', '', '## Flight Deck Comments', '');
+    for (const comment of trailing) {
+      output.push(formatDownloadedComment(comment), '');
+    }
+  }
+  return output.join('\n').replace(/\n{4,}/g, '\n\n\n').trimEnd() + '\n';
+}
+
+function resolveCommentLine(comment: Record<string, unknown>): number | null {
+  const metadata = objectValue(comment.metadata);
+  const anchor = objectValue(metadata.anchor ?? comment.anchor);
+  const range = objectValue(anchor.range ?? metadata.range ?? comment.range);
+  const candidates = [
+    comment.line,
+    comment.line_number,
+    metadata.line,
+    metadata.lineNumber,
+    metadata.line_number,
+    anchor.line,
+    anchor.lineNumber,
+    anchor.line_number,
+    range.startLine,
+    range.start_line,
+  ];
+  for (const candidate of candidates) {
+    const value = Number(candidate);
+    if (Number.isInteger(value) && value > 0) return value;
+  }
+  return null;
+}
+
+function formatDownloadedComment(comment: Record<string, unknown>): string {
+  const id = stringValue(comment.id) ?? '';
+  const author = stringValue(comment.created_by_actor_npub)
+    ?? stringValue(comment.sender_npub)
+    ?? stringValue(comment.updated_by_actor_npub)
+    ?? '';
+  const createdAt = stringValue(comment.created_at) ?? '';
+  const body = (stringValue(comment.body) ?? '').replace(/<\/comment>/gi, '<\\/comment>');
+  const attrs = [
+    id ? `id="${escapeXmlAttr(id)}"` : '',
+    author ? `author="${escapeXmlAttr(author)}"` : '',
+    createdAt ? `created_at="${escapeXmlAttr(createdAt)}"` : '',
+  ].filter(Boolean).join(' ');
+  return `<comment${attrs ? ` ${attrs}` : ''}>\n${body}\n</comment>`;
+}
+
+function extensionForContentType(contentType: string): string {
+  const normalized = contentType.toLowerCase().split(';')[0]?.trim() ?? '';
+  const fromType: Record<string, string> = {
+    'image/png': '.png',
+    'image/jpeg': '.jpg',
+    'image/jpg': '.jpg',
+    'image/gif': '.gif',
+    'image/webp': '.webp',
+    'image/svg+xml': '.svg',
+    'audio/mpeg': '.mp3',
+    'audio/mp4': '.m4a',
+    'audio/wav': '.wav',
+    'application/pdf': '.pdf',
+    'text/plain': '.txt',
+    'text/markdown': '.md',
+  };
+  return fromType[normalized] ?? '';
+}
+
+function escapeXmlAttr(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function objectValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
 async function readJsonResponse(response: Response, label: string): Promise<Record<string, unknown>> {

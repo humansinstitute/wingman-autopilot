@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -204,6 +204,60 @@ describe('flightdeck pg cli', () => {
     expect(requests.some((request) => request.url === 'http://tower.test/api/v4/flightdeck-pg/workspaces/workspace-1/docs/doc-1/comments' && request.method === 'POST')).toBe(true);
   });
 
+  test('downloads a Flight Deck document with comments and local storage links', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'flightdeck-cli-doc-download-'));
+    const outPath = join(tempDir, 'design.md');
+    const docId = '11111111-1111-4111-8111-111111111111';
+    const objectId = '22222222-2222-4222-8222-222222222222';
+    const { router, requests } = makeFlightDeckRouter();
+    globalThis.fetch = router as typeof fetch;
+    const common = [
+      '--workspace',
+      'workspace-1',
+      '--json',
+      '--key',
+      testKey,
+      '--app-npub',
+      'npub1app',
+      '--tower-url',
+      'http://tower.test',
+    ];
+
+    try {
+      const result = await runFlightDeckPgCli([
+        'doc',
+        'download',
+        `@[Design](mention:doc:${docId})`,
+        '--out',
+        outPath,
+        ...common,
+      ], { fetchImpl: router as typeof fetch });
+
+      expect(result.exitCode).toBe(0);
+      const payload = JSON.parse(result.stdout || '{}');
+      expect(payload).toMatchObject({
+        ok: true,
+        documentId: docId,
+        outPath,
+        comments: 2,
+      });
+      const markdown = readFileSync(outPath, 'utf8');
+      expect(markdown).toContain('Document ID: 11111111-1111-4111-8111-111111111111');
+      expect(markdown).toContain(`![Screen](design.assets/${objectId}.png)`);
+      expect(markdown).toContain('<comment id="doc-comment-inline"');
+      expect(markdown).toContain('Inline note.');
+      expect(markdown).toContain('## Flight Deck Comments');
+      expect(markdown).toContain('General note.');
+      expect(existsSync(join(tempDir, 'design.assets', `${objectId}.png`))).toBe(true);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+
+    expect(requests.some((request) => request.url === `http://tower.test/api/v4/flightdeck-pg/workspaces/workspace-1/docs/${docId}/body` && request.method === 'GET')).toBe(true);
+    expect(requests.some((request) => request.url === `http://tower.test/api/v4/flightdeck-pg/workspaces/workspace-1/docs/${docId}/comments?limit=500` && request.method === 'GET')).toBe(true);
+    expect(requests.some((request) => request.url === `http://tower.test/api/v4/storage/${objectId}` && request.method === 'GET')).toBe(true);
+  });
+
   test('covers file and audio upload storage paths', async () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'flightdeck-cli-upload-'));
     const artifactPath = join(tempDir, 'artifact.txt');
@@ -323,6 +377,19 @@ function makeFlightDeckRouter(): {
         },
       });
     }
+    if (url.pathname === '/api/v4/flightdeck-pg/workspaces/workspace-1/docs/11111111-1111-4111-8111-111111111111/body' && method === 'GET') {
+      return Response.json({
+        doc: { id: '11111111-1111-4111-8111-111111111111', title: 'Design', row_version: 7 },
+        body: {
+          encoding: 'base64',
+          base64_data: Buffer.from(JSON.stringify({
+            content_model: {
+              content: '# Design\n\n![Screen](storage://22222222-2222-4222-8222-222222222222)\n\nImplement this.',
+            },
+          })).toString('base64'),
+        },
+      });
+    }
     if (url.pathname === '/api/v4/flightdeck-pg/workspaces/workspace-1/docs/doc-1' && method === 'GET') {
       return Response.json({ doc: { id: 'doc-1', title: 'Plan', row_version: 3 } });
     }
@@ -332,6 +399,26 @@ function makeFlightDeckRouter(): {
     if (url.pathname === '/api/v4/flightdeck-pg/workspaces/workspace-1/docs/doc-1/comments' && method === 'GET') {
       return Response.json({ comments: [{ id: 'doc-comment-1' }], next_cursor: null });
     }
+    if (url.pathname === '/api/v4/flightdeck-pg/workspaces/workspace-1/docs/11111111-1111-4111-8111-111111111111/comments' && method === 'GET') {
+      return Response.json({
+        comments: [
+          {
+            id: 'doc-comment-inline',
+            body: 'Inline note.',
+            created_by_actor_npub: 'npub1pete',
+            created_at: '2026-06-19T09:00:00.000Z',
+            metadata: { line: 3 },
+          },
+          {
+            id: 'doc-comment-general',
+            body: 'General note.',
+            created_by_actor_npub: 'npub1pete',
+            created_at: '2026-06-19T09:01:00.000Z',
+          },
+        ],
+        next_cursor: null,
+      });
+    }
     if (url.pathname === '/api/v4/flightdeck-pg/workspaces/workspace-1/docs/doc-1/comments' && method === 'POST') {
       return Response.json({ comment: { id: 'doc-comment-2' } });
     }
@@ -340,6 +427,11 @@ function makeFlightDeckRouter(): {
     }
     if (url.pathname === '/api/v4/flightdeck-pg/workspaces/workspace-1/channels/channel-1/audio-notes' && method === 'POST') {
       return Response.json({ audio_note: { id: 'audio-1' } });
+    }
+    if (url.pathname === '/api/v4/storage/22222222-2222-4222-8222-222222222222' && method === 'GET') {
+      return new Response(new Uint8Array([1, 2, 3]), {
+        headers: { 'content-type': 'image/png' },
+      });
     }
 
     return Response.json({ error: `${method} ${url.pathname} was not mocked` }, { status: 404 });
