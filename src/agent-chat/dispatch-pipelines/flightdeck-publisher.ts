@@ -333,6 +333,7 @@ async function createFlightDeckPgChannelMessageFromContext(
     metadata?: Record<string, unknown> | null;
     speechTitle?: string;
     speechFilePrefix?: string;
+    speechMode?: 'await' | 'background' | 'disabled';
     userPrompt?: string | null;
   },
 ): Promise<JsonObject> {
@@ -349,7 +350,7 @@ async function createFlightDeckPgChannelMessageFromContext(
     metadata: input.metadata ?? null,
   });
   const messageId = getPublishedPgMessageId(result);
-  const speech = await attachFlightDeckPgSpeechToTarget(context, {
+  const speechInput = {
     channelId: input.channelId,
     threadId: input.threadId,
     targetType: 'message',
@@ -358,7 +359,35 @@ async function createFlightDeckPgChannelMessageFromContext(
     title: input.speechTitle ?? 'Spoken message summary',
     filePrefix: input.speechFilePrefix ?? 'flightdeck-message-tts',
     userPrompt: input.userPrompt,
-  });
+  } as const;
+  const speechMode = input.speechMode ?? 'await';
+  if (speechMode === 'disabled') {
+    return {
+      ...objectValue(result),
+      speech: {
+        status: 'skipped',
+        reason: 'speech_disabled',
+      },
+    };
+  }
+  if (speechMode === 'background') {
+    void attachFlightDeckPgSpeechToTarget(context, speechInput).then((speech) => {
+      if (speech.status === 'failed') {
+        console.warn('[dispatch-publisher] background Flight Deck PG speech attachment failed', speech);
+      }
+    }).catch((error) => {
+      console.warn('[dispatch-publisher] background Flight Deck PG speech attachment crashed', error);
+    });
+    return {
+      ...objectValue(result),
+      speech: {
+        status: 'queued',
+        targetType: 'message',
+        targetId: messageId,
+      },
+    };
+  }
+  const speech = await attachFlightDeckPgSpeechToTarget(context, speechInput);
   return {
     ...objectValue(result),
     speech,
@@ -2429,6 +2458,7 @@ async function publishChatReply(
         source_message_id: context.eventInput.recordId,
         subscription_id: context.eventInput.subscription.subscriptionId,
       },
+      speechMode: 'background',
       speechTitle: 'TTS reply summary',
       speechFilePrefix: 'chat-reply-tts',
       userPrompt: getText(objectValue(context.eventInput.payload)?.body),

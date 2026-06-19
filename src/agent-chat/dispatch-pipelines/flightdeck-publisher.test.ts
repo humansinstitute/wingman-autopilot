@@ -26,6 +26,12 @@ let failReactionCount = 0;
 let failTaskCreateCount = 0;
 let pgHydratedMessageBody = 'Hydrated PG thread body.';
 
+async function flushBackgroundSpeech(): Promise<void> {
+  for (let index = 0; index < 8; index += 1) {
+    await Promise.resolve();
+  }
+}
+
 const runAgentWorkspaceYokeCommandMock = mock(async (input: { args: string[] }) => {
   yokeCommandCalls.push(input.args);
   if (input.args[0] === 'chat' && input.args[1] === 'context') {
@@ -1099,6 +1105,17 @@ describe('dispatch pipeline Flight Deck publisher', () => {
     });
 
     expect(pgMessageCreateCalls).toHaveLength(1);
+    expect(result).toMatchObject({
+      published: true,
+      speech: {
+        status: 'queued',
+        targetType: 'message',
+        targetId: 'pg-reply-1',
+      },
+    });
+
+    await flushBackgroundSpeech();
+
     expect(pgStorageUploadCalls).toHaveLength(1);
     expect(pgAudioNoteCreateCalls).toHaveLength(1);
     expect(pgAudioNoteCreateCalls[0]).toMatchObject({
@@ -1109,14 +1126,6 @@ describe('dispatch pipeline Flight Deck publisher', () => {
       targetId: 'pg-reply-1',
       transcriptText: 'Short spoken summary.',
       transcriptStatus: 'done',
-    });
-    expect(result).toMatchObject({
-      published: true,
-      speech: {
-        status: 'ok',
-        storageObjectId: 'storage-tts-1',
-        audioNoteId: 'audio-note-tts-1',
-      },
     });
   });
 
@@ -1153,6 +1162,7 @@ describe('dispatch pipeline Flight Deck publisher', () => {
         responseDraft: rawBody,
       },
     });
+    await flushBackgroundSpeech();
 
     expect(pgMessageCreateCalls[0]?.body).toBe(rawBody);
     expect(pgAudioNoteCreateCalls[0]?.transcriptText).toBe(
