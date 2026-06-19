@@ -1488,6 +1488,22 @@ export class WorkspaceSubscriptionManager {
     return `fd-${botPart}-${workspacePart}-${appPart}`;
   }
 
+  private isLegacyAgentChatWorkspaceDirectory(workingDirectory: string | null | undefined): boolean {
+    const normalised = String(workingDirectory ?? '').replace(/\\/g, '/');
+    return normalised.includes('/data/agent-chat-workspaces/');
+  }
+
+  private resolveOnboardedAgentWorkingDirectory(
+    existingAgent: AgentDefinitionRecord | null,
+    agentProfile: AgentDefinitionRecord | null,
+  ): string {
+    const existingDirectory = existingAgent?.workingDirectory?.trim();
+    if (existingDirectory && !this.isLegacyAgentChatWorkspaceDirectory(existingDirectory)) {
+      return existingDirectory;
+    }
+    return agentProfile?.workingDirectory?.trim() || this.dispatchAgentWorkingDirectory;
+  }
+
   private deriveGroupNpubsFromSubscription(subscription: WorkspaceSubscriptionRecord): string[] {
     if (!subscription.wrappedGroupKeysJson) {
       return [];
@@ -1534,6 +1550,7 @@ export class WorkspaceSubscriptionManager {
         groupNpubs: existing.groupNpubs.length > 0
           ? existing.groupNpubs
           : this.deriveGroupNpubsFromSubscription(subscription),
+        workingDirectory: this.resolveOnboardedAgentWorkingDirectory(existing, input.agentProfile),
         updatedAt: new Date().toISOString(),
       });
       this.ensureDefaultDispatchRoutesForSubscription(subscription, updated.capabilities);
@@ -1555,9 +1572,7 @@ export class WorkspaceSubscriptionManager {
     const now = new Date().toISOString();
     const label = input.agentProfile?.label
       || (input.botIdentity.botNpub === subscription.botNpub ? 'Flight Deck Agent' : 'Agent Dispatch');
-    const workingDirectory = existingById?.workingDirectory?.trim()
-      || input.agentProfile?.workingDirectory?.trim()
-      || this.dispatchAgentWorkingDirectory;
+    const workingDirectory = this.resolveOnboardedAgentWorkingDirectory(existingById, input.agentProfile);
     const capabilities = this.onboardedAgentCapabilities(subscription);
 
     const saved = this.agentStore.save({

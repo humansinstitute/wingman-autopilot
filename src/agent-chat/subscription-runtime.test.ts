@@ -752,6 +752,40 @@ describe('WorkspaceSubscriptionManager', () => {
     expect(routeStore.listForSubscription(subscription.subscriptionId)).toHaveLength(3);
   });
 
+  test('createOrUpdate migrates legacy private agent workspace directories to the dispatch directory', async () => {
+    const dbPath = makeTempDb();
+    const instanceIdentity = makeInstanceIdentity();
+    const { manager, agentStore } = createTestManager(
+      dbPath,
+      new Map(),
+      undefined,
+      instanceIdentity,
+    );
+    const agentId = 'fd-npub1wingmanbot-workspace1-npub1sourceapp';
+    saveAgent(agentStore, {
+      agentId,
+      botNpub: instanceIdentity.npub,
+      managedByNpub: 'npub1manager',
+      workspaceOwnerNpub: 'npub1workspaceservice',
+      groupNpubs: [],
+      workingDirectory: `/repo/autopilot/data/agent-chat-workspaces/${agentId}`,
+    });
+
+    await manager.createOrUpdate({
+      managedByNpub: 'npub1manager',
+      workspaceOwnerNpub: 'npub1workspaceowner',
+      towerServiceNpub: 'npub1tower',
+      workspaceId: 'workspace-1',
+      workspaceServiceNpub: 'npub1workspaceservice',
+      backendBaseUrl: 'https://tower.example.com',
+      sourceAppNpub: 'npub1sourceapp',
+      onboardingSource: 'nostr_33357',
+      capabilityDefaults: ['chat_intercept'],
+    });
+
+    expect(agentStore.getByAgentId(agentId)?.workingDirectory).toBe(join(tmpdir(), 'wingman-dispatch-agent'));
+  });
+
   test('dispatches a Flight Deck PG message event to the chat pipeline route', async () => {
     const dbPath = makeTempDb();
     const routeStore = new DispatchRouteStore(dbPath);
