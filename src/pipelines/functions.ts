@@ -205,6 +205,144 @@ function getStringArray(value: unknown): string[] {
   return [];
 }
 
+function pipelineRequirementIdFor(input: {
+  pipelineDefinitionId: string;
+  workPlan: Record<string, unknown>;
+  index: number;
+}): string {
+  const explicit = getText(input.workPlan.requirementId ?? input.workPlan.id ?? input.workPlan.name);
+  if (explicit) return explicit;
+  const workdir = getText(input.workPlan.workdir ?? input.workPlan.workingDirectory) ?? "no-workdir";
+  const summary = getText(input.workPlan.taskSummary ?? input.workPlan.title ?? input.workPlan.instructions) ?? `requirement-${input.index + 1}`;
+  return createHash("sha1")
+    .update(JSON.stringify({ pipelineDefinitionId: input.pipelineDefinitionId, workdir, summary }))
+    .digest("hex")
+    .slice(0, 12);
+}
+
+function normalisePipelineRequirement(input: {
+  item: unknown;
+  index: number;
+  fallback: {
+    pipelineDefinitionId: string | null;
+    taskSummary: string;
+    workdir: string | null;
+    instructions: string | null;
+    targetSurface: Record<string, unknown>;
+    designDocumentUrl: string | null;
+    designDocument: Record<string, unknown>;
+    acceptanceCriteria: string[];
+    executionPlan: string[];
+    managerChecklist: string[];
+    assignerNpub: string | null;
+    reviewerNpub: string | null;
+    maxReviewIterations: number;
+    originalPrompt: string | null;
+    channelContext: Record<string, unknown>;
+    originThread: unknown[];
+    referencedRecords: unknown[];
+    visualReferences: unknown[];
+    origin: Record<string, unknown>;
+    reporting: Record<string, unknown>;
+  };
+}): {
+  requirementId: string;
+  pipelineDefinitionId: string | null;
+  workPlan: Record<string, unknown>;
+  missing: string[];
+} {
+  const item = objectValue(input.item);
+  const payload = objectValue(item.payload ?? item.workPlan);
+  const pipelineDefinitionId = getText(
+    item.pipeline
+      ?? item.pipelineId
+      ?? item.pipelineDefinitionId
+      ?? item.name
+      ?? payload.pipeline
+      ?? payload.pipelineId
+      ?? payload.pipelineDefinitionId
+      ?? payload.childPipelineDefinitionId,
+  ) ?? input.fallback.pipelineDefinitionId;
+  const softwarePipeline = isSoftwareImplementationPipelineIdentifier(pipelineDefinitionId);
+  const workdir = getText(payload.workdir ?? payload.workingDirectory ?? item.workdir ?? item.workingDirectory)
+    ?? (softwarePipeline ? null : input.fallback.workdir);
+  const instructions = getText(payload.instructions ?? payload.implementationPrompt ?? item.instructions ?? item.prompt)
+    ?? input.fallback.instructions;
+  const targetSurface = objectValue(payload.targetSurface ?? item.targetSurface);
+  const effectiveTargetSurface = Object.keys(targetSurface).length > 0 ? targetSurface : input.fallback.targetSurface;
+  const designDocument = objectValue(payload.designDocument ?? item.designDocument);
+  const effectiveDesignDocument = Object.keys(designDocument).length > 0 ? designDocument : input.fallback.designDocument;
+  const designDocumentUrl = getText(
+    payload.designDocumentUrl
+      ?? payload.workingDoc
+      ?? payload.workingDocument
+      ?? payload.documentUrl
+      ?? item.designDocumentUrl
+      ?? item.workingDoc
+      ?? item.workingDocument,
+  ) ?? input.fallback.designDocumentUrl;
+  const acceptanceCriteria = getStringArray(payload.acceptanceCriteria ?? item.acceptanceCriteria);
+  const executionPlan = getStringArray(payload.executionPlan ?? item.executionPlan);
+  const managerChecklist = getStringArray(payload.managerChecklist ?? item.managerChecklist);
+  const visualReferences = Array.isArray(payload.visualReferences)
+    ? payload.visualReferences
+    : Array.isArray(item.visualReferences)
+      ? item.visualReferences
+      : input.fallback.visualReferences;
+  const maxReviewIterations = clampReviewIterations(payload.maxReviewIterations ?? item.maxReviewIterations ?? input.fallback.maxReviewIterations);
+  const workPlan = {
+    ...payload,
+    requirementId: getText(item.requirementId ?? payload.requirementId),
+    childPipelineDefinitionId: pipelineDefinitionId,
+    pipelineDefinitionId,
+    taskSummary: getText(payload.taskSummary ?? payload.title ?? item.taskSummary ?? item.title) ?? input.fallback.taskSummary,
+    instructions: instructions ?? "",
+    acceptanceCriteria: acceptanceCriteria.length > 0 ? acceptanceCriteria : input.fallback.acceptanceCriteria,
+    executionPlan: executionPlan.length > 0 ? executionPlan : input.fallback.executionPlan,
+    managerChecklist: managerChecklist.length > 0 ? managerChecklist : input.fallback.managerChecklist,
+    workdir,
+    assignerNpub: getText(payload.assignerNpub ?? item.assignerNpub) ?? input.fallback.assignerNpub,
+    reviewerNpub: getText(payload.reviewerNpub ?? item.reviewerNpub) ?? input.fallback.reviewerNpub,
+    maxReviewIterations,
+    originalPrompt: getText(payload.originalPrompt ?? item.originalPrompt) ?? input.fallback.originalPrompt,
+    channelContext: objectValue(payload.channelContext ?? item.channelContext),
+    originThread: Array.isArray(payload.originThread) ? payload.originThread : input.fallback.originThread,
+    referencedRecords: Array.isArray(payload.referencedRecords) ? payload.referencedRecords : input.fallback.referencedRecords,
+    ...(Object.keys(effectiveTargetSurface).length > 0 ? { targetSurface: effectiveTargetSurface } : {}),
+    ...(visualReferences.length > 0 ? { visualReferences: visualReferences.slice(0, 8) } : {}),
+    ...(designDocumentUrl ? { designDocumentUrl } : {}),
+    ...(Object.keys(effectiveDesignDocument).length > 0 ? { designDocument: effectiveDesignDocument } : {}),
+    origin: {
+      ...input.fallback.origin,
+      ...objectValue(payload.origin ?? item.origin),
+    },
+    reporting: {
+      ...input.fallback.reporting,
+      ...objectValue(payload.reporting ?? item.reporting),
+    },
+  };
+  const requirementId = pipelineRequirementIdFor({
+    pipelineDefinitionId: pipelineDefinitionId ?? "missing-pipeline",
+    workPlan,
+    index: input.index,
+  });
+  workPlan.requirementId = requirementId;
+  const missing = [
+    !pipelineDefinitionId ? `pipelines[${input.index}].pipeline` : "",
+    isDispatchPipelineIdentifier(pipelineDefinitionId) ? `pipelines[${input.index}].pipeline downstream work pipeline` : "",
+    softwarePipeline && Object.keys(effectiveTargetSurface).length === 0 ? `pipelines[${input.index}].targetSurface` : "",
+    softwarePipeline && isPlaceholderSoftwareWorkdir(workdir) ? `pipelines[${input.index}].non-placeholder workdir` : "",
+    !softwarePipeline && !isDocumentDiscussionPipelineIdentifier(pipelineDefinitionId) && !workdir ? `pipelines[${input.index}].workdir` : "",
+    !instructions ? `pipelines[${input.index}].instructions` : "",
+  ].filter(Boolean);
+  return {
+    requirementId,
+    pipelineDefinitionId,
+    workPlan,
+    missing,
+  };
+}
+
 function resolveChatThreadDesignReference(input: JsonObject, workPlan: Record<string, unknown>): string | null {
   const origin = objectValue(workPlan.origin ?? input.origin);
   const chat = objectValue(input.chat);
@@ -2077,6 +2215,10 @@ export const builtinPipelineFunctions: FunctionRegistry = {
       intent: "discussion",
       dispatchTask: false,
       dispatchPipeline: true,
+      dispatchSingleTaskPipeline: false,
+      dispatchSingleDirectPipeline: true,
+      pipelinesRequired: false,
+      pipelineLaunches: [],
       requestedDispatchTask: false,
       pipelineDefinitionId,
       scopeId: null,
@@ -2220,8 +2362,14 @@ export const builtinPipelineFunctions: FunctionRegistry = {
         ? input.visualReferences
         : [];
     const route = getText(targetSurface.route ?? targetSurface.url ?? targetSurface.path);
-    const surface = getText(targetSurface.surface ?? targetSurface.section ?? targetSurface.name ?? targetSurface.page);
-    const existingFiles = getStringArray(targetSurface.existingFiles ?? targetSurface.files);
+    const surfaceAliases = getStringArray(targetSurface.surfaces ?? targetSurface.sections ?? targetSurface.pages);
+    const surface = getText(targetSurface.surface ?? targetSurface.section ?? targetSurface.name ?? targetSurface.page)
+      ?? surfaceAliases[0]
+      ?? null;
+    const existingFiles = [
+      ...getStringArray(targetSurface.existingFiles ?? targetSurface.files),
+      ...getStringArray(targetSurface.likelyFilesOrAreas ?? targetSurface.likelyFiles ?? targetSurface.fileAreas),
+    ];
     const allowedFiles = getStringArray(targetSurface.allowedFiles);
     const forbidden = getStringArray(targetSurface.forbidden ?? targetSurface.forbiddenSurfaces);
     const missing = [
@@ -2769,13 +2917,66 @@ export const builtinPipelineFunctions: FunctionRegistry = {
       : Array.isArray(raw.visualReferences)
         ? raw.visualReferences
         : visualReferences;
+    const pipelinesRequired = raw.pipelinesRequired === true || raw.requiresPipelines === true;
+    const rawPipelines = Array.isArray(raw.pipelines)
+      ? raw.pipelines
+      : Array.isArray(workPlanInput.pipelines)
+        ? workPlanInput.pipelines
+        : [];
+    const baseOrigin = {
+      triggerKind: getText(objectValue(input.dispatch).triggerKind) ?? "chat",
+      channelId: getText(chat.channelId),
+      threadId: getText(chat.threadId),
+      messageId: getText(record.recordId),
+      requesterNpub: assignerNpub,
+    };
+    const baseReporting = raw.createTask === false
+      ? { mode: "chat_thread", callbackPipeline: getText(objectValue(workPlanInput.reporting).callbackPipeline) ?? "chat-response" }
+      : { mode: "flightdeck_task" };
+    const basePipelineFallback = {
+      pipelineDefinitionId: requestedPipelineId,
+      taskSummary: title,
+      workdir,
+      instructions,
+      targetSurface,
+      designDocumentUrl,
+      designDocument,
+      acceptanceCriteria,
+      executionPlan,
+      managerChecklist,
+      assignerNpub,
+      reviewerNpub,
+      maxReviewIterations: clampReviewIterations(workPlanInput.maxReviewIterations ?? raw.maxReviewIterations),
+      originalPrompt,
+      channelContext,
+      originThread,
+      referencedRecords,
+      visualReferences: localVisualReferences,
+      origin: baseOrigin,
+      reporting: baseReporting,
+    };
+    const pipelineRequirements = pipelinesRequired || rawPipelines.length > 0
+      ? rawPipelines.map((item, index) => normalisePipelineRequirement({
+        item,
+        index,
+        fallback: basePipelineFallback,
+      }))
+      : [];
+    const uniquePipelineRequirements = pipelineRequirements.filter((requirement, index, all) =>
+      all.findIndex((candidate) => candidate.requirementId === requirement.requirementId) === index);
+    const duplicateRequirementIds = pipelineRequirements
+      .filter((requirement, index, all) => all.findIndex((candidate) => candidate.requirementId === requirement.requirementId) !== index)
+      .map((requirement) => requirement.requirementId);
+    const pipelineRequirementMissing = uniquePipelineRequirements.flatMap((requirement) => requirement.missing);
     const missing = [
-      !requestedPipelineId ? "pipeline" : "",
-      selectedDispatchPipeline ? "downstream work pipeline" : "",
-      selectedSoftwareImplementationPipeline && !hasTargetSurface ? "targetSurface" : "",
-      selectedSoftwareImplementationPipeline && isPlaceholderSoftwareWorkdir(workdir) ? "non-placeholder workdir" : "",
-      !selectedSoftwareImplementationPipeline && !selectedDocumentDiscussionPipeline && !workdir ? "workdir" : "",
-      !instructions ? "instructions" : "",
+      pipelinesRequired && uniquePipelineRequirements.length === 0 ? "pipelines" : "",
+      !pipelinesRequired && !requestedPipelineId ? "pipeline" : "",
+      !pipelinesRequired && selectedDispatchPipeline ? "downstream work pipeline" : "",
+      !pipelinesRequired && selectedSoftwareImplementationPipeline && !hasTargetSurface ? "targetSurface" : "",
+      !pipelinesRequired && selectedSoftwareImplementationPipeline && isPlaceholderSoftwareWorkdir(workdir) ? "non-placeholder workdir" : "",
+      !pipelinesRequired && !selectedSoftwareImplementationPipeline && !selectedDocumentDiscussionPipeline && !workdir ? "workdir" : "",
+      !pipelinesRequired && !instructions ? "instructions" : "",
+      ...pipelineRequirementMissing,
     ].filter(Boolean);
     if (missing.length > 0) {
       return {
@@ -2800,7 +3001,7 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const createTask = selectedDocumentDiscussionPipeline
       ? raw.createTask === true
       : raw.createTask !== false;
-    const pipelineDefinitionId = requestedPipelineId!;
+    const pipelineDefinitionId = requestedPipelineId ?? uniquePipelineRequirements[0]?.pipelineDefinitionId ?? null;
     const workPlan = {
       ...workPlanInput,
       childPipelineDefinitionId: pipelineDefinitionId,
@@ -2823,16 +3024,20 @@ export const builtinPipelineFunctions: FunctionRegistry = {
       ...(localVisualReferences.length > 0 ? { visualReferences: localVisualReferences.slice(0, 8) } : {}),
       ...(designDocumentUrl ? { designDocumentUrl } : {}),
       ...(Object.keys(designDocument).length > 0 ? { designDocument } : {}),
-      origin: {
-        triggerKind: getText(objectValue(input.dispatch).triggerKind) ?? "chat",
-        channelId: getText(chat.channelId),
-        threadId: getText(chat.threadId),
-        messageId: getText(record.recordId),
-        requesterNpub: assignerNpub,
-      },
+      ...(uniquePipelineRequirements.length > 0 ? {
+        pipelinesRequired: true,
+        pipelines: uniquePipelineRequirements.map((requirement) => ({
+          requirementId: requirement.requirementId,
+          pipeline: requirement.pipelineDefinitionId,
+          pipelineDefinitionId: requirement.pipelineDefinitionId,
+          payload: requirement.workPlan,
+        })),
+        skippedDuplicateRequirementIds: duplicateRequirementIds,
+      } : {}),
+      origin: baseOrigin,
       reporting: createTask
         ? { mode: "flightdeck_task" }
-        : { mode: "chat_thread", callbackPipeline: getText(objectValue(workPlanInput.reporting).callbackPipeline) ?? "chat-response" },
+        : baseReporting,
     };
 
     return {
@@ -2840,6 +3045,15 @@ export const builtinPipelineFunctions: FunctionRegistry = {
       dispatchAgent: false,
       dispatchTask: createTask,
       dispatchPipeline: !createTask,
+      pipelinesRequired: uniquePipelineRequirements.length > 0,
+      pipelineLaunches: uniquePipelineRequirements.map((requirement) => ({
+        requirementId: requirement.requirementId,
+        pipelineDefinitionId: requirement.pipelineDefinitionId,
+        workPlan: requirement.workPlan,
+      })),
+      skippedDuplicateRequirementIds: duplicateRequirementIds,
+      dispatchSingleTaskPipeline: createTask && uniquePipelineRequirements.length === 0,
+      dispatchSingleDirectPipeline: !createTask && uniquePipelineRequirements.length === 0,
       requestedDispatchTask: createTask,
       intent: createTask ? "create_task" : "start_pipeline",
       pipelineDefinitionId,
@@ -2973,6 +3187,11 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     }
     const createdTask = objectValue(input.createdTask);
     const childPipeline = objectValue(input.childPipeline);
+    const childPipelines = objectValue(input.childPipelines);
+    const childPipelineItems = Array.isArray(childPipelines.items)
+      ? childPipelines.items.map((item) => objectValue(item))
+      : [];
+    const effectiveChildPipeline = childPipelineItems.length > 0 ? childPipelines : childPipeline;
     const closeoutContext = objectValue(input.closeoutContext);
     const taskId = getText(createdTask.taskId);
     const taskCreationFailed = decision.dispatchTask === true && getText(createdTask.status) === "failed";
@@ -2982,12 +3201,18 @@ export const builtinPipelineFunctions: FunctionRegistry = {
       ?? getText(createdTask.title)
       ?? "created task";
     const taskMention = taskId ? mention("task", taskId, taskLabel) : null;
-    const pipelineName = getText(childPipeline.pipelineName) ?? getText(decision.pipelineDefinitionId);
+    const pipelineName = childPipelineItems.length > 0
+      ? `${childPipelineItems.length} pipeline requirements`
+      : getText(childPipeline.pipelineName) ?? getText(decision.pipelineDefinitionId);
     const pipelineRunId = getText(childPipeline.pipelineRunId);
-    const childPipelineStatus = getText(childPipeline.status);
-    const launchFailed = childPipeline.started === false || childPipelineStatus === "failed" || childPipelineStatus === "error";
-    const needsInput = getText(childPipeline.status) === "needs_input";
-    const needsInputUpdate = objectValue(childPipeline.needsInputUpdate);
+    const childPipelineStatus = getText(effectiveChildPipeline.status);
+    const launchFailed = effectiveChildPipeline.started === false
+      || childPipelineStatus === "failed"
+      || childPipelineStatus === "error"
+      || childPipelineItems.some((item) => item.started === false || getText(item.status) === "failed" || getText(item.status) === "error");
+    const needsInput = getText(effectiveChildPipeline.status) === "needs_input"
+      || childPipelineItems.some((item) => getText(item.status) === "needs_input");
+    const needsInputUpdate = objectValue(effectiveChildPipeline.needsInputUpdate);
     const taskAction = createdTask.reused === true ? "reopened task" : "created task";
     let responseDraft = getText(decision.responseDraft) ?? "Done.";
     if (taskCreationFailed) {
@@ -2997,17 +3222,22 @@ export const builtinPipelineFunctions: FunctionRegistry = {
         ? `I ${taskAction} ${taskMention} and started ${pipelineName ?? "the selected pipeline"}${pipelineRunId ? ` (${pipelineRunId})` : ""}, but it needs input before it can continue.${getText(needsInputUpdate.question) ? `\nQuestion: ${getText(needsInputUpdate.question)}` : ""}`
         : launchFailed
         ? `I ${taskAction} ${taskMention}, but the selected pipeline did not start: ${getText(childPipeline.reason) ?? "unknown error"}. I marked the task blocked for review.`
-        : `I ${taskAction} ${taskMention} and started ${pipelineName ?? "the selected pipeline"}${pipelineRunId ? ` (${pipelineRunId})` : ""}. I will hand it back for review when the pipeline finishes.`;
+        : childPipelineItems.length > 0
+          ? `I ${taskAction} ${taskMention} and started ${childPipelineItems.length} pipeline requirements. I will hand it back for review when the pipelines finish.`
+          : `I ${taskAction} ${taskMention} and started ${pipelineName ?? "the selected pipeline"}${pipelineRunId ? ` (${pipelineRunId})` : ""}. I will hand it back for review when the pipeline finishes.`;
     } else if (directPipelineRequested) {
       responseDraft = launchFailed
-        ? `I have the request, but the selected pipeline did not start: ${getText(childPipeline.reason) ?? "unknown error"}.`
+        ? `I have the request, but the selected pipeline did not start: ${getText(effectiveChildPipeline.reason) ?? "unknown error"}.`
         : (getText(decision.responseDraft)
-          ?? `I started ${pipelineName ?? "the selected pipeline"}${pipelineRunId ? ` (${pipelineRunId})` : ""}.`);
+          ?? (childPipelineItems.length > 0
+            ? `I started ${childPipelineItems.length} pipeline requirements.`
+            : `I started ${pipelineName ?? "the selected pipeline"}${pipelineRunId ? ` (${pipelineRunId})` : ""}.`));
     }
     return {
       shouldRespond: !(needsInput && needsInputUpdate.chatNotified === true),
       responseDraft,
-      childPipeline: Object.keys(childPipeline).length > 0 ? childPipeline : null,
+      childPipeline: Object.keys(effectiveChildPipeline).length > 0 ? effectiveChildPipeline : null,
+      childPipelines: childPipelineItems.length > 0 ? childPipelines : null,
       reasoningSummary: getText(decision.clarifyingQuestion)
         ? "Asked a clarifying question instead of dispatching work."
         : taskCreationFailed
@@ -3028,6 +3258,7 @@ export const builtinPipelineFunctions: FunctionRegistry = {
       actionsTaken: [
         ...(taskId ? [`${createdTask.reused === true ? "reused" : "created"} task ${taskId}`] : []),
         ...(pipelineRunId ? [`started pipeline run ${pipelineRunId}`] : []),
+        ...(childPipelineItems.length > 0 ? [`started ${childPipelineItems.length} pipeline requirement(s)`] : []),
         ...(closeoutContext.hydrated === true ? ["re-read chat thread before replying"] : []),
         ...(taskCreationFailed ? [`task creation failed: ${getText(createdTask.reason) ?? "unknown error"}`] : []),
       ],

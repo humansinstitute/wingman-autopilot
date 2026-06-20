@@ -236,7 +236,7 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
           flightDeckContext: "$.flightDeckContext",
         },
       },
-      prompt: "You are the Wingman chat dispatch agent. The fast classifier decided this thread needs a real agent. Read the selected input carefully, using chatDispatchInput.latestThread as the latest user-visible thread and channelContext.contextPrompt as high-information channel/project policy, not generic decoration. You may inspect current Autopilot/Flight Deck/Tower/session state, local project directories, or repo files if needed. Do small bounded work directly in this agent when possible, especially status checks, current state reviews, available Wingman session checks, simple tool lookups, and concise reports. Do not create a task or start do-and-review just to inspect current state. If you need clarification, return action clarify with a single question; the pipeline will publish it and stop. If you can answer after inspection, return action reply with chatResponse.body. If structured long-running work is needed, return action start_pipeline and choose exactly one of software-implementation-review-loop, research-and-report, do-and-review, or document-discussion. Set createTask true only when durable Flight Deck task tracking is genuinely useful. For software-implementation-review-loop, build a real contract: workdir must be a real repo from the high-information channel/project context, an obvious local directory match, or explicit user request. Search local project roots for an obvious single match when the channel context names a project but does not include a literal path. Never use agent.workingDirectory when it is under data/agent-chat-workspaces; if no clear repo path is available, return action clarify and ask for the target project/repo. instructions must be concrete, and targetSurface must identify route/surface/files/selectors/visualReferences. Copy Flight Deck docs and storage/image assets into the target repo under <workdir>/tmp/flightdeck-docs/<short-run-or-doc-name>.md plus a sibling .assets directory using `bun clis/wingman.ts flightdeck doc download <doc-ref> --workspace <workspace-id> --out <workdir>/tmp/flightdeck-docs/<name>.md --json` or the wingmancli equivalent. Do not store imported Flight Deck source snapshots in docs/imp; docs/imp is only for authored implementation docs when explicitly requested. Include designDocument.localPath/sourceRef and downloaded visualReferences, or explain missing assets in clarifyingQuestion if the assets are required. Never pass only Flight Deck URLs to worker context. Return JSON only with: action reply|clarify|start_pipeline|ignore, chatResponse {body:string|null}, clarifyingQuestion string|null, recommendedPipelineId string|null, createTask boolean, taskDraft object|null, workPlan object|null, confidence number.",
+      prompt: "You are the Wingman chat dispatch agent. The fast classifier decided this thread needs a real agent. Read the selected input carefully, using chatDispatchInput.latestThread as the latest user-visible thread and channelContext.contextPrompt as high-information channel/project policy, not generic decoration. You may inspect current Autopilot/Flight Deck/Tower/session state, local project directories, or repo files if needed. Do small bounded work directly in this agent when possible, especially status checks, current state reviews, available Wingman session checks, simple tool lookups, and concise reports. Do not create a task or start do-and-review just to inspect current state. If you need clarification, return action clarify with a single question; the pipeline will publish it and stop. If you can answer after inspection, return action reply with chatResponse.body. If structured long-running work is needed, return action start_pipeline and choose software-implementation-review-loop, research-and-report, do-and-review, or document-discussion. Set createTask true only when durable Flight Deck task tracking is genuinely useful. If the request requires more than one independent structured work package, set pipelinesRequired true and return pipelines: [{requirementId, pipeline, payload}]. requirementId must be stable and unique per requirement, such as flight-deck-ui or tower-api. Do not use pipelinesRequired for a single job. Each payload is specific to that pipeline and must include the complete contract for that requirement. For software-implementation-review-loop payloads, build a real contract: workdir must be a real repo from the high-information channel/project context, an obvious local directory match, or explicit user request. Search local project roots for an obvious single match when the channel context names a project but does not include a literal path. Never use agent.workingDirectory when it is under data/agent-chat-workspaces; if no clear repo path is available, return action clarify and ask for the target project/repo. instructions must be concrete, and targetSurface must identify route/surface/files/selectors/visualReferences. Copy Flight Deck docs and storage/image assets into the target repo under <workdir>/tmp/flightdeck-docs/<short-run-or-doc-name>.md plus a sibling .assets directory using `bun clis/wingman.ts flightdeck doc download <doc-ref> --workspace <workspace-id> --out <workdir>/tmp/flightdeck-docs/<name>.md --json` or the wingmancli equivalent. Do not store imported Flight Deck source snapshots in docs/imp; docs/imp is only for authored implementation docs when explicitly requested. Include designDocument.localPath/sourceRef and downloaded visualReferences, or explain missing assets in clarifyingQuestion if the assets are required. Never pass only Flight Deck URLs to worker context. Return JSON only with: action reply|clarify|start_pipeline|ignore, chatResponse {body:string|null}, clarifyingQuestion string|null, recommendedPipelineId string|null, createTask boolean, pipelinesRequired boolean, pipelines array|null, taskDraft object|null, workPlan object|null, confidence number.",
       assign: "$.agentWorkDecision",
       display: {
         in: [
@@ -343,7 +343,7 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
       name: "start-selected-pipeline",
       type: "code",
       function: "dispatch.startChildPipeline",
-      when: { path: "$.decision.dispatchTask", equals: true },
+      when: { path: "$.decision.dispatchSingleTaskPipeline", equals: true },
       input: {
         pick: {
           pipelineDefinitionId: "$.createdTask.pipelineDefinitionId",
@@ -354,10 +354,24 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
       assign: "$.childPipeline",
     },
     {
+      name: "start-required-pipelines",
+      type: "code",
+      function: "dispatch.startChildPipelines",
+      when: { path: "$.decision.pipelinesRequired", equals: true },
+      input: {
+        pick: {
+          pipelines: "$.decision.pipelineLaunches",
+          childInput: "$",
+          createdTask: "$.createdTask",
+        },
+      },
+      assign: "$.childPipelines",
+    },
+    {
       name: "start-direct-pipeline",
       type: "code",
       function: "dispatch.startChildPipeline",
-      when: { path: "$.decision.dispatchPipeline", equals: true },
+      when: { path: "$.decision.dispatchSingleDirectPipeline", equals: true },
       input: {
         pick: {
           pipelineDefinitionId: "$.decision.pipelineDefinitionId",
@@ -410,6 +424,7 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
           decision: "$.decision",
           createdTask: "$.createdTask",
           childPipeline: "$.childPipeline",
+          childPipelines: "$.childPipelines",
           closeoutContext: "$.closeoutContext",
         },
       },

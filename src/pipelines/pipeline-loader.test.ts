@@ -84,6 +84,7 @@ describe("pipeline definition version paths", () => {
       "prepare-task-pipeline-input",
       "create-in-progress-task",
       "start-selected-pipeline",
+      "start-required-pipelines",
       "start-direct-pipeline",
       "reload-chat-thread-before-reply",
       "mark-response-drafting",

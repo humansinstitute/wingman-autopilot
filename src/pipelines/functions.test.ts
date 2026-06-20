@@ -484,6 +484,23 @@ async function runChatDispatchSpec(input: {
       pipelineName: selected.pipelineDefinitionId,
       workPlan: selected.workPlan,
     }),
+    "dispatch.startChildPipelines": async (selected: JsonObject) => {
+      const pipelines = Array.isArray(selected.pipelines) ? selected.pipelines.map((entry) => entry as JsonObject) : [];
+      return {
+        started: pipelines.length > 0,
+        status: pipelines.length > 0 ? "running" : "failed",
+        total: pipelines.length,
+        items: pipelines.map((entry) => ({
+          requirementId: entry.requirementId,
+          started: true,
+          status: "running",
+          pipelineRunId: `run-${String(entry.requirementId)}`,
+          pipelineDefinitionId: entry.pipelineDefinitionId,
+          pipelineName: entry.pipelineDefinitionId,
+          workPlan: entry.workPlan,
+        })),
+      };
+    },
     "dispatch.completeReviewTaskFromChat": async (selected: JsonObject) => ({
       completed: true,
       status: "done",
@@ -711,6 +728,29 @@ describe("memory pipeline functions", () => {
         },
       },
     })).rejects.toThrow(/non-placeholder workdir.*real designDocumentUrl.*targetSurface/);
+  });
+
+  test("dispatch.validateImplementationContract accepts plural target surface aliases", async () => {
+    await expect(builtinPipelineFunctions["dispatch.validateImplementationContract"]!({
+      createdTask: {
+        taskId: "task-1",
+        workPlan: {
+          workdir: "/repo/project",
+          instructions: "Implement the target surface.",
+          designDocumentUrl: "mention:document:11111111-1111-4111-8111-111111111111",
+          targetSurface: {
+            surfaces: ["Docs route header", "Docs route navigation"],
+            likelyFilesOrAreas: ["src/routes/docs/**", "src/components/docs/**"],
+          },
+        },
+      },
+    })).resolves.toMatchObject({
+      ok: true,
+      targetSurface: {
+        surface: "Docs route header",
+        existingFiles: ["src/routes/docs/**", "src/components/docs/**"],
+      },
+    });
   });
 
   test("dispatch.ensureImplementationReviewTask normalises direct software loop input", async () => {
@@ -1699,6 +1739,7 @@ describe("memory pipeline functions", () => {
       "prepare-task-pipeline-input",
       "create-in-progress-task",
       "start-selected-pipeline",
+      "start-required-pipelines",
       "start-direct-pipeline",
       "reload-chat-thread-before-reply",
       "mark-response-drafting",
@@ -1758,6 +1799,7 @@ describe("memory pipeline functions", () => {
         decision: "$.decision",
         createdTask: "$.createdTask",
         childPipeline: "$.childPipeline",
+        childPipelines: "$.childPipelines",
         closeoutContext: "$.closeoutContext",
       },
     });
@@ -2048,6 +2090,105 @@ describe("memory pipeline functions", () => {
       started: true,
       pipelineDefinitionId: "software-implementation-review-loop",
     });
+  });
+
+  test("shared chat dispatch launches multiple explicit pipeline requirements", async () => {
+    const execution = await runChatDispatchSpec({
+      latestMessage: "Please implement the PWA notifications plan in Flight Deck and Tower.",
+      channelContext: {
+        channelId: "channel-1",
+        scopeId: "scope-1",
+        name: "Implementation",
+        contextPrompt: "Flight Deck is ~/code/wingmanbefree/wm-fd-2. Tower is ~/code/wingmanbefree/wingman-tower.",
+        hasSpecificContext: true,
+      },
+      agentDecision: {
+        intent: "agent",
+        chatResponse: { body: null },
+        confidence: 0.95,
+      },
+      agentWorkDecision: {
+        action: "start_pipeline",
+        createTask: true,
+        pipelinesRequired: true,
+        pipelines: [
+          {
+            requirementId: "flight-deck-ui",
+            pipeline: "software-implementation-review-loop",
+            payload: {
+              taskSummary: "Implement Flight Deck PWA notifications UI",
+              workdir: "/Users/mini/code/wingmanbefree/wm-fd-2",
+              instructions: "Implement the Flight Deck client side of PWA chat notifications.",
+              designDocumentUrl: "/Users/mini/code/wingmanbefree/wm-fd-2/tmp/flightdeck-docs/pwa-notifications.md",
+              targetSurface: {
+                surfaces: ["PWA notification settings", "Chat notification subscription UI"],
+                likelyFilesOrAreas: ["src/** notification code", "public/** service worker assets"],
+              },
+            },
+          },
+          {
+            requirementId: "tower-api",
+            pipeline: "software-implementation-review-loop",
+            payload: {
+              taskSummary: "Implement Tower push notification backend",
+              workdir: "/Users/mini/code/wingmanbefree/wingman-tower",
+              instructions: "Implement the Tower server side of PWA chat notifications.",
+              designDocumentUrl: "/Users/mini/code/wingmanbefree/wingman-tower/tmp/flightdeck-docs/pwa-notifications.md",
+              targetSurface: {
+                surface: "Flight Deck PG notification APIs",
+                existingFiles: ["src/** notification API code"],
+              },
+            },
+          },
+        ],
+        taskDraft: {
+          title: "Implement PWA chat notifications",
+          instructions: "Coordinate the Flight Deck and Tower implementations.",
+        },
+        confidence: 0.94,
+      },
+    });
+
+    const result = currentAfterStep(execution, "prepare-chat-response");
+    const childPipelines = currentAfterStep(execution, "start-required-pipelines").childPipelines as JsonObject;
+    expect(currentAfterStep(execution, "start-selected-pipeline").childPipeline).toBeUndefined();
+    expect(childPipelines).toMatchObject({
+      started: true,
+      total: 2,
+      items: [
+        {
+          requirementId: "flight-deck-ui",
+          pipelineDefinitionId: "software-implementation-review-loop",
+          workPlan: {
+            workdir: "/Users/mini/code/wingmanbefree/wm-fd-2",
+            requirementId: "flight-deck-ui",
+          },
+        },
+        {
+          requirementId: "tower-api",
+          pipelineDefinitionId: "software-implementation-review-loop",
+          workPlan: {
+            workdir: "/Users/mini/code/wingmanbefree/wingman-tower",
+            requirementId: "tower-api",
+          },
+        },
+      ],
+    });
+    expect(result.decision).toMatchObject({
+      pipelinesRequired: true,
+      dispatchSingleTaskPipeline: false,
+      pipelineLaunches: [
+        {
+          requirementId: "flight-deck-ui",
+          pipelineDefinitionId: "software-implementation-review-loop",
+        },
+        {
+          requirementId: "tower-api",
+          pipelineDefinitionId: "software-implementation-review-loop",
+        },
+      ],
+    });
+    expect(String(result.agentResponse.responseDraft)).toContain("started 2 pipeline requirements");
   });
 
   test("shared chat dispatch resolves obvious project names from high information channel context", async () => {

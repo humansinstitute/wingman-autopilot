@@ -529,6 +529,7 @@ export class DispatchPipelineRuntime {
       });
     }
     registry['dispatch.startChildPipeline'] = this.createChildPipelineStarter(input);
+    registry['dispatch.startChildPipelines'] = this.createChildPipelinesStarter(input);
     return registry;
   }
 
@@ -626,6 +627,77 @@ export class DispatchPipelineRuntime {
           reason: error instanceof Error ? error.message : String(error),
         };
       }
+    };
+  }
+
+  private createChildPipelinesStarter(input: {
+    ownerAlias: string;
+    ownerNpub: string;
+    sessionApiContext: SessionApiContext;
+    eventInput: DispatchPipelineEventInput;
+    agent: AgentDefinitionRecord | null;
+    flightDeckRuntime: DispatchPipelineFlightDeckRuntime;
+  }) {
+    const startOne = this.createChildPipelineStarter(input);
+    return async (payload: JsonObject): Promise<JsonObject> => {
+      const rawPipelines = Array.isArray(payload.pipelines) ? payload.pipelines : [];
+      const childInput = objectValue(payload.childInput ?? payload.input);
+      const createdTask = objectValue(payload.createdTask ?? childInput.createdTask);
+      const seen = new Set<string>();
+      const items: JsonObject[] = [];
+      for (let index = 0; index < rawPipelines.length; index += 1) {
+        const requirement = objectValue(rawPipelines[index]);
+        const requirementId = getText(requirement.requirementId ?? requirement.id ?? requirement.name)
+          ?? `requirement-${index + 1}`;
+        if (seen.has(requirementId)) {
+          items.push({
+            requirementId,
+            started: false,
+            status: 'skipped',
+            reason: 'Duplicate pipeline requirement id in the same dispatch.',
+          });
+          continue;
+        }
+        seen.add(requirementId);
+        const workPlan = objectValue(requirement.workPlan ?? requirement.payload ?? requirement);
+        const pipelineDefinitionId = getText(
+          requirement.pipelineDefinitionId
+            ?? requirement.pipeline
+            ?? requirement.pipelineId
+            ?? workPlan.pipelineDefinitionId
+            ?? workPlan.childPipelineDefinitionId,
+        );
+        const taskId = getText(createdTask.taskId);
+        const selected = await startOne({
+          pipelineDefinitionId,
+          workPlan: {
+            ...workPlan,
+            requirementId,
+            ...(taskId && !getText(workPlan.taskId) ? { taskId } : {}),
+          },
+          childInput: {
+            ...childInput,
+            createdTask,
+            workPlan,
+          },
+          createdTask,
+        });
+        items.push({
+          requirementId,
+          ...selected,
+        });
+      }
+      const failed = items.filter((item) => item.started === false || getText(item.status) === 'failed' || getText(item.status) === 'error');
+      const needsInput = items.filter((item) => getText(item.status) === 'needs_input');
+      return {
+        started: items.length > 0 && failed.length === 0,
+        status: failed.length > 0 ? 'error' : needsInput.length > 0 ? 'needs_input' : items.length > 0 ? 'running' : 'failed',
+        total: items.length,
+        failed: failed.length,
+        needsInput: needsInput.length,
+        items,
+        reason: items.length === 0 ? 'No pipeline requirements were provided.' : failed.length > 0 ? 'One or more pipeline requirements failed to start.' : null,
+      };
     };
   }
 
