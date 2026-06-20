@@ -2375,13 +2375,17 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     ];
     const allowedFiles = getStringArray(targetSurface.allowedFiles);
     const forbidden = getStringArray(targetSurface.forbidden ?? targetSurface.forbiddenSurfaces);
+    const contractWarnings = [
+      targetSurfaceKeys.length === 0 ? "targetSurface was not supplied; worker must derive the exact files/routes from the instructions and repo." : "",
+      targetSurfaceKeys.length > 0 && !route && !surface && existingFiles.length === 0 && allowedFiles.length === 0
+        ? "targetSurface did not contain canonical route/surface/files fields; worker must treat it as loose context and inspect the repo before editing."
+        : "",
+    ].filter(Boolean);
     const missing = [
       !workdir ? "workdir" : "",
       workdir === "/Users/mini/code/wingmen" ? "non-placeholder workdir" : "",
       !instructions ? "instructions" : "",
       !designDocumentUrl || designDocumentUrl === "~/code/wingmen/docs/example-design.md" ? "real designDocumentUrl" : "",
-      targetSurfaceKeys.length === 0 ? "targetSurface" : "",
-      targetSurfaceKeys.length > 0 && !route && !surface && existingFiles.length === 0 && allowedFiles.length === 0 ? "targetSurface route/surface/files" : "",
     ].filter(Boolean);
     if (missing.length > 0) {
       throw new Error(`Implementation contract missing required field(s): ${missing.join(", ")}. Refuse to start worker until the caller supplies a Target Surface Contract.`);
@@ -2400,6 +2404,7 @@ export const builtinPipelineFunctions: FunctionRegistry = {
         allowedFiles,
         forbidden,
       },
+      contractWarnings,
       visualReferences: visualReferences.slice(0, 8),
     };
   },
