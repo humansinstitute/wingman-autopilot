@@ -205,6 +205,18 @@ function getStringArray(value: unknown): string[] {
   return [];
 }
 
+function resolveChatThreadDesignReference(input: JsonObject, workPlan: Record<string, unknown>): string | null {
+  const origin = objectValue(workPlan.origin ?? input.origin);
+  const chat = objectValue(input.chat);
+  const record = objectValue(input.record);
+  const routing = objectValue(input.routing);
+  const payload = objectValue(record.payload);
+  const threadId = getText(origin.threadId ?? chat.threadId ?? routing.threadId ?? payload.thread_id);
+  const messageId = getText(origin.messageId ?? record.recordId ?? record.record_id ?? payload.record_id);
+  if (!threadId) return null;
+  return `flightdeck-chat-thread://${threadId}${messageId ? `#${messageId}` : ""}`;
+}
+
 function normaliseDispatchWorkPlanContext(
   input: JsonObject,
   options: {
@@ -225,13 +237,18 @@ function normaliseDispatchWorkPlanContext(
     || Object.keys(objectValue(input.routing)).length > 0
     || Object.keys(objectValue(input.runtime)).length > 0;
   const rawReportingMode = getText(reporting.mode ?? reporting.type);
-  const reportingMode = hasFlightDeckDispatchContext
+  const origin = objectValue(suppliedWorkPlan.origin ?? input.origin);
+  const originKind = getText(origin.kind)
+    ?? (getText(origin.triggerKind) === "chat" ? "chat_thread" : hasFlightDeckDispatchContext ? "flightdeck_task" : "direct");
+  const reportingMode = originKind === "chat_thread"
+    ? (rawReportingMode ?? "chat_thread")
+    : hasFlightDeckDispatchContext
     && (!rawReportingMode || rawReportingMode === "pipeline_result" || rawReportingMode === "pipeline-result")
     ? "flightdeck_task"
     : rawReportingMode ?? (hasFlightDeckDispatchContext ? "flightdeck_task" : "pipeline_result");
-  const origin = objectValue(suppliedWorkPlan.origin ?? input.origin);
-  const originKind = getText(origin.kind)
-    ?? (hasFlightDeckDispatchContext ? "flightdeck_task" : "direct");
+  const explicitDesignDocumentUrl = getText(suppliedWorkPlan.designDocumentUrl ?? input.designDocumentUrl);
+  const designDocumentUrl = explicitDesignDocumentUrl
+    ?? (originKind === "chat_thread" ? resolveChatThreadDesignReference(input, suppliedWorkPlan) : null);
   const workPlan = {
     ...suppliedWorkPlan,
     ...(taskId ? { taskId } : {}),
@@ -245,8 +262,7 @@ function normaliseDispatchWorkPlanContext(
       ?? suppliedWorkPlan.workdir,
     instructions: getText(suppliedWorkPlan.instructions ?? input.implementationPrompt ?? input.instructions)
       ?? suppliedWorkPlan.instructions,
-    designDocumentUrl: getText(suppliedWorkPlan.designDocumentUrl ?? input.designDocumentUrl)
-      ?? suppliedWorkPlan.designDocumentUrl,
+    ...(designDocumentUrl ? { designDocumentUrl } : {}),
     designDocumentUnavailableReason: getText(suppliedWorkPlan.designDocumentUnavailableReason ?? input.designDocumentUnavailableReason)
       ?? suppliedWorkPlan.designDocumentUnavailableReason,
     designDocument: suppliedWorkPlan.designDocument ?? input.designDocument ?? null,
@@ -2060,8 +2076,9 @@ export const builtinPipelineFunctions: FunctionRegistry = {
       ...decision,
       intent: "discussion",
       dispatchTask: false,
+      dispatchPipeline: true,
       requestedDispatchTask: false,
-      pipelineDefinitionId: null,
+      pipelineDefinitionId,
       scopeId: null,
       workdir: null,
       dispatchDiscussion: true,
@@ -2071,6 +2088,29 @@ export const builtinPipelineFunctions: FunctionRegistry = {
       responseDraft,
       reasoningSummary: `Starting ${pipelineDefinitionId} without creating a task, while preserving the immediate chat reply.`,
       discussionWorkPlan: {
+        pipelineDefinitionId,
+        childPipelineDefinitionId: pipelineDefinitionId,
+        title,
+        taskSummary,
+        instructions: documentBoundDiscussion
+          ? "Discuss the referenced plan/design/document in chat, inspect thread/document/comment context, update the document when useful, review against the stated goal, and ask the next useful question. Do not create a Flight Deck task."
+          : "Discuss, plan, or reason in chat using the latest thread context. Do not create a Flight Deck task.",
+        originalPrompt: latestText,
+        originThread: thread,
+        referencedRecords,
+        documentReference,
+        origin: {
+          triggerKind: "chat",
+          channelId,
+          threadId,
+          messageId,
+          requesterNpub,
+          workspaceOwnerNpub: getText(workspace.workspaceOwnerNpub),
+          sourceAppNpub: getText(workspace.sourceAppNpub),
+        },
+        workdir: getText(agent.workingDirectory),
+      },
+      workPlan: {
         pipelineDefinitionId,
         childPipelineDefinitionId: pipelineDefinitionId,
         title,
@@ -2711,7 +2751,19 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const executionPlan = getStringArray(taskDraftInput.executionPlan ?? workPlanInput.executionPlan ?? raw.executionPlan);
     const managerChecklist = getStringArray(taskDraftInput.managerChecklist ?? workPlanInput.managerChecklist ?? raw.managerChecklist);
     const designDocument = objectValue(raw.designDocument ?? workPlanInput.designDocument);
-    const designDocumentUrl = getText(workPlanInput.designDocumentUrl ?? raw.designDocumentUrl ?? designDocument.localPath ?? designDocument.path ?? designDocument.url);
+    const explicitDesignDocumentUrl = getText(workPlanInput.designDocumentUrl ?? raw.designDocumentUrl ?? designDocument.localPath ?? designDocument.path ?? designDocument.url);
+    const designDocumentUrl = explicitDesignDocumentUrl
+      ?? (selectedSoftwareImplementationPipeline
+        ? resolveChatThreadDesignReference(input, {
+          ...workPlanInput,
+          origin: {
+            triggerKind: getText(objectValue(input.dispatch).triggerKind) ?? "chat",
+            channelId: getText(chat.channelId),
+            threadId: getText(chat.threadId),
+            messageId: getText(record.recordId),
+          },
+        })
+        : null);
     const localVisualReferences = Array.isArray(workPlanInput.visualReferences)
       ? workPlanInput.visualReferences
       : Array.isArray(raw.visualReferences)

@@ -758,6 +758,47 @@ describe("memory pipeline functions", () => {
     });
   });
 
+  test("dispatch.ensureImplementationReviewTask synthesizes chat-thread design reference for direct chat software runs", async () => {
+    const result = await builtinPipelineFunctions["dispatch.ensureImplementationReviewTask"]!({
+      dispatch: { triggerKind: "chat" },
+      chat: { channelId: "channel-1", threadId: "thread-1" },
+      record: { recordId: "message-1" },
+      workPlan: {
+        origin: {
+          triggerKind: "chat",
+          channelId: "channel-1",
+          threadId: "thread-1",
+          messageId: "message-1",
+        },
+        reporting: { mode: "chat_thread" },
+        workdir: "/repo/project",
+        instructions: "Implement from the current chat thread.",
+        targetSurface: {
+          route: "/docs",
+          existingFiles: ["src/app.js"],
+        },
+      },
+    });
+
+    expect(result).toMatchObject({
+      published: false,
+      taskId: null,
+      taskBacked: true,
+      workPlan: {
+        origin: { kind: "chat_thread" },
+        reporting: { mode: "chat_thread" },
+        designDocumentUrl: "flightdeck-chat-thread://thread-1#message-1",
+      },
+    });
+    await expect(builtinPipelineFunctions["dispatch.validateImplementationContract"]!({
+      createdTask: result,
+    })).resolves.toMatchObject({
+      ok: true,
+      taskId: null,
+      workdir: "/repo/project",
+    });
+  });
+
   test("dispatch.ensureImplementationReviewTask preserves Flight Deck reporting mode when dispatch context exists", async () => {
     const result = await builtinPipelineFunctions["dispatch.ensureImplementationReviewTask"]!({
       dispatch: { routeId: "route-1" },
@@ -1655,7 +1696,6 @@ describe("memory pipeline functions", () => {
       "dispatch-agent",
       "normalise-agent-work-decision",
       "route-discussion-chat",
-      "start-discussion-pipeline",
       "prepare-task-pipeline-input",
       "create-in-progress-task",
       "start-selected-pipeline",
@@ -1764,14 +1804,16 @@ describe("memory pipeline functions", () => {
     const routed = currentAfterStep(execution, "route-discussion-chat").decision as JsonObject;
     expect(routed).toMatchObject({
       dispatchTask: false,
+      dispatchPipeline: true,
       requestedDispatchTask: false,
       dispatchDiscussion: true,
       taskRoutingPending: false,
+      pipelineDefinitionId: "document-discussion",
       discussionPipelineDefinitionId: "document-discussion",
     });
     expect(currentAfterStep(execution, "prepare-task-pipeline-input").taskPipelineInput).toBeUndefined();
     expect(currentAfterStep(execution, "create-in-progress-task").createdTask).toBeUndefined();
-    expect(currentAfterStep(execution, "start-discussion-pipeline").childPipeline).toMatchObject({
+    expect(currentAfterStep(execution, "start-direct-pipeline").childPipeline).toMatchObject({
       started: true,
       pipelineDefinitionId: "document-discussion",
     });
@@ -1815,7 +1857,7 @@ describe("memory pipeline functions", () => {
         title: "Adapt - Kindling Feedback",
       }),
     ]);
-    expect(currentAfterStep(execution, "start-discussion-pipeline").childPipeline).toMatchObject({
+    expect(currentAfterStep(execution, "start-direct-pipeline").childPipeline).toMatchObject({
       started: true,
       pipelineDefinitionId: "document-discussion",
       workPlan: {
@@ -1956,6 +1998,55 @@ describe("memory pipeline functions", () => {
         workdir: "/Users/mini/code/wingmanbefree/autopilot",
         maxReviewIterations: 3,
       },
+    });
+  });
+
+  test("shared chat dispatch direct software run gets chat-thread design reference", async () => {
+    const execution = await runChatDispatchSpec({
+      latestMessage: "Please make the focused docs route fix in this repo.",
+      channelContext: {
+        channelId: "channel-1",
+        scopeId: "scope-1",
+        name: "Implementation",
+        contextPrompt: "This is the Implementation channel scope for the Wingman Autopilot project (~/code/wingmanbefree/autopilot). Use software-implementation-review-loop for implementation.",
+        hasSpecificContext: true,
+      },
+      agentDecision: {
+        intent: "agent",
+        chatResponse: { body: null },
+        confidence: 0.95,
+      },
+      agentWorkDecision: {
+        action: "start_pipeline",
+        recommendedPipelineId: "software-implementation-review-loop",
+        createTask: false,
+        workPlan: {
+          taskSummary: "Fix docs route",
+          instructions: "Make the focused docs route fix described in the current chat thread.",
+          targetSurface: {
+            route: "/docs",
+            existingFiles: ["src/app.js"],
+          },
+        },
+        confidence: 0.91,
+      },
+    });
+
+    const result = currentAfterStep(execution, "prepare-chat-response");
+    expect(result.decision).toMatchObject({
+      dispatchTask: false,
+      dispatchPipeline: true,
+      pipelineDefinitionId: "software-implementation-review-loop",
+      workdir: "/Users/mini/code/wingmanbefree/autopilot",
+      workPlan: {
+        designDocumentUrl: expect.stringMatching(/^flightdeck-chat-thread:\/\/thread-1#message-/),
+        reporting: { mode: "chat_thread" },
+      },
+    });
+    expect(result.createdTask).toBeUndefined();
+    expect(result.childPipeline).toMatchObject({
+      started: true,
+      pipelineDefinitionId: "software-implementation-review-loop",
     });
   });
 

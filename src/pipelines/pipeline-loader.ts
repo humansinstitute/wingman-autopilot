@@ -299,20 +299,6 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
       assign: "$.decision",
     },
     {
-      name: "start-discussion-pipeline",
-      type: "code",
-      function: "dispatch.startChildPipeline",
-      when: { path: "$.decision.dispatchDiscussion", equals: true },
-      input: {
-        pick: {
-          pipelineDefinitionId: "$.decision.discussionPipelineDefinitionId",
-          workPlan: "$.decision.discussionWorkPlan",
-          childInput: "$",
-        },
-      },
-      assign: "$.childPipeline",
-    },
-    {
       name: "prepare-task-pipeline-input",
       type: "code",
       function: "dispatch.prepareChatTaskPipelineInput",

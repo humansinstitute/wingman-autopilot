@@ -81,7 +81,6 @@ describe("pipeline definition version paths", () => {
       "dispatch-agent",
       "normalise-agent-work-decision",
       "route-discussion-chat",
-      "start-discussion-pipeline",
       "prepare-task-pipeline-input",
       "create-in-progress-task",
       "start-selected-pipeline",
@@ -241,7 +240,7 @@ describe("pipeline definition version paths", () => {
         designDocumentUnavailableReason: "$.createdTask.workPlan.designDocumentUnavailableReason",
       },
     });
-    expect(implementationLoop?.spec.steps.at(-1)).toMatchObject({
+    expect(implementationLoop?.spec.steps.find((step) => step.name === "close-review-task")).toMatchObject({
       name: "close-review-task",
       type: "code",
       function: "dispatch.markTaskReadyForReview",

@@ -1838,8 +1838,14 @@ export function createDispatchImplementationReviewTaskEnsurer(
       throw new Error(context.runtime.error ?? 'Flight Deck runtime was not prepared.');
     }
 
-    const existingTaskId = resolveTaskId(context, input);
     const workPlan = objectValue(input.workPlan ?? objectValue(input.createdTask).workPlan);
+    const reporting = objectValue(workPlan.reporting ?? input.reporting ?? input.reportTarget);
+    const origin = objectValue(workPlan.origin ?? input.origin);
+    const reportingMode = getText(reporting.mode ?? reporting.type);
+    const originKind = getText(origin.kind);
+    const directChatRun = context.eventInput.triggerKind === 'chat'
+      && (reportingMode === 'chat_thread' || originKind === 'chat_thread' || workPlan.createTask === false);
+    const existingTaskId = directChatRun ? null : resolveTaskId(context, input);
     const scopeId = getText(input.scopeId ?? workPlan.scopeId);
     const assignedTo = context.eventInput.subscription.botNpub;
     let taskId = existingTaskId;
@@ -1847,6 +1853,80 @@ export function createDispatchImplementationReviewTaskEnsurer(
 
     if (!isFlightDeckPgPublisherContext(context)) {
       await syncFlightDeckRuntime(context);
+    }
+
+    if (directChatRun) {
+      const workdir = getText(workPlan.workdir ?? workPlan.workingDirectory)
+        ?? getText(input.workingDirectory)
+        ?? context.agent?.workingDirectory
+        ?? process.cwd();
+      const designDocumentReference = resolveImplementationDesignDocumentReference(context, input, workPlan)
+        ?? resolveChatThreadImplementationReference(context, input, workPlan);
+      const designDocument = await hydrateImplementationDesignDocument(context, designDocumentReference, workdir);
+      const nextWorkPlan = {
+        ...workPlan,
+        taskId: null,
+        scopeId,
+        taskSummary: getText(workPlan.taskSummary)
+          ?? getText(input.taskTitle)
+          ?? compactSingleLine(getText(input.implementationPrompt), 140)
+          ?? 'Implementation review loop',
+        instructions: getText(workPlan.instructions)
+          ?? getText(input.implementationPrompt)
+          ?? 'Run the implementation review loop.',
+        workdir,
+        designDocumentUrl: designDocumentReference,
+        designDocumentSource: getText(workPlan.designDocumentSource)
+          ?? (designDocumentReference?.startsWith('flightdeck-chat-thread://') ? 'chat_thread_context' : undefined),
+        designDocumentUnavailableReason: getText(workPlan.designDocumentUnavailableReason)
+          ?? getText(input.designDocumentUnavailableReason)
+          ?? (designDocument?.status === 'failed' ? getText(designDocument.error) : undefined),
+        ...(designDocument ? { designDocument } : {}),
+        designDocumentLocalPath: getText(designDocument?.localPath),
+        designDocumentAccessInstructions: [
+          designDocument?.status === 'loaded'
+            ? 'Use workPlan.designDocument.localPath as the design baseline; refresh with flightdeck_doc_get only if current state matters.'
+            : 'Use workPlan.originThread and workPlan.designDocumentUrl as the design baseline for this direct chat-origin software run.',
+          'Do not run Yoke or sync a Yoke workspace to read Flight Deck PG context.',
+        ].join(' '),
+        assignedToNpub: assignedTo,
+        reviewerNpub: getText(workPlan.reviewerNpub) ?? resolveRequesterNpub(context, input),
+        origin: {
+          ...origin,
+          kind: 'chat_thread',
+          triggerKind: getText(origin.triggerKind) ?? 'chat',
+          channelId: getText(origin.channelId)
+            ?? context.eventInput.channelId
+            ?? getText(context.eventInput.payload.channel_id),
+          threadId: getText(origin.threadId)
+            ?? context.eventInput.threadId
+            ?? getText(context.eventInput.payload.thread_id),
+          messageId: getText(origin.messageId)
+            ?? context.eventInput.recordId,
+        },
+        reporting: {
+          ...reporting,
+          mode: 'chat_thread',
+        },
+      };
+
+      return {
+        published: false,
+        status: 'ready',
+        operation: 'tasks.ensure-implementation-review-loop',
+        taskId: null,
+        created: false,
+        state: null,
+        assignedToNpub: assignedTo,
+        assignment: null,
+        scopeId,
+        createResult: null,
+        updateResult: null,
+        updateError: null,
+        commentResult: null,
+        commentError: null,
+        workPlan: nextWorkPlan,
+      };
     }
 
     if (!taskId) {
@@ -1950,7 +2030,7 @@ export function createDispatchImplementationReviewTaskEnsurer(
       commentError = error instanceof Error ? error.message : String(error);
     }
 
-    const designDocumentReference = resolveImplementationDesignDocumentReference(input, workPlan);
+    const designDocumentReference = resolveImplementationDesignDocumentReference(context, input, workPlan);
     const workdir = getText(workPlan.workdir ?? workPlan.workingDirectory)
       ?? getText(input.workingDirectory)
       ?? context.agent?.workingDirectory
@@ -2126,6 +2206,7 @@ function extractFlightDeckDocumentId(reference: string): string | null {
 }
 
 function resolveImplementationDesignDocumentReference(
+  context: DispatchPipelineFlightDeckPublisherContext,
   input: JsonObject,
   workPlan: Record<string, unknown>,
 ): string | null {
@@ -2143,7 +2224,30 @@ function resolveImplementationDesignDocumentReference(
   ].map((candidate) => candidate ? extractFlightDeckDocumentReference(candidate) : null).find(Boolean) ?? null;
   if (referencedDocument) return referencedDocument;
   const taskId = getText(workPlan.taskId ?? input.taskId);
-  return taskId ? `flightdeck-task://${taskId}` : null;
+  if (taskId) return `flightdeck-task://${taskId}`;
+  return resolveChatThreadImplementationReference(context, input, workPlan);
+}
+
+function resolveChatThreadImplementationReference(
+  context: DispatchPipelineFlightDeckPublisherContext,
+  input: JsonObject,
+  workPlan: Record<string, unknown>,
+): string | null {
+  const origin = objectValue(workPlan.origin ?? input.origin);
+  const chat = objectValue(input.chat);
+  const routing = objectValue(input.routing);
+  const record = objectValue(input.record);
+  const payload = objectValue(record.payload ?? context.eventInput.payload);
+  const threadId = getText(origin.threadId)
+    ?? context.eventInput.threadId
+    ?? getText(chat.threadId)
+    ?? getText(routing.threadId)
+    ?? getText(payload.thread_id);
+  const messageId = getText(origin.messageId)
+    ?? context.eventInput.recordId
+    ?? getText(record.recordId ?? record.record_id ?? payload.record_id);
+  if (!threadId) return null;
+  return `flightdeck-chat-thread://${threadId}${messageId ? `#${messageId}` : ''}`;
 }
 
 function extractFlightDeckDocumentReference(text: string): string | null {
@@ -3504,13 +3608,14 @@ function resolveTaskId(
   const createdTask = objectValue(input.createdTask);
   const record = objectValue(input.record);
   const payload = objectValue(record.payload ?? context.eventInput.payload);
+  const isTaskDispatch = context.eventInput.triggerKind === 'task' || context.eventInput.triggerKind === 'task_review';
   return getText(input.taskId)
     ?? getText(workPlan.taskId)
     ?? getText(createdTask.taskId)
     ?? getText(payload.taskId)
     ?? getText(payload.task_id)
-    ?? getText(payload.record_id)
-    ?? (context.eventInput.triggerKind === 'task' || context.eventInput.triggerKind === 'task_review'
+    ?? (isTaskDispatch ? getText(payload.record_id) : null)
+    ?? (isTaskDispatch
       ? getRecordId(context.eventInput)
       : null);
 }

@@ -2240,6 +2240,86 @@ describe('dispatch pipeline Flight Deck publisher', () => {
     });
   });
 
+  test('implementation review task ensurer keeps direct chat software runs taskless', async () => {
+    const ensureTask = createDispatchImplementationReviewTaskEnsurer(buildChatPublisherContext({
+      subscription: {
+        subscriptionId: 'sub-pg-1',
+        workspaceOwnerNpub: 'npub1workspace',
+        sourceAppNpub: 'npub1source',
+        backendBaseUrl: 'https://tower.example.com',
+        workspaceId: 'workspace-pg-1',
+        botNpub: 'npub1bot',
+        wsKeyNpub: null,
+      },
+      runtime: {
+        mode: 'flightdeck_pg',
+        yokeStateDir: null,
+        commandPrefix: null,
+        commands: {},
+        error: null,
+      },
+      recordId: 'chat-message-99',
+      threadId: 'thread-99',
+      payload: {
+        record_id: 'chat-message-99',
+        thread_id: 'thread-99',
+      },
+    }));
+
+    const createdTask = await ensureTask({
+      implementationPrompt: 'Implement the focused fix from this chat thread.',
+      workingDirectory: '/repo/app',
+      record: {
+        recordId: 'chat-message-99',
+        payload: {
+          record_id: 'chat-message-99',
+          thread_id: 'thread-99',
+        },
+      },
+      workPlan: {
+        taskSummary: 'Implement focused fix',
+        instructions: 'Implement the focused fix from this chat thread.',
+        reporting: { mode: 'chat_thread' },
+        origin: {
+          triggerKind: 'chat',
+          channelId: 'channel-1',
+          threadId: 'thread-99',
+          messageId: 'chat-message-99',
+        },
+        targetSurface: {
+          route: '/docs',
+          existingFiles: ['src/app.js'],
+        },
+        reviewerNpub: 'npub1requester',
+      },
+    });
+
+    expect(yokeCommandCalls).toHaveLength(0);
+    expect(pgTaskCreateCalls).toHaveLength(0);
+    expect(pgTaskStateUpdateCalls).toHaveLength(0);
+    expect(pgTaskCommentCreateCalls).toHaveLength(0);
+    expect(pgTaskAssignmentCalls).toHaveLength(0);
+    expect(pgDocumentFetchCalls).toHaveLength(0);
+    expect(createdTask).toMatchObject({
+      published: false,
+      status: 'ready',
+      operation: 'tasks.ensure-implementation-review-loop',
+      taskId: null,
+      created: false,
+      workPlan: {
+        taskId: null,
+        designDocumentUrl: 'flightdeck-chat-thread://thread-99#chat-message-99',
+        designDocumentSource: 'chat_thread_context',
+        origin: {
+          kind: 'chat_thread',
+          threadId: 'thread-99',
+          messageId: 'chat-message-99',
+        },
+        reporting: { mode: 'chat_thread' },
+      },
+    });
+  });
+
   test('implementation review task ensurer hydrates Flight Deck PG design doc without Yoke', async () => {
     const workdir = join(tmpdir(), `autopilot-doc-snapshot-${randomUUID()}`);
     const ensureTask = createDispatchImplementationReviewTaskEnsurer(buildChatPublisherContext({
