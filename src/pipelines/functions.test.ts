@@ -764,17 +764,16 @@ describe("memory pipeline functions", () => {
           designDocumentUrl: "~/code/wingmen/docs/example-design.md",
         },
       },
-    })).rejects.toThrow(/non-placeholder workdir.*real designDocumentUrl/);
+    })).rejects.toThrow(/non-placeholder workdir/);
   });
 
-  test("dispatch.validateImplementationContract treats missing target surface as a warning", async () => {
+  test("dispatch.validateImplementationContract treats missing target surface and design doc as warnings", async () => {
     await expect(builtinPipelineFunctions["dispatch.validateImplementationContract"]!({
       createdTask: {
         taskId: "task-loose",
         workPlan: {
           workdir: "/repo/project",
           instructions: "Implement the requested feature from the source context.",
-          designDocumentUrl: "flightdeck-chat-thread://thread-1#message-1",
         },
       },
     })).resolves.toMatchObject({
@@ -783,6 +782,7 @@ describe("memory pipeline functions", () => {
       workdir: "/repo/project",
       contractWarnings: [
         "targetSurface was not supplied; worker must derive the exact files/routes from the instructions and repo.",
+        "designDocumentUrl was not supplied; worker must treat implementationPrompt/instructions and origin context as the source of truth.",
       ],
     });
   });

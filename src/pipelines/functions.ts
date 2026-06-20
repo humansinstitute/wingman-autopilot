@@ -2380,12 +2380,14 @@ export const builtinPipelineFunctions: FunctionRegistry = {
       targetSurfaceKeys.length > 0 && !route && !surface && existingFiles.length === 0 && allowedFiles.length === 0
         ? "targetSurface did not contain canonical route/surface/files fields; worker must treat it as loose context and inspect the repo before editing."
         : "",
+      !designDocumentUrl || designDocumentUrl === "~/code/wingmen/docs/example-design.md"
+        ? "designDocumentUrl was not supplied; worker must treat implementationPrompt/instructions and origin context as the source of truth."
+        : "",
     ].filter(Boolean);
     const missing = [
       !workdir ? "workdir" : "",
       workdir === "/Users/mini/code/wingmen" ? "non-placeholder workdir" : "",
       !instructions ? "instructions" : "",
-      !designDocumentUrl || designDocumentUrl === "~/code/wingmen/docs/example-design.md" ? "real designDocumentUrl" : "",
     ].filter(Boolean);
     if (missing.length > 0) {
       throw new Error(`Implementation contract missing required field(s): ${missing.join(", ")}. Refuse to start worker until the caller supplies a Target Surface Contract.`);
