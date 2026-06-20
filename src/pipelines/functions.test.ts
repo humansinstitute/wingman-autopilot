@@ -475,6 +475,34 @@ async function runChatDispatchSpec(input: {
           childPipelineDefinitionId: pipelineDefinitionId,
         };
       })(),
+      ...(() => {
+        const decision = (selected.decision as JsonObject | undefined) ?? {};
+        const launches = Array.isArray(decision.pipelineLaunches)
+          ? decision.pipelineLaunches.map((entry) => entry as JsonObject)
+          : [];
+        if (decision.pipelinesRequired !== true || launches.length === 0) return {};
+        return {
+          operation: "tasks.create-from-chat.multi",
+          items: launches.map((launch, index) => {
+            const requirementId = String(launch.requirementId ?? `requirement-${index + 1}`);
+            const workPlan = (launch.workPlan as JsonObject | undefined) ?? {};
+            return {
+              requirementId,
+              created: true,
+              status: "ok",
+              taskId: `task-${requirementId}`,
+              pipelineDefinitionId: launch.pipelineDefinitionId,
+              workPlan: {
+                ...workPlan,
+                requirementId,
+                taskId: `task-${requirementId}`,
+                pipelineDefinitionId: launch.pipelineDefinitionId,
+                childPipelineDefinitionId: launch.pipelineDefinitionId,
+              },
+            };
+          }),
+        };
+      })(),
     }),
     "dispatch.startChildPipeline": async (selected: JsonObject) => ({
       started: true,
@@ -486,19 +514,28 @@ async function runChatDispatchSpec(input: {
     }),
     "dispatch.startChildPipelines": async (selected: JsonObject) => {
       const pipelines = Array.isArray(selected.pipelines) ? selected.pipelines.map((entry) => entry as JsonObject) : [];
+      const createdTask = (selected.createdTask as JsonObject | undefined) ?? {};
+      const createdItems = Array.isArray(createdTask.items) ? createdTask.items.map((entry) => entry as JsonObject) : [];
       return {
         started: pipelines.length > 0,
         status: pipelines.length > 0 ? "running" : "failed",
         total: pipelines.length,
-        items: pipelines.map((entry) => ({
-          requirementId: entry.requirementId,
-          started: true,
-          status: "running",
-          pipelineRunId: `run-${String(entry.requirementId)}`,
-          pipelineDefinitionId: entry.pipelineDefinitionId,
-          pipelineName: entry.pipelineDefinitionId,
-          workPlan: entry.workPlan,
-        })),
+        items: pipelines.map((entry) => {
+          const matchingTask = createdItems.find((item) => item.requirementId === entry.requirementId);
+          return {
+            requirementId: entry.requirementId,
+            taskId: matchingTask?.taskId,
+            started: true,
+            status: "running",
+            pipelineRunId: `run-${String(entry.requirementId)}`,
+            pipelineDefinitionId: entry.pipelineDefinitionId,
+            pipelineName: entry.pipelineDefinitionId,
+            workPlan: {
+              ...((entry.workPlan as JsonObject | undefined) ?? {}),
+              ...(((matchingTask?.workPlan as JsonObject | undefined) ?? {})),
+            },
+          };
+        }),
       };
     },
     "dispatch.completeReviewTaskFromChat": async (selected: JsonObject) => ({
@@ -2162,6 +2199,7 @@ describe("memory pipeline functions", () => {
           workPlan: {
             workdir: "/Users/mini/code/wingmanbefree/wm-fd-2",
             requirementId: "flight-deck-ui",
+            taskId: "task-flight-deck-ui",
           },
         },
         {
@@ -2170,6 +2208,7 @@ describe("memory pipeline functions", () => {
           workPlan: {
             workdir: "/Users/mini/code/wingmanbefree/wingman-tower",
             requirementId: "tower-api",
+            taskId: "task-tower-api",
           },
         },
       ],
@@ -2188,6 +2227,7 @@ describe("memory pipeline functions", () => {
         },
       ],
     });
+    expect(String(result.agentResponse.responseDraft)).toContain("created 2 tasks");
     expect(String(result.agentResponse.responseDraft)).toContain("started 2 pipeline requirements");
   });
 

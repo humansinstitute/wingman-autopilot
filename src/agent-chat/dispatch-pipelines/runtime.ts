@@ -643,6 +643,9 @@ export class DispatchPipelineRuntime {
       const rawPipelines = Array.isArray(payload.pipelines) ? payload.pipelines : [];
       const childInput = objectValue(payload.childInput ?? payload.input);
       const createdTask = objectValue(payload.createdTask ?? childInput.createdTask);
+      const createdTaskItems = Array.isArray(createdTask.items)
+        ? createdTask.items.map((item) => objectValue(item))
+        : [];
       const seen = new Set<string>();
       const items: JsonObject[] = [];
       for (let index = 0; index < rawPipelines.length; index += 1) {
@@ -667,23 +670,40 @@ export class DispatchPipelineRuntime {
             ?? workPlan.pipelineDefinitionId
             ?? workPlan.childPipelineDefinitionId,
         );
-        const taskId = getText(createdTask.taskId);
+        const matchingTask = createdTaskItems.find((item) => getText(item.requirementId) === requirementId) ?? null;
+        if (matchingTask && getText(matchingTask.status) === 'failed') {
+          items.push({
+            requirementId,
+            started: false,
+            status: 'failed',
+            pipelineDefinitionId,
+            reason: getText(matchingTask.reason) ?? 'Task creation failed for this pipeline requirement.',
+            createdTask: matchingTask,
+          });
+          continue;
+        }
+        const taskContext = matchingTask ?? createdTask;
+        const taskId = getText(taskContext.taskId);
+        const taskWorkPlan = objectValue(taskContext.workPlan);
+        const selectedWorkPlan = {
+          ...workPlan,
+          ...taskWorkPlan,
+          requirementId,
+          ...(taskId && !getText(workPlan.taskId) ? { taskId } : {}),
+        };
         const selected = await startOne({
           pipelineDefinitionId,
-          workPlan: {
-            ...workPlan,
-            requirementId,
-            ...(taskId && !getText(workPlan.taskId) ? { taskId } : {}),
-          },
+          workPlan: selectedWorkPlan,
           childInput: {
             ...childInput,
-            createdTask,
-            workPlan,
+            createdTask: taskContext,
+            workPlan: selectedWorkPlan,
           },
-          createdTask,
+          createdTask: taskContext,
         });
         items.push({
           requirementId,
+          taskId,
           ...selected,
         });
       }

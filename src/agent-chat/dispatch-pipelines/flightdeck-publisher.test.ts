@@ -268,9 +268,10 @@ mock.module('../tower-client', () => ({
   }),
   createFlightDeckPgChannelTask: mock(async (input: Record<string, unknown>) => {
     pgTaskCreateCalls.push(input);
+    const taskIndex = pgTaskCreateCalls.length;
     return {
       task: {
-        id: 'pg-task-1',
+        id: `pg-task-${taskIndex}`,
         channel_id: input.channelId,
         thread_id: input.threadId,
         title: input.title,
@@ -1548,6 +1549,101 @@ describe('dispatch pipeline Flight Deck publisher', () => {
         taskId: 'pg-task-1',
         pipelineDefinitionId: 'do-and-review',
       },
+    });
+  });
+
+  test('chat task creation creates one Flight Deck PG task per pipeline requirement', async () => {
+    const createTask = createDispatchChatTaskCreator(buildChatPublisherContext({
+      subscription: {
+        subscriptionId: 'sub-pg-1',
+        workspaceOwnerNpub: 'npub1workspace',
+        sourceAppNpub: 'npub1source',
+        backendBaseUrl: 'https://tower.example.com',
+        workspaceId: 'workspace-pg-1',
+        botNpub: 'npub1bot',
+        wsKeyNpub: null,
+      },
+      runtime: {
+        mode: 'flightdeck_pg',
+        yokeStateDir: null,
+        commandPrefix: null,
+        commands: {},
+        error: null,
+      },
+    }));
+
+    const result = await createTask({
+      dispatchTask: true,
+      pipelinesRequired: true,
+      pipelineLaunches: [
+        {
+          requirementId: 'flight-deck-ui',
+          pipelineDefinitionId: 'software-implementation-review-loop',
+          workPlan: {
+            taskSummary: 'Implement Flight Deck PWA notifications UI',
+            workdir: '/Users/mini/code/wingmanbefree/wm-fd-2',
+            instructions: 'Build the UI half.',
+            scopeId: 'scope-flight-deck',
+            pipelineDefinitionId: 'software-implementation-review-loop',
+          },
+        },
+        {
+          requirementId: 'tower-api',
+          pipelineDefinitionId: 'software-implementation-review-loop',
+          workPlan: {
+            taskSummary: 'Implement Tower push notification backend',
+            workdir: '/Users/mini/code/wingmanbefree/wingman-tower',
+            instructions: 'Build the backend half.',
+            scopeId: 'scope-tower',
+            pipelineDefinitionId: 'software-implementation-review-loop',
+          },
+        },
+      ],
+      taskDraft: {
+        title: 'Implement PWA notifications',
+        instructions: 'Coordinate both halves.',
+      },
+      workPlan: {
+        taskSummary: 'Implement PWA notifications',
+        instructions: 'Coordinate both halves.',
+      },
+    });
+
+    expect(yokeCommandCalls).toHaveLength(0);
+    expect(pgTaskCreateCalls).toHaveLength(2);
+    expect(pgTaskCreateCalls.map((call) => call.title)).toEqual([
+      'Implement Flight Deck PWA notifications UI',
+      'Implement Tower push notification backend',
+    ]);
+    expect(pgTaskCreateCalls.map((call) => (call.metadata as any).scope_id)).toEqual([
+      'scope-flight-deck',
+      'scope-tower',
+    ]);
+    expect(pgTaskAssignmentCalls).toHaveLength(2);
+    expect(result).toMatchObject({
+      created: true,
+      status: 'ok',
+      operation: 'tasks.create-from-chat.multi',
+      items: [
+        {
+          requirementId: 'flight-deck-ui',
+          taskId: 'pg-task-1',
+          workPlan: {
+            taskId: 'pg-task-1',
+            scopeId: 'scope-flight-deck',
+            workdir: '/Users/mini/code/wingmanbefree/wm-fd-2',
+          },
+        },
+        {
+          requirementId: 'tower-api',
+          taskId: 'pg-task-2',
+          workPlan: {
+            taskId: 'pg-task-2',
+            scopeId: 'scope-tower',
+            workdir: '/Users/mini/code/wingmanbefree/wingman-tower',
+          },
+        },
+      ],
     });
   });
 

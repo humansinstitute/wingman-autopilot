@@ -1474,6 +1474,116 @@ export function createDispatchChatTaskCreator(
     const description = buildChatCreatedTaskDescription(context, decision);
     const scopeId = getText(decision.scopeId ?? workPlan.scopeId);
     const assignedTo = context.eventInput.subscription.botNpub;
+    const pipelineLaunches = Array.isArray(decision.pipelineLaunches)
+      ? decision.pipelineLaunches.map((item) => objectValue(item))
+      : [];
+    if (decision.pipelinesRequired === true && pipelineLaunches.length > 0) {
+      if (!isFlightDeckPgPublisherContext(context)) {
+        return {
+          created: false,
+          status: 'failed',
+          operation: 'tasks.create-from-chat.multi',
+          reason: 'Multi-pipeline task creation requires Flight Deck PG runtime.',
+          items: [],
+        };
+      }
+      const items: JsonObject[] = [];
+      for (let index = 0; index < pipelineLaunches.length; index += 1) {
+        const launch = pipelineLaunches[index]!;
+        const requirementId = getText(launch.requirementId) ?? `requirement-${index + 1}`;
+        const requirementWorkPlan = objectValue(launch.workPlan);
+        const requirementTitle = getText(requirementWorkPlan.taskSummary ?? requirementWorkPlan.title)
+          ?? `${title} - ${requirementId}`;
+        const requirementScopeId = getText(requirementWorkPlan.scopeId ?? decision.scopeId ?? workPlan.scopeId);
+        const requirementDecision = {
+          ...decision,
+          pipelineDefinitionId: getText(launch.pipelineDefinitionId ?? requirementWorkPlan.pipelineDefinitionId),
+          workPlan: requirementWorkPlan,
+          taskDraft: {
+            ...taskDraft,
+            title: requirementTitle,
+            instructions: getText(requirementWorkPlan.instructions) ?? getText(taskDraft.instructions),
+          },
+        };
+        try {
+          const createResult = await createFlightDeckPgTaskFromContext(context, {
+            title: requirementTitle,
+            description: buildChatCreatedTaskDescription(context, requirementDecision),
+            state: 'in_progress',
+            metadata: {
+              autopilot_dispatch: true,
+              source_message_id: context.eventInput.recordId,
+              assigned_to_npub: assignedTo,
+              scope_id: requirementScopeId,
+              requirement_id: requirementId,
+              pipeline_definition_id: getText(launch.pipelineDefinitionId ?? requirementWorkPlan.pipelineDefinitionId),
+            },
+          });
+          const taskId = getText(objectValue(createResult.task).id);
+          if (!taskId) {
+            items.push({
+              requirementId,
+              created: false,
+              status: 'failed',
+              reason: 'Task creation succeeded but no created task id was returned.',
+              scopeId: requirementScopeId,
+              assignedToNpub: assignedTo,
+              createResult,
+            });
+            continue;
+          }
+          const nextWorkPlan = buildCreatedTaskWorkPlan(requirementWorkPlan, requirementDecision, {
+            taskId,
+            scopeId: requirementScopeId,
+            assignedTo,
+          });
+          const assignment = await assignFlightDeckPgTaskToNpub(context, taskId, assignedTo);
+          items.push({
+            requirementId,
+            created: true,
+            status: assignment.status === 'ok' ? 'ok' : 'partial',
+            operation: 'tasks.create-from-chat',
+            taskId,
+            scopeId: requirementScopeId,
+            assignedToNpub: assignedTo,
+            assignment,
+            pipelineDefinitionId: nextWorkPlan.pipelineDefinitionId,
+            workPlan: nextWorkPlan,
+            createResult,
+          });
+        } catch (error) {
+          items.push({
+            requirementId,
+            created: false,
+            status: 'failed',
+            operation: 'tasks.create-from-chat',
+            reason: error instanceof Error ? error.message : String(error),
+            scopeId: requirementScopeId,
+            assignedToNpub: assignedTo,
+            pipelineDefinitionId: getText(launch.pipelineDefinitionId ?? requirementWorkPlan.pipelineDefinitionId),
+            workPlan: {
+              ...requirementWorkPlan,
+              taskId: null,
+              scopeId: requirementScopeId,
+              assignedToNpub: assignedTo,
+            },
+          });
+        }
+      }
+      const failed = items.filter((item) => getText(item.status) === 'failed');
+      const firstReady = items.find((item) => getText(item.taskId));
+      return {
+        created: items.some((item) => item.created === true),
+        status: failed.length === 0 ? 'ok' : failed.length === items.length ? 'failed' : 'partial',
+        operation: 'tasks.create-from-chat.multi',
+        taskId: getText(firstReady?.taskId),
+        scopeId: getText(firstReady?.scopeId) ?? scopeId,
+        assignedToNpub: assignedTo,
+        pipelineDefinitionId: getText(firstReady?.pipelineDefinitionId),
+        workPlan: objectValue(firstReady?.workPlan),
+        items,
+      };
+    }
     const reusableTaskId = getText(workPlan.taskId ?? decision.taskId) ?? findReusableTaskIdForChatTask(input);
     if (reusableTaskId) {
       let updateResult: unknown = null;

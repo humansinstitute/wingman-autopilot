@@ -3194,6 +3194,21 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const effectiveChildPipeline = childPipelineItems.length > 0 ? childPipelines : childPipeline;
     const closeoutContext = objectValue(input.closeoutContext);
     const taskId = getText(createdTask.taskId);
+    const createdTaskItems = Array.isArray(createdTask.items)
+      ? createdTask.items.map((item) => objectValue(item))
+      : [];
+    const createdTaskMentions = createdTaskItems
+      .map((item) => {
+        const itemTaskId = getText(item.taskId);
+        if (!itemTaskId) return null;
+        const itemWorkPlan = objectValue(item.workPlan);
+        const itemLabel = getText(itemWorkPlan.taskSummary)
+          ?? getText(item.title)
+          ?? getText(item.requirementId)
+          ?? "created task";
+        return mention("task", itemTaskId, itemLabel);
+      })
+      .filter((item): item is string => Boolean(item));
     const taskCreationFailed = decision.dispatchTask === true && getText(createdTask.status) === "failed";
     const directPipelineRequested = decision.dispatchPipeline === true;
     const createdTaskWorkPlan = objectValue(createdTask.workPlan);
@@ -3217,6 +3232,10 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     let responseDraft = getText(decision.responseDraft) ?? "Done.";
     if (taskCreationFailed) {
       responseDraft = `I have the request, but I could not create the Flight Deck task yet: ${getText(createdTask.reason) ?? "unknown error"}. I am not dropping the request; please retry or check the Autopilot Flight Deck dispatch connection.`;
+    } else if (decision.dispatchTask === true && createdTaskMentions.length > 1) {
+      responseDraft = launchFailed
+        ? `I created ${createdTaskMentions.length} tasks, but one or more selected pipelines did not start: ${getText(effectiveChildPipeline.reason) ?? "unknown error"}.`
+        : `I created ${createdTaskMentions.length} tasks and started ${childPipelineItems.length || createdTaskMentions.length} pipeline requirements: ${createdTaskMentions.join(", ")}. I will hand them back independently as each finishes.`;
     } else if (decision.dispatchTask === true && taskId) {
       responseDraft = needsInput
         ? `I ${taskAction} ${taskMention} and started ${pipelineName ?? "the selected pipeline"}${pipelineRunId ? ` (${pipelineRunId})` : ""}, but it needs input before it can continue.${getText(needsInputUpdate.question) ? `\nQuestion: ${getText(needsInputUpdate.question)}` : ""}`
@@ -3257,6 +3276,7 @@ export const builtinPipelineFunctions: FunctionRegistry = {
           : "Responded directly without dispatching task-backed work.",
       actionsTaken: [
         ...(taskId ? [`${createdTask.reused === true ? "reused" : "created"} task ${taskId}`] : []),
+        ...(createdTaskItems.length > 1 ? [`created ${createdTaskItems.length} task requirement(s)`] : []),
         ...(pipelineRunId ? [`started pipeline run ${pipelineRunId}`] : []),
         ...(childPipelineItems.length > 0 ? [`started ${childPipelineItems.length} pipeline requirement(s)`] : []),
         ...(closeoutContext.hydrated === true ? ["re-read chat thread before replying"] : []),
