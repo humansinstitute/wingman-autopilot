@@ -28,6 +28,13 @@ describe("pipeline JSON rendering", () => {
     expect(html).toContain("second line");
   });
 
+  test("renders top-level undefined as a scalar value", () => {
+    const html = renderJsonBlock("Value", undefined);
+
+    expect(html).toContain("undefined");
+    expect(html).not.toContain("0 fields");
+  });
+
   test("builds an output-only diff that omits carried forward values", () => {
     const diff = buildOutputDiff(
       {

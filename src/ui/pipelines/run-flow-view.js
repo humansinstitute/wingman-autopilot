@@ -10,6 +10,7 @@ import {
   buildFallbackDisplayRows,
   displayPath,
 } from "./display-fields.js";
+import { serializeInspectionValue } from "./value-inspector.js";
 
 const FIELD_LIMIT = 40;
 const FIELD_ROW_LIMIT = 5;
@@ -170,12 +171,12 @@ function renderFieldRows(rows, idPrefix) {
   const safeId = String(idPrefix ?? "fields").replace(/[^a-zA-Z0-9_-]+/g, "-");
   return `
     <div class="wm-pipeline-flow-rows">
-      ${visible.map(renderFieldRow).join("")}
+      ${visible.map((row) => renderFieldRow(row, idPrefix)).join("")}
       ${hidden.length ? `
         <details class="wm-pipeline-flow-more">
           <summary aria-label="Show ${escapeAttribute(String(hidden.length))} more ${escapeAttribute(safeId)} fields">More (${escapeHtml(String(hidden.length))})</summary>
           <div class="wm-pipeline-flow-more-rows">
-            ${hidden.map(renderFieldRow).join("")}
+            ${hidden.map((row) => renderFieldRow(row, idPrefix)).join("")}
           </div>
         </details>
       ` : ""}
@@ -183,10 +184,22 @@ function renderFieldRows(rows, idPrefix) {
   `;
 }
 
-function renderFieldRow(row) {
+function renderFieldRow(row, contextLabel = "") {
+  const preview = formatPreviewValue(row.value);
+  const title = [contextLabel, row.name].filter(Boolean).join(": ") || "Value";
   return `
     <div class="wm-pipeline-flow-row">
-      <code>${escapeHtml(row.name)}</code><span>: &ldquo;${escapeHtml(formatPreviewValue(row.value))}&rdquo;</span>
+      <code>${escapeHtml(row.name)}</code><span>:
+        <button
+          type="button"
+          class="wm-pipeline-value-preview"
+          data-action="inspect-pipeline-value"
+          data-value-title="${escapeAttribute(title)}"
+          data-value="${escapeAttribute(serializeInspectionValue(row.value))}"
+          aria-label="Inspect ${escapeAttribute(title)} value"
+          data-testid="pipeline-value-preview"
+        >&ldquo;${escapeHtml(preview)}&rdquo;</button>
+      </span>
     </div>
   `;
 }
@@ -214,7 +227,17 @@ function renderLedgerRow(row) {
   return `
     <div class="wm-pipeline-ledger-row" role="row" data-testid="pipeline-ledger-row">
       <code role="cell">${escapeHtml(row.path)}</code>
-      <span role="cell">${escapeHtml(formatPreviewValue(row.value))}</span>
+      <span role="cell">
+        <button
+          type="button"
+          class="wm-pipeline-value-preview"
+          data-action="inspect-pipeline-value"
+          data-value-title="${escapeAttribute(row.path)}"
+          data-value="${escapeAttribute(serializeInspectionValue(row.value))}"
+          aria-label="Inspect ${escapeAttribute(row.path)} value"
+          data-testid="pipeline-value-preview"
+        >${escapeHtml(formatPreviewValue(row.value))}</button>
+      </span>
       <span role="cell">
         <span>${escapeHtml(stepLabel)}</span>
         <small>${escapeHtml(statusLabel(writer.status))}</small>

@@ -1,3 +1,5 @@
+import { bindPipelineValueInspector } from "./value-inspector.js";
+
 export function bindPipelinesPageActions(root, page, actions) {
   bindRouteActions(root, page, actions);
   bindHeaderActions(root, page, actions);
@@ -5,6 +7,7 @@ export function bindPipelinesPageActions(root, page, actions) {
   bindDefinitionActions(root, page, actions);
   bindWizardActions(root, page, actions);
   bindFunctionActions(root, page, actions);
+  bindPipelineValueInspector(root);
 }
 
 function bindRouteActions(root, page, actions) {

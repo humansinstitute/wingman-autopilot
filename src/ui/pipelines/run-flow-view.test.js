@@ -89,6 +89,8 @@ describe("pipeline run flow visualization", () => {
     expect(html).toContain("Build the working plan from the user prompt.");
     expect(html).toContain("Fields In");
     expect(html).toContain("Fields Out");
+    expect(html).toContain('data-action="inspect-pipeline-value"');
+    expect(html).toContain('data-testid="pipeline-value-preview"');
     expect(html).not.toContain(">Output</span>");
     expect(html).toContain("<code>prompt</code>");
     expect(html).toContain("&ldquo;same&rdquo;");
@@ -213,6 +215,7 @@ describe("pipeline run flow visualization", () => {
 
     expect(html).toContain('data-testid="pipeline-state-ledger"');
     expect(html).toContain('role="table"');
+    expect(html).toContain('aria-label="Inspect $.confidence value"');
     expect(html).toContain("$.confidence");
     expect(html).toContain("Review");
   });

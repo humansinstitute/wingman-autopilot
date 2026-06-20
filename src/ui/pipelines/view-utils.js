@@ -99,15 +99,14 @@ export function formatBytes(value) {
 }
 
 export function renderJsonBlock(title, value) {
-  const normalized = value === undefined ? {} : value;
   return `
     <section class="wm-pipeline-json-block" data-testid="pipeline-json-block">
       <div class="wm-pipeline-json-block-header">
         <h3>${escapeHtml(title)}</h3>
-        <span>${escapeHtml(describeJsonValue(normalized))}</span>
+        <span>${escapeHtml(describeJsonValue(value))}</span>
       </div>
       <div class="wm-pipeline-json-tree" data-testid="pipeline-json-tree">
-        ${renderJsonTreeNode("root", normalized, 0)}
+        ${renderJsonTreeNode("root", value, 0)}
       </div>
     </section>
   `;
