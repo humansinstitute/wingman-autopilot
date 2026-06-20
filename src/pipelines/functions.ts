@@ -2365,10 +2365,13 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const surfaceAliases = getStringArray(targetSurface.surfaces ?? targetSurface.sections ?? targetSurface.pages);
     const surface = getText(targetSurface.surface ?? targetSurface.section ?? targetSurface.name ?? targetSurface.page)
       ?? surfaceAliases[0]
+      ?? getText(targetSurface.behavior ?? targetSurface.feature ?? targetSurface.repo ?? targetSurface.localPath)
+      ?? getStringArray(targetSurface.behaviors ?? targetSurface.features)[0]
       ?? null;
     const existingFiles = [
       ...getStringArray(targetSurface.existingFiles ?? targetSurface.files),
       ...getStringArray(targetSurface.likelyFilesOrAreas ?? targetSurface.likelyFiles ?? targetSurface.fileAreas),
+      ...getStringArray(targetSurface.primaryFiles ?? targetSurface.primaryFilePaths ?? targetSurface.paths),
     ];
     const allowedFiles = getStringArray(targetSurface.allowedFiles);
     const forbidden = getStringArray(targetSurface.forbidden ?? targetSurface.forbiddenSurfaces);

@@ -790,6 +790,32 @@ describe("memory pipeline functions", () => {
     });
   });
 
+  test("dispatch.validateImplementationContract accepts software repo target surfaces", async () => {
+    await expect(builtinPipelineFunctions["dispatch.validateImplementationContract"]!({
+      createdTask: {
+        taskId: "task-word5",
+        workPlan: {
+          workdir: "/Users/mini/code/games/word5",
+          instructions: "Fix skipped game number streak handling.",
+          designDocumentUrl: "flightdeck-chat-thread://thread-1#message-1",
+          targetSurface: {
+            type: "software_repo",
+            repo: "https://github.com/humansinstitute/word5",
+            localPath: "/Users/mini/code/games/word5",
+            primaryFiles: ["index.html", "js/nostr-ui.js", "js/nostr-post.js"],
+            behaviors: ["local game completion streak update", "Nostr history reconstruction"],
+          },
+        },
+      },
+    })).resolves.toMatchObject({
+      ok: true,
+      targetSurface: {
+        surface: "https://github.com/humansinstitute/word5",
+        existingFiles: ["index.html", "js/nostr-ui.js", "js/nostr-post.js"],
+      },
+    });
+  });
+
   test("dispatch.ensureImplementationReviewTask normalises direct software loop input", async () => {
     const result = await builtinPipelineFunctions["dispatch.ensureImplementationReviewTask"]!({
       taskTitle: "Build the thing",
