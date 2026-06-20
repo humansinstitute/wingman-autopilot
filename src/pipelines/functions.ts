@@ -355,6 +355,13 @@ function resolveChatThreadDesignReference(input: JsonObject, workPlan: Record<st
   return `flightdeck-chat-thread://${threadId}${messageId ? `#${messageId}` : ""}`;
 }
 
+function extractTaskIdFromMention(value: unknown): string | null {
+  const text = getText(value);
+  if (!text) return null;
+  const match = text.match(/mention:task:([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})/i);
+  return match?.[1] ?? null;
+}
+
 function normaliseDispatchWorkPlanContext(
   input: JsonObject,
   options: {
@@ -366,7 +373,8 @@ function normaliseDispatchWorkPlanContext(
 ): JsonObject {
   const createdTask = objectValue(input.createdTask);
   const suppliedWorkPlan = objectValue(input.workPlan ?? createdTask.workPlan);
-  const taskId = getText(suppliedWorkPlan.taskId ?? input.taskId ?? createdTask.taskId);
+  const taskId = getText(suppliedWorkPlan.taskId ?? input.taskId ?? createdTask.taskId)
+    ?? extractTaskIdFromMention(suppliedWorkPlan.taskMention ?? input.taskMention);
   const taskTitle = getText(input.taskTitle ?? createdTask.title ?? suppliedWorkPlan.taskTitle ?? suppliedWorkPlan.taskSummary);
   const reporting = objectValue(suppliedWorkPlan.reporting ?? input.reporting ?? input.reportTarget);
   const hasFlightDeckDispatchContext = Object.keys(objectValue(input.dispatch)).length > 0

@@ -441,6 +441,113 @@
       "assign": "$.closeout"
     },
     {
+      "id": "reload-final-chat-thread",
+      "name": "reload-final-chat-thread",
+      "description": "Refresh the originating chat thread before composing the final response for chat-origin software runs.",
+      "type": "code",
+      "function": "dispatch.reloadChatThread",
+      "when": {
+        "path": "$.createdTask.workPlan.reporting.mode",
+        "equals": "chat_thread"
+      },
+      "input": {
+        "pick": {
+          "dispatch": "$.dispatch",
+          "workspace": "$.workspace",
+          "agent": "$.agent",
+          "record": "$.record",
+          "routing": "$.routing",
+          "runtime": "$.runtime",
+          "workPlan": "$.createdTask.workPlan"
+        }
+      },
+      "assign": "$.finalThreadContext"
+    },
+    {
+      "id": "mark-final-chat-response-drafting",
+      "name": "mark-final-chat-response-drafting",
+      "description": "Show that the software loop is writing the final chat-thread reply.",
+      "type": "code",
+      "function": "dispatch.setResponseActivity",
+      "when": {
+        "path": "$.createdTask.workPlan.reporting.mode",
+        "equals": "chat_thread"
+      },
+      "input": {
+        "value": {
+          "status": "drafting",
+          "label": "Writing a reply",
+          "expiresInSeconds": 300,
+          "metadata": {
+            "pipeline_definition_id": "software-implementation-review-loop",
+            "step": "final-chat-thread-response"
+          }
+        }
+      },
+      "assign": "$.responseActivity"
+    },
+    {
+      "id": "final-chat-thread-response",
+      "name": "final-chat-thread-response",
+      "description": "Compose the final conversational answer for chat-origin software runs.",
+      "type": "agent",
+      "agent": "$.reporterAgent",
+      "directory": "$.createdTask.workPlan.workdir",
+      "when": {
+        "path": "$.createdTask.workPlan.reporting.mode",
+        "equals": "chat_thread"
+      },
+      "input": {
+        "pick": {
+          "taskId": "$.createdTask.taskId",
+          "taskSummary": "$.createdTask.workPlan.taskSummary",
+          "originalPrompt": "$.createdTask.workPlan.originalPrompt",
+          "originThread": "$.createdTask.workPlan.originThread",
+          "reporting": "$.createdTask.workPlan.reporting",
+          "finalThreadMessages": "$.finalThreadContext.thread.recent_messages",
+          "done": "$.finalReport.done",
+          "status": "$.finalReport.status",
+          "summary": "$.finalReport.summary",
+          "taskUpdateComment": "$.finalReport.taskUpdateComment",
+          "designDocumentUrl": "$.finalReport.designDocumentUrl",
+          "workingDirectory": "$.finalReport.workingDirectory",
+          "git": "$.finalReport.git",
+          "validation": "$.finalReport.validation",
+          "remainingPickups": "$.finalReport.remainingPickups",
+          "nextActions": "$.finalReport.nextActions",
+          "managerDone": "$.managerReview.done",
+          "managerSummary": "$.managerReview.managerSummary",
+          "reviewLoop": "$.createdTask.reviewLoop"
+        }
+      },
+      "prompt": "You are the final response agent for a Wingman software pipeline.\n\nWrite the exact message that should be posted back into the originating Flight Deck chat thread. Review the original thread, refreshed thread context, work plan, worker output, manager review, git state, and validation evidence.\n\nRules:\n- Be conversational and direct.\n- Say what changed, where it changed, and what validation passed.\n- If the work is committed, include the commit hash.\n- If deployment was not performed, say that plainly.\n- Do not say only that work is ready for review.\n- Do not prefix the body with labels like Summary or Pipeline handoff.\n\nReturn JSON only:\n{\n  \"responseDraft\": \"the exact chat reply to post\",\n  \"body\": \"same reply text\",\n  \"summary\": \"short internal summary\",\n  \"confidence\": 0.0\n}",
+      "assign": "$.finalThreadResponse",
+      "timeoutMs": "$.reporterTimeoutMs"
+    },
+    {
+      "id": "publish-final-chat-response",
+      "name": "publish-final-chat-response",
+      "description": "Publish the final response back to the originating chat thread for chat-origin software runs.",
+      "type": "code",
+      "function": "dispatch.publishFlightDeckResponse",
+      "when": {
+        "path": "$.createdTask.workPlan.reporting.mode",
+        "equals": "chat_thread"
+      },
+      "input": {
+        "pick": {
+          "dispatch": "$.dispatch",
+          "workspace": "$.workspace",
+          "agent": "$.agent",
+          "record": "$.record",
+          "routing": "$.routing",
+          "runtime": "$.runtime",
+          "agentResponse": "$.finalThreadResponse"
+        }
+      },
+      "assign": "$.chatCloseout"
+    },
+    {
       "id": "clear-response-activity",
       "name": "clear-response-activity",
       "description": "Clear the originating Flight Deck response activity after the final response has been published.",

@@ -922,6 +922,31 @@ describe("memory pipeline functions", () => {
     });
   });
 
+  test("dispatch.ensureImplementationReviewTask recovers task id from task mention", async () => {
+    const result = await builtinPipelineFunctions["dispatch.ensureImplementationReviewTask"]!({
+      workPlan: {
+        taskMention: "@[Existing task](mention:task:127ec051-d7cc-4218-a480-d6b4dd7e0d6d)",
+        workdir: "/repo/project",
+        instructions: "Implement from the current chat thread.",
+        origin: {
+          triggerKind: "chat",
+          channelId: "channel-1",
+          threadId: "thread-1",
+          messageId: "message-1",
+        },
+        reporting: { mode: "chat_thread" },
+      },
+    });
+
+    expect(result).toMatchObject({
+      taskId: "127ec051-d7cc-4218-a480-d6b4dd7e0d6d",
+      workPlan: {
+        taskId: "127ec051-d7cc-4218-a480-d6b4dd7e0d6d",
+        reporting: { mode: "chat_thread" },
+      },
+    });
+  });
+
   test("dispatch.ensureImplementationReviewTask preserves Flight Deck reporting mode when dispatch context exists", async () => {
     const result = await builtinPipelineFunctions["dispatch.ensureImplementationReviewTask"]!({
       dispatch: { routeId: "route-1" },
@@ -1901,6 +1926,15 @@ describe("memory pipeline functions", () => {
     expect(JSON.stringify(spec)).toContain("$.createdTask.reviewLoop");
     expect(JSON.stringify(spec)).toContain("runtimeUpdate");
     expect(JSON.stringify(spec)).toContain("runtimeReview");
+    expect(spec.steps.find((step) => step.name === "final-chat-thread-response")).toMatchObject({
+      type: "agent",
+      when: { path: "$.createdTask.workPlan.reporting.mode", equals: "chat_thread" },
+    });
+    expect(spec.steps.find((step) => step.name === "publish-final-chat-response")).toMatchObject({
+      type: "code",
+      function: "dispatch.publishFlightDeckResponse",
+      when: { path: "$.createdTask.workPlan.reporting.mode", equals: "chat_thread" },
+    });
   });
 
   test("shared chat dispatch routes feature doc iteration to document discussion without task", async () => {
