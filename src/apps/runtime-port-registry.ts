@@ -3,26 +3,21 @@
  * Stores the dynamically detected port for each app after start/restart.
  */
 
-import { appendFileSync } from "node:fs";
-
-const ROUTING_LOG_PATH = "./tmp/logs-routing.log";
-
-function logRouting(message: string, data?: unknown): void {
-  const timestamp = new Date().toISOString();
-  const logLine = data
-    ? `[${timestamp}] [runtime-port-registry] ${message} ${JSON.stringify(data)}\n`
-    : `[${timestamp}] [runtime-port-registry] ${message}\n`;
-  try {
-    appendFileSync(ROUTING_LOG_PATH, logLine);
-  } catch {
-    // Ignore write errors
-  }
-}
-
 interface PortEntry {
   port: number;
   pid: number;
   updatedAt: string;
+}
+
+const DEFAULT_WINGMAN_PORT = 3600;
+
+function getWingmanServerPort(): number {
+  const parsed = Number.parseInt(Bun.env.PORT ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_WINGMAN_PORT;
+}
+
+export function isValidAppRuntimePort(port: number): boolean {
+  return Number.isInteger(port) && port > 0 && port !== getWingmanServerPort();
 }
 
 class RuntimePortRegistry {
@@ -32,7 +27,11 @@ class RuntimePortRegistry {
    * Set the runtime port for an app.
    * Overwrites any existing entry (newest wins).
    */
-  set(appId: string, port: number, pid: number): void {
+  set(appId: string, port: number, pid = 0): void {
+    if (!isValidAppRuntimePort(port)) {
+      console.warn(`[runtime-port-registry] Rejected invalid port ${port} for app ${appId}`);
+      return;
+    }
     this.ports.set(appId, {
       port,
       pid,
@@ -40,7 +39,6 @@ class RuntimePortRegistry {
     });
     const msg = `SET port ${port} for app ${appId} (pid ${pid})`;
     console.log(`[runtime-port-registry] ${msg}`);
-    logRouting(msg, { appId, port, pid });
   }
 
   /**

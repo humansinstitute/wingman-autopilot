@@ -6,24 +6,16 @@
  * Registry is the source of truth for app metadata.
  */
 
-import { appendFileSync } from "node:fs";
 import { listProcesses, type PM2ProcessDescription } from "../../agents/pm2-wrapper";
 import type { AppRegistry } from "../../apps/app-registry";
 import { runtimePortRegistry } from "../../apps/runtime-port-registry";
 import { getListeningPortForPid } from "../../utils/port-utils";
 
-const ROUTING_LOG_PATH = "./tmp/logs-routing.log";
-
 function logRouting(message: string, data?: unknown): void {
-  const timestamp = new Date().toISOString();
-  const logLine = data
-    ? `[${timestamp}] [pm2-reconcile] ${message} ${JSON.stringify(data)}\n`
-    : `[${timestamp}] [pm2-reconcile] ${message}\n`;
-  try {
-    appendFileSync(ROUTING_LOG_PATH, logLine);
-  } catch {
-    // Ignore write errors
+  if (Bun.env.WINGMAN_ROUTING_DEBUG !== "1") {
+    return;
   }
+  console.debug(data ? `[pm2-reconcile] ${message}` : `[pm2-reconcile] ${message}`, data ?? "");
 }
 
 /**
@@ -131,31 +123,35 @@ export async function reconcileAppsWithPM2(
       }
 
       // Register runtime port for running apps.
-      // Prefer detected listening port, then PM2 env PORT, then assigned app.webAppPort.
+      // Registered web apps have a stable assigned port injected as PORT when
+      // they start. Prefer that contract over PID port detection: PM2 can
+      // report wrapper/parent process information, and detection has produced
+      // Autopilot's own port, causing app subdomain proxy loops.
       if (pid) {
-        logRouting(`detecting port for app`, { appId, pid, pm2Port });
-        const detectedPort = await getListeningPortForPid(pid);
-        logRouting(`port detection result`, { appId, pid, detectedPort, pm2Port });
-        if (detectedPort) {
-          runtimePortRegistry.set(appId, detectedPort, pid);
-          logRouting(`registered detected port`, { appId, port: detectedPort, pid });
-        } else if (pm2Port) {
-          // Fallback to PM2 env PORT if detection failed
-          runtimePortRegistry.set(appId, pm2Port, pid);
-          logRouting(`registered fallback PM2 port`, { appId, port: pm2Port, pid });
-        } else if (app.webApp && app.webAppPort) {
+        if (app.webApp && app.webAppPort) {
           runtimePortRegistry.set(appId, app.webAppPort, pid);
-          logRouting(`registered fallback assigned web app port`, { appId, port: app.webAppPort, pid });
+          logRouting(`registered assigned web app port`, { appId, port: app.webAppPort, pid });
+        } else if (pm2Port) {
+          runtimePortRegistry.set(appId, pm2Port, pid);
+          logRouting(`registered PM2 env port`, { appId, port: pm2Port, pid });
         } else {
-          logRouting(`WARN: no port detected or in PM2 env`, { appId, pid });
+          logRouting(`detecting port for app`, { appId, pid, pm2Port });
+          const detectedPort = await getListeningPortForPid(pid);
+          logRouting(`port detection result`, { appId, pid, detectedPort, pm2Port });
+          if (detectedPort) {
+            runtimePortRegistry.set(appId, detectedPort, pid);
+            logRouting(`registered detected port`, { appId, port: detectedPort, pid });
+          } else {
+            logRouting(`WARN: no port detected or in PM2 env`, { appId, pid });
+          }
         }
       } else {
-        if (pm2Port) {
-          runtimePortRegistry.set(appId, pm2Port);
-          logRouting(`registered PM2 env port without PID`, { appId, port: pm2Port });
-        } else if (app.webApp && app.webAppPort) {
+        if (app.webApp && app.webAppPort) {
           runtimePortRegistry.set(appId, app.webAppPort);
           logRouting(`registered assigned web app port without PID`, { appId, port: app.webAppPort });
+        } else if (pm2Port) {
+          runtimePortRegistry.set(appId, pm2Port);
+          logRouting(`registered PM2 env port without PID`, { appId, port: pm2Port });
         } else {
           logRouting(`WARN: no PID for running app`, { appId });
         }

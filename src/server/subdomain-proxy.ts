@@ -1,21 +1,13 @@
-import { appendFileSync } from "node:fs";
 import { appAliasRegistry } from "../apps/app-alias-registry";
 import { appRegistry } from "../apps/app-registry";
 import { appProcessManager } from "../apps/app-process-manager";
-import { runtimePortRegistry } from "../apps/runtime-port-registry";
-
-const ROUTING_LOG_PATH = "./tmp/logs-routing.log";
+import { isValidAppRuntimePort, runtimePortRegistry } from "../apps/runtime-port-registry";
 
 function logRouting(message: string, data?: unknown): void {
-  const timestamp = new Date().toISOString();
-  const logLine = data
-    ? `[${timestamp}] ${message} ${JSON.stringify(data)}\n`
-    : `[${timestamp}] ${message}\n`;
-  try {
-    appendFileSync(ROUTING_LOG_PATH, logLine);
-  } catch {
-    // Ignore write errors
+  if (Bun.env.WINGMAN_ROUTING_DEBUG !== "1") {
+    return;
   }
+  console.debug(data ? `[subdomain-proxy] ${message}` : `[subdomain-proxy] ${message}`, data ?? "");
 }
 
 /**
@@ -66,7 +58,7 @@ export const extractSubdomainAlias = (
 
 export type ResolveAliasResult =
   | { success: true; port: number; appId: string }
-  | { success: false; reason: "alias_not_found" | "app_not_found" | "app_not_running" | "port_not_registered"; alias: string; appId?: string; status?: string };
+  | { success: false; reason: "alias_not_found" | "app_not_found" | "app_not_running" | "port_not_registered" | "invalid_runtime_port"; alias: string; appId?: string; status?: string; port?: number };
 
 /**
  * Resolve an alias to a running app's port.
@@ -102,13 +94,22 @@ export const resolveAliasToPort = async (
     return { success: false, reason: "app_not_running", alias, appId: aliasRecord.appId, status: status.status };
   }
 
-  // Get port from runtime registry (dynamically detected when app started)
-  const port = runtimePortRegistry.get(aliasRecord.appId);
-  const allPorts = Object.fromEntries(runtimePortRegistry.getAll());
-  logRouting(`runtime port lookup`, { alias, appId: aliasRecord.appId, port, allRegisteredPorts: allPorts });
+  // Registered web apps have assigned ports. Prefer that stable contract over
+  // transient PM2 runtime data, which can report Autopilot's own server port.
+  const registeredPort = runtimePortRegistry.get(aliasRecord.appId);
+  const assignedPort = app.webApp && typeof app.webAppPort === "number" && app.webAppPort > 0
+    ? app.webAppPort
+    : null;
+  const port = assignedPort ?? registeredPort;
+  logRouting(`runtime port lookup`, { alias, appId: aliasRecord.appId, registeredPort, assignedPort, port });
   if (port === null) {
     logRouting(`FAIL: port not in runtime registry`, { alias, appId: aliasRecord.appId });
     return { success: false, reason: "port_not_registered", alias, appId: aliasRecord.appId };
+  }
+  if (!isValidAppRuntimePort(port)) {
+    runtimePortRegistry.clear(aliasRecord.appId);
+    logRouting(`FAIL: invalid app runtime port`, { alias, appId: aliasRecord.appId, port });
+    return { success: false, reason: "invalid_runtime_port", alias, appId: aliasRecord.appId, port };
   }
 
   logRouting(`SUCCESS: resolved alias to port`, { alias, appId: aliasRecord.appId, port });
@@ -279,6 +280,7 @@ export const handleSubdomainRequest = async (
       app_not_found: `App ID ${resolved.appId} not found in registry.`,
       app_not_running: `App is not running (status: ${resolved.status}).`,
       port_not_registered: `App is running but port not detected. Try restarting the app.`,
+      invalid_runtime_port: `App resolved to an invalid runtime port (${resolved.port}). Restart the app so its assigned port can be registered.`,
     };
     console.warn(`[subdomain-proxy] ${alias}: ${resolved.reason}`, resolved);
     return new Response(

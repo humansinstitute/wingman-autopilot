@@ -361,6 +361,7 @@ const handlePathBasedAppRequest = async (
       app_not_found: `App ID ${resolved.appId} not found in registry.`,
       app_not_running: `App is not running (status: ${resolved.status}).`,
       port_not_registered: `App is running but port not detected. Try restarting the app.`,
+      invalid_runtime_port: `App resolved to an invalid runtime port (${resolved.port}). Restart the app so its assigned port can be registered.`,
     };
     console.warn(`[path-proxy] ${alias}: ${resolved.reason}`, resolved);
     return new Response(

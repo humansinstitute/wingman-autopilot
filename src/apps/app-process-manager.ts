@@ -465,7 +465,10 @@ export class AppProcessManager {
       try {
         const runtimeInfo = await getProcessRuntimeInfo(app.pm2Name);
         if (runtimeInfo) {
-          status.runtimePort = runtimeInfo.port;
+          status.runtimePort =
+            app.webApp && typeof app.webAppPort === "number" && app.webAppPort > 0
+              ? app.webAppPort
+              : runtimeInfo.port;
           status.pid = runtimeInfo.pid;
           status.memory = runtimeInfo.memory;
         }
