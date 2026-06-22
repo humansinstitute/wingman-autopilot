@@ -77,11 +77,16 @@ export function resolveFlightDeckPgConfig(input: {
   sessionId?: string | null;
   fetchImpl?: typeof fetch;
 }): FlightDeckPgClientConfig {
-  const towerUrl = normaliseBackendBaseUrl(input.towerUrl || Bun.env.TOWER_URL || Bun.env.FLIGHTDECK_TOWER_URL || 'http://127.0.0.1:3000');
-  const wingmanUrl = normaliseBackendBaseUrl(input.wingmanUrl || Bun.env.WINGMAN_URL || 'http://127.0.0.1:3600');
-  const appNpub = (input.appNpub || Bun.env.FLIGHTDECK_APP_NPUB || Bun.env.WINGMAN_NPUB || Bun.env.BOT_NPUB || '').trim();
+  const towerUrlRaw = (input.towerUrl || Bun.env.TOWER_URL || Bun.env.FLIGHTDECK_TOWER_URL || '').trim();
+  if (!towerUrlRaw) {
+    throw new Error('Missing Flight Deck PG Tower URL. Pass --tower-url or set TOWER_URL/FLIGHTDECK_TOWER_URL from the active Flight Deck PG dispatch context.');
+  }
+  const towerUrl = normaliseBackendBaseUrl(towerUrlRaw);
+  const wingmanUrlRaw = (input.wingmanUrl || Bun.env.WINGMAN_URL || '').trim();
+  const wingmanUrl = wingmanUrlRaw ? normaliseBackendBaseUrl(wingmanUrlRaw) : '';
+  const appNpub = (input.appNpub || Bun.env.FLIGHTDECK_APP_NPUB || '').trim();
   if (!appNpub) {
-    throw new Error('Missing Flight Deck app npub. Set FLIGHTDECK_APP_NPUB, WINGMAN_NPUB, or pass --app-npub.');
+    throw new Error('Missing Flight Deck app npub. Pass --app-npub or set FLIGHTDECK_APP_NPUB from the active Flight Deck PG dispatch context; do not use the bot npub.');
   }
   return {
     towerUrl,
@@ -373,6 +378,9 @@ export class FlightDeckPgClient {
   }
 
   private async callWingmanHelper(action: string, params: Record<string, unknown> = {}) {
+    if (!this.config.wingmanUrl) {
+      throw new Error('Missing Wingman URL for Flight Deck PG dispatch context. Pass --url or set WINGMAN_URL.');
+    }
     const response = await this.fetchImpl(`${this.config.wingmanUrl}/api/mcp/wingman/flightdeck`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

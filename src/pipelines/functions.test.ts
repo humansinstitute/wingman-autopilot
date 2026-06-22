@@ -1896,7 +1896,7 @@ describe("memory pipeline functions", () => {
     expect(String(spec.steps.find((step) => step.name === "dispatch-agent")?.prompt)).toContain("<workdir>/tmp/flightdeck-docs");
     expect(String(spec.steps.find((step) => step.name === "dispatch-agent")?.prompt)).toContain("channelContext.contextPrompt as high-information channel/project policy");
     expect(String(spec.steps.find((step) => step.name === "dispatch-agent")?.prompt)).toContain("Search local project roots for an obvious single match");
-    expect(String(spec.steps.find((step) => step.name === "dispatch-agent")?.prompt)).toContain("Never use agent.workingDirectory when it is under data/agent-chat-workspaces");
+    expect(String(spec.steps.find((step) => step.name === "dispatch-agent")?.prompt)).toContain("Never use agentWorkingDirectory when it is under data/agent-chat-workspaces");
     expect(String(spec.steps.find((step) => step.name === "dispatch-agent")?.prompt)).toContain("return action clarify and ask for the target project/repo");
     expect(spec.steps.map((step) => step.name)).not.toContain("select-task-pipeline");
     expect(spec.steps.map((step) => step.name)).not.toContain("normalise-task-pipeline-selection");

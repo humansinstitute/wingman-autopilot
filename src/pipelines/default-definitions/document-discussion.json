@@ -63,10 +63,16 @@
       "directory": "$.agent.workingDirectory",
       "input": {
         "pick": {
-          "discussionContext": "$.discussionContext"
+          "latestThread": "$.discussionContext.latestThread",
+          "channelId": "$.discussionContext.source.channelId",
+          "threadId": "$.discussionContext.source.threadId",
+          "messageId": "$.discussionContext.source.messageId",
+          "requesterNpub": "$.discussionContext.source.requesterNpub",
+          "channelContext": "$.discussionContext.channelContext",
+          "referencedRecords": "$.discussionContext.referencedRecords"
         }
       },
-      "prompt": "You are loading context for a no-task Flight Deck document discussion. Use discussionContext.latestThread as authoritative. Inspect discussionContext.referencedRecords, mentions, attachments, and any visible document/comment ids. If a document id is available, use Wingman/Autopilot Flight Deck helpers exposed in the agent runtime to read it. Do not run Yoke, do not sync a Yoke workspace, and do not use runtime.commandPrefix for Flight Deck PG work. If no current Flight Deck helper is available for a referenced document or comment, summarize what is visible in the provided context and mark the missing helper in loadNotes. Do not create a Flight Deck task and do not reply to chat; a deterministic follow-up step will create or reuse the working document when supported.\n\nReturn compact JSON only:\n{\n  \"documentLoaded\": true,\n  \"documentId\": \"id or null\",\n  \"documentTitle\": \"title or null\",\n  \"documentUrl\": \"url or null\",\n  \"documentSummary\": \"current document summary or null\",\n  \"commentsLoaded\": true,\n  \"comments\": [{\"commentId\":\"\", \"authorNpub\":\"\", \"body\":\"\", \"status\":\"\", \"location\":\"\"}],\n  \"discussionGoal\": \"what the user wants to decide or improve\",\n  \"constraints\": [\"visible constraints\"],\n  \"openQuestions\": [\"unknowns before editing\"],\n  \"loadNotes\": \"short note on how context was found\"\n}",
+      "prompt": "You are loading context for a no-task Flight Deck document discussion. Use latestThread as authoritative. Inspect referencedRecords, mentions, attachments, and any visible document/comment ids. If a document id is available, use Wingman/Autopilot Flight Deck helpers exposed in the agent runtime to read it. Do not run Yoke, do not sync a Yoke workspace, and do not use runtime.commandPrefix for Flight Deck PG work. If no current Flight Deck helper is available for a referenced document or comment, summarize what is visible in the provided context and mark the missing helper in loadNotes. Do not create a Flight Deck task and do not reply to chat; a deterministic follow-up step will create or reuse the working document when supported.\n\nReturn compact JSON only:\n{\n  \"documentLoaded\": true,\n  \"documentId\": \"id or null\",\n  \"documentTitle\": \"title or null\",\n  \"documentUrl\": \"url or null\",\n  \"documentSummary\": \"current document summary or null\",\n  \"commentsLoaded\": true,\n  \"comments\": [{\"commentId\":\"\", \"authorNpub\":\"\", \"body\":\"\", \"status\":\"\", \"location\":\"\"}],\n  \"discussionGoal\": \"what the user wants to decide or improve\",\n  \"constraints\": [\"visible constraints\"],\n  \"openQuestions\": [\"unknowns before editing\"],\n  \"loadNotes\": \"short note on how context was found\"\n}",
       "assign": "$.documentContext",
       "timeoutMs": 600000
     },
@@ -96,13 +102,20 @@
       "directory": "$.agent.workingDirectory",
       "input": {
         "pick": {
-          "discussionContext": "$.discussionContext",
-          "documentContext": "$.documentContext",
-          "discussionDocument": "$.discussionDocument",
-          "runtime": "$.discussionContext.runtime"
+          "latestThread": "$.discussionContext.latestThread",
+          "channelId": "$.discussionContext.source.channelId",
+          "threadId": "$.discussionContext.source.threadId",
+          "messageId": "$.discussionContext.source.messageId",
+          "documentId": "$.discussionDocument.documentId",
+          "documentTitle": "$.discussionDocument.documentTitle",
+          "documentSummary": "$.documentContext.documentSummary",
+          "comments": "$.documentContext.comments",
+          "discussionGoal": "$.documentContext.discussionGoal",
+          "constraints": "$.documentContext.constraints",
+          "openQuestions": "$.documentContext.openQuestions"
         }
       },
-      "prompt": "You are the document update step for a no-task planning/design discussion. Use discussionContext.latestThread as authoritative and discussionDocument.documentId as the working Flight Deck document. If the latest thread makes a concrete document change useful, update that document only through Wingman/Autopilot Flight Deck helpers exposed in the agent runtime. Do not run Yoke, do not sync a Yoke workspace, and do not use runtime.commandPrefix for Flight Deck PG work. Keep edits narrowly scoped to the discussion goal. If no current Flight Deck helper is available to update the document, do not claim it was updated; return updated false with the missing helper in summary. If the user is only asking a question or there is not enough context, leave the scaffold as-is. Do not create a Flight Deck task and do not reply to chat.\n\nReturn compact JSON only:\n{\n  \"updated\": true,\n  \"documentId\": \"id or null\",\n  \"changedSections\": [\"section or line references\"],\n  \"summary\": \"what changed or why no edit was made\",\n  \"remainingConcerns\": [\"concerns after update\"],\n  \"confidence\": 0.0\n}",
+      "prompt": "You are the document update step for a no-task planning/design discussion. Use latestThread as authoritative and documentId as the working Flight Deck document. If the latest thread makes a concrete document change useful, update that document only through Wingman/Autopilot Flight Deck helpers exposed in the agent runtime. Do not run Yoke, do not sync a Yoke workspace, and do not use runtime.commandPrefix for Flight Deck PG work. Keep edits narrowly scoped to discussionGoal and constraints. If no current Flight Deck helper is available to update the document, do not claim it was updated; return updated false with the missing helper in summary. If the user is only asking a question or there is not enough context, leave the scaffold as-is. Do not create a Flight Deck task and do not reply to chat.\n\nReturn compact JSON only:\n{\n  \"updated\": true,\n  \"documentId\": \"id or null\",\n  \"changedSections\": [\"section or line references\"],\n  \"summary\": \"what changed or why no edit was made\",\n  \"remainingConcerns\": [\"concerns after update\"],\n  \"confidence\": 0.0\n}",
       "assign": "$.documentUpdate",
       "timeoutMs": 900000
     },
@@ -115,9 +128,12 @@
       "directory": "$.agent.workingDirectory",
       "input": {
         "pick": {
-          "discussionContext": "$.discussionContext",
-          "documentContext": "$.documentContext",
-          "discussionDocument": "$.discussionDocument",
+          "latestThread": "$.discussionContext.latestThread",
+          "documentId": "$.discussionDocument.documentId",
+          "documentTitle": "$.discussionDocument.documentTitle",
+          "documentSummary": "$.documentContext.documentSummary",
+          "discussionGoal": "$.documentContext.discussionGoal",
+          "constraints": "$.documentContext.constraints",
           "documentUpdate": "$.documentUpdate"
         }
       },
@@ -134,14 +150,17 @@
       "directory": "$.agent.workingDirectory",
       "input": {
         "pick": {
-          "discussionContext": "$.discussionContext",
-          "documentContext": "$.documentContext",
-          "discussionDocument": "$.discussionDocument",
+          "latestThread": "$.discussionContext.latestThread",
+          "documentId": "$.discussionDocument.documentId",
+          "documentTitle": "$.discussionDocument.documentTitle",
+          "documentMention": "$.discussionDocument.documentMention",
+          "documentStatus": "$.discussionDocument.status",
+          "discussionGoal": "$.documentContext.discussionGoal",
           "documentUpdate": "$.documentUpdate",
           "documentReview": "$.documentReview"
         }
       },
-      "prompt": "You are wm21 replying in a Flight Deck chat thread after a no-task document discussion. Be concise and concrete. Link the working document using discussionDocument.documentMention. Mention whether the document was created, reused, or updated, summarize the review against the goal, and ask the next useful question when one exists. Do not mention internal pipeline mechanics. Do not create or refer to a task.\n\nReturn compact JSON only:\n{\n  \"shouldRespond\": true,\n  \"responseDraft\": \"message to send to the chat thread, including the working document mention\",\n  \"reasoningSummary\": \"private summary of why this response fits\",\n  \"documentUpdated\": true,\n  \"nextUsefulQuestion\": \"question or null\",\n  \"confidence\": 0.0\n}",
+      "prompt": "You are wm21 replying in a Flight Deck chat thread after a no-task document discussion. Be concise and concrete. Link the working document using documentMention. Mention whether the document was created, reused, or updated, summarize the review against the goal, and ask the next useful question when one exists. Do not mention internal pipeline mechanics. Do not create or refer to a task.\n\nReturn compact JSON only:\n{\n  \"shouldRespond\": true,\n  \"responseDraft\": \"message to send to the chat thread, including the working document mention\",\n  \"reasoningSummary\": \"private summary of why this response fits\",\n  \"documentUpdated\": true,\n  \"nextUsefulQuestion\": \"question or null\",\n  \"confidence\": 0.0\n}",
       "assign": "$.agentResponse",
       "timeoutMs": 600000
     },

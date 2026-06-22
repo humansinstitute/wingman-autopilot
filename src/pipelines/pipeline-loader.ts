@@ -223,20 +223,24 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
       when: { path: "$.decision.dispatchAgent", equals: true },
       input: {
         pick: {
-          dispatch: "$.dispatch",
-          workspace: "$.workspace",
-          agent: "$.agent",
-          chat: "$.chat",
-          record: "$.record",
-          routing: "$.routing",
-          runtime: "$.runtime",
-          chatContext: "$.chatContext",
-          chatDispatchInput: "$.chatDispatchInput",
+          latestThread: "$.chatDispatchInput.latestThread",
+          channelContext: "$.chatDispatchInput.channelContext",
+          referencedRecords: "$.chatDispatchInput.referencedRecords",
+          scopes: "$.chatDispatchInput.scopes",
+          workspaceId: "$.workspace.workspaceId",
+          workspaceOwnerNpub: "$.workspace.workspaceOwnerNpub",
+          humanWorkspaceOwnerNpub: "$.workspace.humanWorkspaceOwnerNpub",
+          sourceAppNpub: "$.workspace.sourceAppNpub",
+          channelId: "$.chatDispatchInput.source.channelId",
+          threadId: "$.chatDispatchInput.source.threadId",
+          messageId: "$.chatDispatchInput.source.messageId",
+          requesterNpub: "$.chatDispatchInput.source.requesterNpub",
+          agentWorkingDirectory: "$.agent.workingDirectory",
+          defaultAgent: "$.agent.defaultAgent",
           decision: "$.decision",
-          flightDeckContext: "$.flightDeckContext",
         },
       },
-      prompt: "You are the Wingman chat dispatch agent. The fast classifier decided this thread needs a real agent. Read the selected input carefully, using chatDispatchInput.latestThread as the latest user-visible thread and channelContext.contextPrompt as high-information channel/project policy, not generic decoration. You may inspect current Autopilot/Flight Deck/Tower/session state, local project directories, or repo files if needed. Do small bounded work directly in this agent when possible, especially status checks, current state reviews, available Wingman session checks, simple tool lookups, and concise reports. Do not create a task or start do-and-review just to inspect current state. If you need clarification, return action clarify with a single question; the pipeline will publish it and stop. If you can answer after inspection, return action reply with chatResponse.body. If structured long-running work is needed, return action start_pipeline and choose software-implementation-review-loop, research-and-report, do-and-review, or document-discussion. Set createTask true only when durable Flight Deck task tracking is genuinely useful. If the request requires more than one independent structured work package, set pipelinesRequired true and return pipelines: [{requirementId, pipeline, payload}]. requirementId must be stable and unique per requirement, such as flight-deck-ui or tower-api. Do not use pipelinesRequired for a single job. Each payload is specific to that pipeline and must include the complete contract for that requirement. For software-implementation-review-loop payloads, build a real contract: workdir must be a real repo from the high-information channel/project context, an obvious local directory match, or explicit user request. Search local project roots for an obvious single match when the channel context names a project but does not include a literal path. Never use agent.workingDirectory when it is under data/agent-chat-workspaces; if no clear repo path is available, return action clarify and ask for the target project/repo. instructions must be concrete, and targetSurface must identify route/surface/files/selectors/visualReferences. Copy Flight Deck docs and storage/image assets into the target repo under <workdir>/tmp/flightdeck-docs/<short-run-or-doc-name>.md plus a sibling .assets directory using `bun clis/wingman.ts flightdeck doc download <doc-ref> --workspace <workspace-id> --out <workdir>/tmp/flightdeck-docs/<name>.md --json` or the wingmancli equivalent. Do not store imported Flight Deck source snapshots in docs/imp; docs/imp is only for authored implementation docs when explicitly requested. Include designDocument.localPath/sourceRef and downloaded visualReferences, or explain missing assets in clarifyingQuestion if the assets are required. Never pass only Flight Deck URLs to worker context. Return JSON only with: action reply|clarify|start_pipeline|ignore, chatResponse {body:string|null}, clarifyingQuestion string|null, recommendedPipelineId string|null, createTask boolean, pipelinesRequired boolean, pipelines array|null, taskDraft object|null, workPlan object|null, confidence number.",
+      prompt: "You are the Wingman chat dispatch agent. The fast classifier decided this thread needs a real agent. Read the selected input carefully, using latestThread as the latest user-visible thread and channelContext.contextPrompt as high-information channel/project policy, not generic decoration. You may inspect current Autopilot/Flight Deck/Tower/session state, local project directories, or repo files if needed. Do small bounded work directly in this agent when possible, especially status checks, current state reviews, available Wingman session checks, simple tool lookups, and concise reports. Do not create a task or start do-and-review just to inspect current state. If you need clarification, return action clarify with a single question; the pipeline will publish it and stop. If you can answer after inspection, return action reply with chatResponse.body. If structured long-running work is needed, return action start_pipeline and choose software-implementation-review-loop, research-and-report, do-and-review, or document-discussion. Set createTask true only when durable Flight Deck task tracking is genuinely useful. If the request requires more than one independent structured work package, set pipelinesRequired true and return pipelines: [{requirementId, pipeline, payload}]. requirementId must be stable and unique per requirement, such as flight-deck-ui or tower-api. Do not use pipelinesRequired for a single job. Each payload is specific to that pipeline and must include the complete contract for that requirement. For software-implementation-review-loop payloads, build a real contract: workdir must be a real repo from the high-information channel/project context, an obvious local directory match, or explicit user request. Search local project roots for an obvious single match when the channel context names a project but does not include a literal path. Never use agentWorkingDirectory when it is under data/agent-chat-workspaces; if no clear repo path is available, return action clarify and ask for the target project/repo. instructions must be concrete, and targetSurface must identify route/surface/files/selectors/visualReferences. Copy Flight Deck docs and storage/image assets into the target repo under <workdir>/tmp/flightdeck-docs/<short-run-or-doc-name>.md plus a sibling .assets directory using `bun clis/wingman.ts flightdeck doc download <doc-ref> --workspace <workspaceId> --out <workdir>/tmp/flightdeck-docs/<name>.md --json` or the wingmancli equivalent. Do not store imported Flight Deck source snapshots in docs/imp; docs/imp is only for authored implementation docs when explicitly requested. Include designDocument.localPath/sourceRef and downloaded visualReferences, or explain missing assets in clarifyingQuestion if the assets are required. Never pass only Flight Deck URLs to worker context. Return JSON only with: action reply|clarify|start_pipeline|ignore, chatResponse {body:string|null}, clarifyingQuestion string|null, recommendedPipelineId string|null, createTask boolean, pipelinesRequired boolean, pipelines array|null, taskDraft object|null, workPlan object|null, confidence number.",
       assign: "$.agentWorkDecision",
       display: {
         in: [
@@ -490,15 +494,21 @@ const AGENT_DISPATCH_TASK_DEFINITION = {
       directory: "$.agent.workingDirectory",
       input: {
         pick: {
-          workspace: "$.workspace",
-          agent: "$.agent",
-          record: "$.record",
-          routing: "$.routing",
-          runtime: "$.runtime",
-          flightDeckContext: "$.flightDeckContext",
+          workspaceId: "$.workspace.workspaceId",
+          workspaceOwnerNpub: "$.workspace.workspaceOwnerNpub",
+          sourceAppNpub: "$.workspace.sourceAppNpub",
+          taskId: "$.record.payload.task_id",
+          taskTitle: "$.record.payload.title",
+          taskDescription: "$.record.payload.description",
+          taskState: "$.record.payload.state",
+          assignedTo: "$.record.payload.assigned_to",
+          bindingId: "$.routing.bindingId",
+          bindingType: "$.routing.bindingType",
+          changedFields: "$.routing.changedFields",
+          channelContext: "$.flightDeckContext.channel",
         },
       },
-      prompt: "You are stage 1 of a Wingman task intake delegator. Do an initial investigation from the task payload, flightDeckContext.channel.contextPrompt, and available runtime context, then choose the origin-agnostic child work pipeline. Treat flightDeckContext.channel.contextPrompt as channel-specific instructions for how this task should be handled. Choose workStyle as software_implementation for repo/code/build/test/deployment work, research_and_report for durable research that should produce a cited report or document, or do_and_review for generic operational, planning, writing, or artifact work. Do not choose dispatch, chat, comment, intake, or document-discussion pipelines. Return JSON fields: accepted boolean, workStyle string, taskSummary string, initialFindings array, executionPlan array, managerChecklist array, taskUpdatePlan array, risks array, confidence number from 0 to 1. The executionPlan must explicitly say when the child worker and manager should update the Flight Deck task.",
+      prompt: "You are stage 1 of a Wingman task intake delegator. Do an initial investigation from the selected task fields and channelContext.contextPrompt, then choose the origin-agnostic child work pipeline. Treat channelContext.contextPrompt as channel-specific instructions for how this task should be handled. Choose workStyle as software_implementation for repo/code/build/test/deployment work, research_and_report for durable research that should produce a cited report or document, or do_and_review for generic operational, planning, writing, or artifact work. Do not choose dispatch, chat, comment, intake, or document-discussion pipelines. Return JSON fields: accepted boolean, workStyle string, taskSummary string, initialFindings array, executionPlan array, managerChecklist array, taskUpdatePlan array, risks array, confidence number from 0 to 1. The executionPlan must explicitly say when the child worker and manager should update the Flight Deck task.",
       assign: "$.agentResponse",
       display: {
         in: [
@@ -692,12 +702,26 @@ const DO_AND_REVIEW_DEFINITION = {
       "timeoutMs": 1200000,
       "input": {
         "pick": {
-          "createdTask": "$.workContext.createdTask",
-          "workPlan": "$.workContext.workPlan",
-          "workerResult": "$.workerResult"
+          "taskId": "$.workContext.createdTask.taskId",
+          "taskSummary": "$.workContext.workPlan.taskSummary",
+          "instructions": "$.workContext.workPlan.instructions",
+          "acceptanceCriteria": "$.workContext.workPlan.acceptanceCriteria",
+          "executionPlan": "$.workContext.workPlan.executionPlan",
+          "managerChecklist": "$.workContext.workPlan.managerChecklist",
+          "originalPrompt": "$.workContext.workPlan.originalPrompt",
+          "originThread": "$.workContext.workPlan.originThread",
+          "referencedRecords": "$.workContext.workPlan.referencedRecords",
+          "reporting": "$.workContext.workPlan.reporting",
+          "workerCompleted": "$.workerResult.completed",
+          "workerSummary": "$.workerResult.summary",
+          "workerSources": "$.workerResult.sources",
+          "workerEvidence": "$.workerResult.evidence",
+          "workerOutput": "$.workerResult.result",
+          "workerBlockers": "$.workerResult.blockers",
+          "taskUpdateComment": "$.workerResult.taskUpdateComment"
         }
       },
-      "prompt": "You are the manager reviewer in a Wingman do-and-review pipeline. Use only the selected input: createdTask, workPlan, and workerResult. Check workerResult against workPlan.instructions, workPlan.acceptanceCriteria, workPlan.executionPlan, workPlan.managerChecklist, originalPrompt, originThread, referencedRecords, and reporting mode. Verify sources/evidence are sufficient and decide whether the work is complete. If workPlan asks to answer or respond to Flight Deck document comments, require evidence that actual comment-thread replies were created with parent_comment_id pointing at the original comment ids; a document-body section alone is not sufficient unless workPlan explicitly requested that instead. If workerResult.completed is false because information is missing, review the best-effort result as a handoffable partial outcome: set accepted according to whether the worker honestly used available context, put missing information or limitations in requiredChanges/risks, and rely on workerResult.taskUpdateComment for final feedback. For Flight Deck task runs, the deterministic pipeline closeout updates the task to review and assigns it to the requester. For direct runs, return the review as the pipeline result. Return JSON fields: accepted boolean, taskSummary string, reviewSummary string, executionPlan array, managerChecklist array, requiredChanges array, risks array, confidence number.",
+      "prompt": "You are the manager reviewer in a Wingman do-and-review pipeline. Use only the selected input. Check the worker fields against instructions, acceptanceCriteria, executionPlan, managerChecklist, originalPrompt, originThread, referencedRecords, and reporting. Verify sources/evidence are sufficient and decide whether the work is complete. If instructions ask to answer or respond to Flight Deck document comments, require evidence that actual comment-thread replies were created with parent_comment_id pointing at the original comment ids; a document-body section alone is not sufficient unless instructions explicitly requested that instead. If workerCompleted is false because information is missing, review the best-effort result as a handoffable partial outcome: set accepted according to whether the worker honestly used available context, put missing information or limitations in requiredChanges/risks, and rely on taskUpdateComment for final feedback. For Flight Deck task runs, the deterministic pipeline closeout updates the task to review and assigns it to the requester. For direct runs, return the review as the pipeline result. Return JSON fields: accepted boolean, taskSummary string, reviewSummary string, executionPlan array, managerChecklist array, requiredChanges array, risks array, confidence number.",
       "assign": "$.agentResponse"
     },
     {
@@ -731,11 +755,21 @@ const DO_AND_REVIEW_DEFINITION = {
       "timeoutMs": 600000,
       "input": {
         "pick": {
-          "createdTask": "$.workContext.createdTask",
-          "workPlan": "$.workContext.workPlan",
-          "finalThreadContext": "$.finalThreadContext",
-          "workerResult": "$.workerResult",
-          "agentResponse": "$.agentResponse"
+          "taskId": "$.workContext.createdTask.taskId",
+          "taskSummary": "$.workContext.workPlan.taskSummary",
+          "originalPrompt": "$.workContext.workPlan.originalPrompt",
+          "originThread": "$.workContext.workPlan.originThread",
+          "reporting": "$.workContext.workPlan.reporting",
+          "finalThreadMessages": "$.finalThreadContext.thread.recent_messages",
+          "workerCompleted": "$.workerResult.completed",
+          "workerSummary": "$.workerResult.summary",
+          "workerOutput": "$.workerResult.result",
+          "workerBlockers": "$.workerResult.blockers",
+          "workerEvidence": "$.workerResult.evidence",
+          "reviewAccepted": "$.agentResponse.accepted",
+          "reviewSummary": "$.agentResponse.reviewSummary",
+          "requiredChanges": "$.agentResponse.requiredChanges",
+          "risks": "$.agentResponse.risks"
         }
       },
       "prompt": "You are the final response agent for a Wingman pipeline.\n\nYour job is to write the message that will be posted back into the originating Flight Deck thread. Review the original thread, any refreshed thread context, the task/work plan, new worker output, manager review, and any artifacts created by the pipeline.\n\nRules:\n- Be conversational. Write as a direct reply in the thread, not as pipeline telemetry.\n- Be complete. Answer the user's actual question/request using the work that was just completed.\n- If there is a Flight Deck document, WApp, file, or other user-accessible artifact, include the mention/link. Do not make Pete hunt through internal task records.\n- Do not make an internal task the main artifact unless it is the only durable place the result exists.\n- Do not say only that work is \"ready for review\"; summarise or present the useful output.\n- Do not prefix the body with labels like \"Summary:\", \"Task:\", \"Assigned back to:\", or \"Pipeline handoff:\".\n- If the work is incomplete or assumptions matter, say that plainly.\n- If a follow-up question would materially improve the outcome, ask one focused question. If there is an obvious next step, suggest it.\n\nReturn JSON only:\n{\n  \"body\": \"the exact chat reply to post\",\n  \"summary\": \"short internal summary\",\n  \"artifacts\": [{\"type\":\"document|wapp|file|task|other\", \"label\":\"\", \"mentionOrUrl\":\"\"}],\n  \"followUpQuestion\": \"question or null\",\n  \"confidence\": 0.0\n}",
@@ -867,12 +901,21 @@ const RESEARCH_AND_REPORT_DEFINITION = {
       "timeoutMs": 1800000,
       "input": {
         "pick": {
-          "createdTask": "$.workContext.createdTask",
-          "workPlan": "$.workContext.workPlan",
-          "researchResult": "$.researchResult"
+          "taskId": "$.workContext.createdTask.taskId",
+          "taskSummary": "$.workContext.workPlan.taskSummary",
+          "instructions": "$.workContext.workPlan.instructions",
+          "acceptanceCriteria": "$.workContext.workPlan.acceptanceCriteria",
+          "reporting": "$.workContext.workPlan.reporting",
+          "researchQuestion": "$.researchResult.researchQuestion",
+          "findings": "$.researchResult.findings",
+          "sources": "$.researchResult.sources",
+          "contradictions": "$.researchResult.contradictions",
+          "openQuestions": "$.researchResult.openQuestions",
+          "evidence": "$.researchResult.evidence",
+          "blockers": "$.researchResult.blockers"
         }
       },
-      "prompt": "You are the report writer in a Wingman research-and-report pipeline. Use only the selected input: createdTask, workPlan, and researchResult. Turn researchResult into a concise report. Create or verify a Flight Deck report document only when workPlan.reporting.mode is flightdeck_task and current Wingman/Autopilot Flight Deck helpers are available in the runtime. Do not run Yoke, do not sync a Yoke workspace, and do not use commandPrefix for Flight Deck PG work. Do not run task update, task comment, chat reply, chat reply-current, docs comment, or any command that changes task state, task comments, document comments, or chat messages. The deterministic Flight Deck closeout step owns task state, task comment, and chat handoff publishing for Flight Deck task runs; direct runs should return the report in the pipeline result. Include source links/citations and limitations. Do not hide uncertainty. Return JSON fields: completed boolean, reportTitle string, reportSummary string, reportBody string, documentId string|null, sources array, blockers array, taskUpdateComment string, confidence number.",
+      "prompt": "You are the report writer in a Wingman research-and-report pipeline. Use only the selected input. Turn the research fields into a concise report. Create or verify a Flight Deck report document only when reporting.mode is flightdeck_task and current Wingman/Autopilot Flight Deck helpers are available in the runtime. Do not run Yoke, do not sync a Yoke workspace, and do not use commandPrefix for Flight Deck PG work. Do not run task update, task comment, chat reply, chat reply-current, docs comment, or any command that changes task state, task comments, document comments, or chat messages. The deterministic Flight Deck closeout step owns task state, task comment, and chat handoff publishing for Flight Deck task runs; direct runs should return the report in the pipeline result. Include source links/citations and limitations. Do not hide uncertainty. Return JSON fields: completed boolean, reportTitle string, reportSummary string, reportBody string, documentId string|null, sources array, blockers array, taskUpdateComment string, confidence number.",
       "assign": "$.workerResult"
     },
     {
@@ -883,13 +926,28 @@ const RESEARCH_AND_REPORT_DEFINITION = {
       "timeoutMs": 1200000,
       "input": {
         "pick": {
-          "createdTask": "$.workContext.createdTask",
-          "workPlan": "$.workContext.workPlan",
-          "researchResult": "$.researchResult",
-          "workerResult": "$.workerResult"
+          "taskId": "$.workContext.createdTask.taskId",
+          "taskSummary": "$.workContext.workPlan.taskSummary",
+          "instructions": "$.workContext.workPlan.instructions",
+          "acceptanceCriteria": "$.workContext.workPlan.acceptanceCriteria",
+          "managerChecklist": "$.workContext.workPlan.managerChecklist",
+          "originalPrompt": "$.workContext.workPlan.originalPrompt",
+          "originThread": "$.workContext.workPlan.originThread",
+          "referencedRecords": "$.workContext.workPlan.referencedRecords",
+          "reporting": "$.workContext.workPlan.reporting",
+          "researchQuestion": "$.researchResult.researchQuestion",
+          "findings": "$.researchResult.findings",
+          "sources": "$.researchResult.sources",
+          "openQuestions": "$.researchResult.openQuestions",
+          "reportTitle": "$.workerResult.reportTitle",
+          "reportSummary": "$.workerResult.reportSummary",
+          "reportBody": "$.workerResult.reportBody",
+          "reportDocumentId": "$.workerResult.documentId",
+          "workerBlockers": "$.workerResult.blockers",
+          "taskUpdateComment": "$.workerResult.taskUpdateComment"
         }
       },
-      "prompt": "You are the manager reviewer in a Wingman research-and-report pipeline. Use only the selected input: createdTask, workPlan, researchResult, and workerResult. Check the research notes and report against workPlan.instructions, workPlan.acceptanceCriteria, workPlan.managerChecklist, originalPrompt, originThread, referencedRecords, and reporting mode. Verify that sources, limitations, and open questions are represented. For Flight Deck task runs, the deterministic pipeline closeout updates the task to review and assigns it to the requester. For direct runs, return the reviewed research report as the pipeline result. Return JSON fields: accepted boolean, taskSummary string, reviewSummary string, requiredChanges array, risks array, confidence number.",
+      "prompt": "You are the manager reviewer in a Wingman research-and-report pipeline. Use only the selected input. Check the research notes and report against instructions, acceptanceCriteria, managerChecklist, originalPrompt, originThread, referencedRecords, and reporting. Verify that sources, limitations, and open questions are represented. For Flight Deck task runs, the deterministic pipeline closeout updates the task to review and assigns it to the requester. For direct runs, return the reviewed research report as the pipeline result. Return JSON fields: accepted boolean, taskSummary string, reviewSummary string, requiredChanges array, risks array, confidence number.",
       "assign": "$.agentResponse"
     },
     {
@@ -923,12 +981,22 @@ const RESEARCH_AND_REPORT_DEFINITION = {
       "timeoutMs": 600000,
       "input": {
         "pick": {
-          "createdTask": "$.workContext.createdTask",
-          "workPlan": "$.workContext.workPlan",
-          "finalThreadContext": "$.finalThreadContext",
-          "researchResult": "$.researchResult",
-          "workerResult": "$.workerResult",
-          "agentResponse": "$.agentResponse"
+          "taskId": "$.workContext.createdTask.taskId",
+          "taskSummary": "$.workContext.workPlan.taskSummary",
+          "originalPrompt": "$.workContext.workPlan.originalPrompt",
+          "originThread": "$.workContext.workPlan.originThread",
+          "reporting": "$.workContext.workPlan.reporting",
+          "finalThreadMessages": "$.finalThreadContext.thread.recent_messages",
+          "researchQuestion": "$.researchResult.researchQuestion",
+          "reportTitle": "$.workerResult.reportTitle",
+          "reportSummary": "$.workerResult.reportSummary",
+          "reportDocumentId": "$.workerResult.documentId",
+          "reportSources": "$.workerResult.sources",
+          "workerBlockers": "$.workerResult.blockers",
+          "reviewAccepted": "$.agentResponse.accepted",
+          "reviewSummary": "$.agentResponse.reviewSummary",
+          "requiredChanges": "$.agentResponse.requiredChanges",
+          "risks": "$.agentResponse.risks"
         }
       },
       "prompt": "You are the final response agent for a Wingman pipeline.\n\nYour job is to write the message that will be posted back into the originating Flight Deck thread. Review the original thread, any refreshed thread context, the task/work plan, new worker output, manager review, and any artifacts created by the pipeline.\n\nRules:\n- Be conversational. Write as a direct reply in the thread, not as pipeline telemetry.\n- Be complete. Answer the user's actual question/request using the work that was just completed.\n- If there is a Flight Deck document, WApp, file, or other user-accessible artifact, include the mention/link. Do not make Pete hunt through internal task records.\n- Do not make an internal task the main artifact unless it is the only durable place the result exists.\n- Do not say only that work is \"ready for review\"; summarise or present the useful output.\n- Do not prefix the body with labels like \"Summary:\", \"Task:\", \"Assigned back to:\", or \"Pipeline handoff:\".\n- If the work is incomplete or assumptions matter, say that plainly.\n- If a follow-up question would materially improve the outcome, ask one focused question. If there is an obvious next step, suggest it.\n\nReturn JSON only:\n{\n  \"body\": \"the exact chat reply to post\",\n  \"summary\": \"short internal summary\",\n  \"artifacts\": [{\"type\":\"document|wapp|file|task|other\", \"label\":\"\", \"mentionOrUrl\":\"\"}],\n  \"followUpQuestion\": \"question or null\",\n  \"confidence\": 0.0\n}",
@@ -1008,14 +1076,20 @@ const AGENT_DISPATCH_COMMENT_DEFINITION = {
       directory: "$.agent.workingDirectory",
       input: {
         pick: {
-          workspace: "$.workspace",
-          agent: "$.agent",
-          record: "$.record",
-          routing: "$.routing",
-          flightDeckContext: "$.flightDeckContext",
+          workspaceId: "$.workspace.workspaceId",
+          workspaceOwnerNpub: "$.workspace.workspaceOwnerNpub",
+          sourceAppNpub: "$.workspace.sourceAppNpub",
+          commentId: "$.record.payload.commentId",
+          targetRecordId: "$.record.payload.targetRecordId",
+          targetRecordFamilyHash: "$.record.payload.targetRecordFamilyHash",
+          commentBody: "$.record.payload.body",
+          senderNpub: "$.record.payload.senderNpub",
+          bindingId: "$.routing.bindingId",
+          bindingType: "$.routing.bindingType",
+          channelContext: "$.flightDeckContext.channel",
         },
       },
-      prompt: "You are handling a Wingman comment dispatch. Read the comment payload and flightDeckContext.channel.contextPrompt, then draft a reply for the existing comment thread. Treat flightDeckContext.channel.contextPrompt as channel-specific instructions for how this document/task comment should be handled. Do not run CLI commands or APIs that mutate Flight Deck state yourself; the next deterministic Flight Deck PG/Tower pipeline step will publish the reply. Return JSON fields: replyDraft string, targetNeedsWork boolean, blockers array, nextAction string, confidence number from 0 to 1.",
+      prompt: "You are handling a Wingman comment dispatch. Read commentBody and channelContext.contextPrompt, then draft a reply for the existing comment thread. Treat channelContext.contextPrompt as channel-specific instructions for how this document/task comment should be handled. Do not run CLI commands or APIs that mutate Flight Deck state yourself; the next deterministic Flight Deck PG/Tower pipeline step will publish the reply. Return JSON fields: replyDraft string, targetNeedsWork boolean, blockers array, nextAction string, confidence number from 0 to 1.",
       assign: "$.agentResponse",
       display: {
         in: [
@@ -1194,11 +1268,8 @@ export async function ensurePipelineDirectories(ownerAlias: string | null): Prom
   const softwareImplementationReviewLoopDefinition = await readBundledDefaultDefinition("software-implementation-review-loop.json");
   const dailyNoteReviewDefinition = await readBundledDefaultDefinition("daily-note-review.json");
   const defaultDefinitions = [
-    ["agent-dispatch-chat.json", AGENT_DISPATCH_CHAT_DEFINITION],
     ["fd-agent-dispatch-chat.json", buildFlightDeckPgDefaultDefinition(AGENT_DISPATCH_CHAT_DEFINITION as unknown as DeclarativePipeline, "fd-agent-dispatch-chat")],
-    ["agent-dispatch-task-response.json", AGENT_DISPATCH_TASK_DEFINITION],
     ["fd-agent-dispatch-task-response.json", buildFlightDeckPgDefaultDefinition(AGENT_DISPATCH_TASK_DEFINITION as unknown as DeclarativePipeline, "fd-agent-dispatch-task-response")],
-    ["agent-dispatch-comment-response.json", AGENT_DISPATCH_COMMENT_DEFINITION],
     ["fd-agent-dispatch-comment-response.json", buildFlightDeckPgDefaultDefinition(AGENT_DISPATCH_COMMENT_DEFINITION as unknown as DeclarativePipeline, "fd-agent-dispatch-comment-response")],
     ["design-review.json", DESIGN_REVIEW_DEFINITION],
     ["document-discussion.json", documentDiscussionDefinition],

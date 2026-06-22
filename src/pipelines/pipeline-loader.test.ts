@@ -66,11 +66,11 @@ describe("pipeline definition version paths", () => {
   });
 
   test("resolves seeded dispatch definitions by stable slug", async () => {
-    const definition = await getPipelineDefinition("agent-dispatch-chat", "tester");
+    const definition = await getPipelineDefinition("fd-agent-dispatch-chat", "tester");
 
     expect(definition?.id.startsWith("shared:")).toBe(true);
-    expect(definition?.slug).toBe("agent-dispatch-chat");
-    expect(definition?.name).toBe("agent-dispatch-chat");
+    expect(definition?.slug).toBe("fd-agent-dispatch-chat");
+    expect(definition?.name).toBe("fd-agent-dispatch-chat");
     expect(definition?.spec.steps.map((step) => step.name)).toEqual([
       "mark-response-thinking",
       "hydrate-chat-context",
@@ -176,12 +176,12 @@ describe("pipeline definition version paths", () => {
   });
 
   test("skips invalid definition files instead of failing the whole definitions list", async () => {
-    await getPipelineDefinition("agent-dispatch-chat", "tester");
+    await getPipelineDefinition("fd-agent-dispatch-chat", "tester");
     writeFileSync(join(getSharedPipelineDefinitionsDirectory(), "broken.json"), "{ not valid json\n");
 
     const definitions = await listLatestPipelineDefinitions("tester");
 
-    expect(definitions.some((definition) => definition.slug === "agent-dispatch-chat")).toBe(true);
+    expect(definitions.some((definition) => definition.slug === "fd-agent-dispatch-chat")).toBe(true);
     expect(definitions.some((definition) => definition.slug === "broken")).toBe(false);
   });
 
@@ -260,9 +260,18 @@ describe("pipeline definition version paths", () => {
     );
     expect(research?.spec.steps.find((step) => step.name === "report-writer")?.input).toEqual({
       pick: {
-        createdTask: "$.workContext.createdTask",
-        workPlan: "$.workContext.workPlan",
-        researchResult: "$.researchResult",
+        taskId: "$.workContext.createdTask.taskId",
+        taskSummary: "$.workContext.workPlan.taskSummary",
+        instructions: "$.workContext.workPlan.instructions",
+        acceptanceCriteria: "$.workContext.workPlan.acceptanceCriteria",
+        reporting: "$.workContext.workPlan.reporting",
+        researchQuestion: "$.researchResult.researchQuestion",
+        findings: "$.researchResult.findings",
+        sources: "$.researchResult.sources",
+        contradictions: "$.researchResult.contradictions",
+        openQuestions: "$.researchResult.openQuestions",
+        evidence: "$.researchResult.evidence",
+        blockers: "$.researchResult.blockers",
       },
     });
   });

@@ -18,6 +18,8 @@ describe('flightdeck pg cli', () => {
     delete Bun.env.FLIGHTDECK_APP_NPUB;
     delete Bun.env.AGENT_NSEC;
     delete Bun.env.WINGMAN_NSEC;
+    delete Bun.env.WINGMAN_NPUB;
+    delete Bun.env.BOT_NPUB;
   });
 
   afterEach(() => {
@@ -74,6 +76,70 @@ describe('flightdeck pg cli', () => {
     expect(JSON.parse(result.stdout || '{}').tasks[0].id).toBe('task-1');
   });
 
+  test('requires an explicit Tower URL instead of defaulting to local Tower', async () => {
+    const result = await runFlightDeckPgCli([
+      'tasks',
+      'list',
+      '--workspace',
+      'workspace-1',
+      '--channel',
+      'channel-1',
+      '--json',
+      '--key',
+      testKey,
+      '--app-npub',
+      'npub1app',
+    ]);
+
+    expect(result.exitCode).toBe(1);
+    const payload = JSON.parse(result.stderr || '{}');
+    expect(payload.error).toContain('Missing Flight Deck PG Tower URL');
+  });
+
+  test('requires the Flight Deck app npub instead of falling back to the bot npub', async () => {
+    Bun.env.BOT_NPUB = 'npub1bot';
+    Bun.env.WINGMAN_NPUB = 'npub1wingman';
+
+    const result = await runFlightDeckPgCli([
+      'tasks',
+      'list',
+      '--workspace',
+      'workspace-1',
+      '--channel',
+      'channel-1',
+      '--json',
+      '--key',
+      testKey,
+      '--tower-url',
+      'http://tower.test',
+    ]);
+
+    expect(result.exitCode).toBe(1);
+    const payload = JSON.parse(result.stderr || '{}');
+    expect(payload.error).toContain('Missing Flight Deck app npub');
+    expect(payload.error).toContain('do not use the bot npub');
+  });
+
+  test('requires an explicit Wingman URL when hydrating dispatch context', async () => {
+    Bun.env.SESSION_ID = 'session-1';
+
+    const result = await runFlightDeckPgCli([
+      'task',
+      'show',
+      '--json',
+      '--key',
+      testKey,
+      '--app-npub',
+      'npub1app',
+      '--tower-url',
+      'http://tower.test',
+    ]);
+
+    expect(result.exitCode).toBe(1);
+    const payload = JSON.parse(result.stderr || '{}');
+    expect(payload.error).toContain('Missing Wingman URL');
+  });
+
   test('workspace task list without channel or scope fails as route gap', async () => {
     const result = await runFlightDeckPgCli([
       'tasks',
@@ -85,6 +151,8 @@ describe('flightdeck pg cli', () => {
       testKey,
       '--app-npub',
       'npub1app',
+      '--tower-url',
+      'http://tower.test',
     ]);
 
     expect(result.exitCode).toBe(1);

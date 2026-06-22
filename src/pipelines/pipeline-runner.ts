@@ -1099,29 +1099,20 @@ ${JSON.stringify(input.selectedInput, null, 2)}
 
 Completion contract:
 - You are not complete until the webhook returns HTTP 200.
-- POST exactly one JSON object to this local callback URL:
+- POST exactly one JSON object to:
   ${input.callbackUrl}
-- Include this header:
-  x-wingmen-pipeline-token: ${input.callbackToken}
-- Body shape:
+- Header: x-wingmen-pipeline-token: ${input.callbackToken}
+- Body:
   {
     "runId": "${input.runId}",
     "stepId": "${input.stepId}",
     "status": "ok",
     "result": {}
   }
-- status must be "ok", "needs_input", or "error".
-- result must always be a JSON object.
-- Do not send a "status": "error" callback for transport failures, auth failures, probes, or retries. If the webhook fails, fix the URL/header/payload and retry the final step result until it returns HTTP 200.
-- Only use "status": "error" when the actual pipeline step cannot be completed.
-- If selected input includes documentUrl, use that reference to locate, read, and edit the document directly when the step asks you to modify it.
-- Do not include the full document text in the callback JSON. Return structured summary fields, changed line/section references, comment IDs, and status metadata only.
-
-Example:
-curl -sS -X POST '${input.callbackUrl}' \\
-	  -H 'content-type: application/json' \\
-	  -H 'x-wingmen-pipeline-token: ${input.callbackToken}' \\
-	  -d '{"runId":"${input.runId}","stepId":"${input.stepId}","status":"ok","result":{"answer":"..."}}'`;
+- status must be "ok", "needs_input", or "error"; result must be a JSON object.
+- Use "error" only when the step itself cannot be completed. For transport/auth/probe failures, fix the request and retry until HTTP 200.
+- If selected input includes documentUrl and the step asks for document edits, use that reference directly.
+- Do not include full document text in result; return concise summary fields, changed sections/lines, comment IDs, and status metadata only.`;
 }
 
 async function waitForCallbackResult(
