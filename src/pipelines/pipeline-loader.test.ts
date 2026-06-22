@@ -72,7 +72,6 @@ describe("pipeline definition version paths", () => {
     expect(definition?.slug).toBe("fd-agent-dispatch-chat");
     expect(definition?.name).toBe("fd-agent-dispatch-chat");
     expect(definition?.spec.steps.map((step) => step.name)).toEqual([
-      "mark-response-thinking",
       "hydrate-chat-context",
       "prepare-intent-input",
       "prepare-short-lookup-answer",
@@ -82,6 +81,8 @@ describe("pipeline definition version paths", () => {
       "normalise-agent-work-decision",
       "route-discussion-chat",
       "prepare-task-pipeline-input",
+      "select-task-pipeline",
+      "normalise-task-pipeline-selection",
       "create-in-progress-task",
       "start-selected-pipeline",
       "start-required-pipelines",
@@ -107,13 +108,13 @@ describe("pipeline definition version paths", () => {
       when: { path: "$.decision.dispatchAgent", equals: true },
     });
     expect(JSON.stringify(definition?.spec.steps.find((step) => step.name === "analyse-intent"))).toContain(
-      "Classify only as answer_now, agent, or ignore",
+      "Classify only as answer_now, think_then_answer, create_task, or ignore",
     );
     expect(JSON.stringify(definition?.spec.steps.find((step) => step.name === "analyse-intent"))).toContain(
-      "Do not plan work",
+      "Do not choose child pipelines",
     );
-    expect(definition?.spec.steps.map((step) => step.name)).not.toContain("select-task-pipeline");
-    expect(definition?.spec.steps.map((step) => step.name)).not.toContain("normalise-task-pipeline-selection");
+    expect(definition?.spec.steps.map((step) => step.name)).toContain("select-task-pipeline");
+    expect(definition?.spec.steps.map((step) => step.name)).toContain("normalise-task-pipeline-selection");
     expect(JSON.stringify(definition?.spec.steps.find((step) => step.name === "analyse-intent"))).toContain(
       "chatDispatchInput.channelContext.contextPrompt",
     );

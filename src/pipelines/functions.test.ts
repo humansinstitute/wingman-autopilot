@@ -370,7 +370,7 @@ test("morning Daily Scope extraction preserves completed items and caps checklis
   expect(result.parkedItems.length).toBeGreaterThan(0);
 });
 
-function executableChatDispatchSpec(agentDecision: JsonObject, agentWorkDecision: JsonObject): DeclarativePipeline {
+function executableChatDispatchSpec(agentDecision: JsonObject, agentWorkDecision: JsonObject, taskPipelineDecision: JsonObject): DeclarativePipeline {
   const spec = structuredClone(loadSharedPipelineSpec("agent-dispatch-chat.json")) as DeclarativePipeline;
   spec.steps = spec.steps.map((step) => {
     if (step.name === "analyse-intent") {
@@ -393,6 +393,16 @@ function executableChatDispatchSpec(agentDecision: JsonObject, agentWorkDecision
         when: step.when,
       };
     }
+    if (step.name === "select-task-pipeline") {
+      return {
+        name: step.name,
+        description: step.description,
+        type: "code",
+        function: "test.taskPipelineDecision",
+        assign: step.assign,
+        when: step.when,
+      };
+    }
     return step;
   });
   return {
@@ -401,6 +411,7 @@ function executableChatDispatchSpec(agentDecision: JsonObject, agentWorkDecision
       ...spec.input,
       testAgentDecision: agentDecision,
       testAgentWorkDecision: agentWorkDecision,
+      testTaskPipelineDecision: taskPipelineDecision,
     },
   };
 }
@@ -418,6 +429,11 @@ async function runChatDispatchSpec(input: {
     chatResponse: { body: "I checked that and can answer directly." },
     confidence: 0.9,
   };
+  const taskPipelineDecision = {
+    recommendedPipelineId: "do-and-review",
+    workdir: "/repo",
+    confidence: 0.9,
+  };
   const definition: PipelineDefinitionRecord = {
     id: "shared:test-agent-dispatch-chat",
     slug: "agent-dispatch-chat",
@@ -425,13 +441,14 @@ async function runChatDispatchSpec(input: {
     scope: "shared",
     ownerAlias: null,
     path: join(tempPipelineRoot ?? tmpdir(), "shared", "definitions", "agent-dispatch-chat.json"),
-    spec: executableChatDispatchSpec(input.agentDecision, agentWorkDecision),
+    spec: executableChatDispatchSpec(input.agentDecision, agentWorkDecision, taskPipelineDecision),
   };
   const store = new PipelineStore(join(tmpdir(), `wingmen-chat-dispatch-${randomUUID()}.sqlite`));
   const registry = {
     ...builtinPipelineFunctions,
     "test.agentDecision": async (selected: JsonObject) => selected.testAgentDecision as JsonObject,
     "test.agentWorkDecision": async (selected: JsonObject) => selected.testAgentWorkDecision as JsonObject,
+    "test.taskPipelineDecision": async (selected: JsonObject) => selected.testTaskPipelineDecision as JsonObject,
     "dispatch.setResponseActivity": async (selected: JsonObject) => ({
       status: selected.status ?? "ok",
       label: selected.label ?? null,
@@ -571,6 +588,7 @@ async function runChatDispatchSpec(input: {
     input: {
       testAgentDecision: input.agentDecision,
       testAgentWorkDecision: agentWorkDecision,
+      testTaskPipelineDecision: taskPipelineDecision,
       dispatch: { triggerKind: "chat" },
       workspace: { workspaceOwnerNpub: "npub1owner", sourceAppNpub: "npub1source" },
       agent: input.agent ?? { workingDirectory: "/repo", defaultAgent: "codex" },
@@ -1332,7 +1350,7 @@ describe("memory pipeline functions", () => {
       ],
     });
     expect(result).not.toHaveProperty("validChildPipelines");
-    expect(result.notes).toContain("Classify only as answer_now, agent, or ignore.");
+    expect(result.notes).toContain("Classify only as answer_now, think_then_answer, create_task, or ignore.");
     expect(JSON.stringify(result)).not.toContain("commandPrefix");
     expect(JSON.stringify(result)).not.toContain("group_ids");
     expect(JSON.stringify(result)).not.toContain("l1_id");
@@ -1633,7 +1651,7 @@ describe("memory pipeline functions", () => {
       },
     ]);
     expect(result).not.toHaveProperty("validChildPipelines");
-    expect(result.notes).toContain("Use agent when any answer requires inspecting sessions, logs, pipelines, files, projects, Tower/Flight Deck state, Autopilot runtime state, task creation, or child pipeline dispatch before reporting back.");
+    expect(result.notes).toContain("Use create_task only for durable output such as code, docs, files, WApp changes, migrations, configuration, or other concrete artifacts.");
   });
 
   test("dispatch.prepareChatTaskPipelineInput loads task pipeline candidates after create_task", async () => {
@@ -1835,7 +1853,6 @@ describe("memory pipeline functions", () => {
     const spec = loadSharedPipelineSpec("agent-dispatch-chat.json");
     const names = spec.steps.map((step) => step.name);
     expect(names).toEqual([
-      "mark-response-thinking",
       "hydrate-chat-context",
       "prepare-intent-input",
       "prepare-short-lookup-answer",
@@ -1845,6 +1862,8 @@ describe("memory pipeline functions", () => {
       "normalise-agent-work-decision",
       "route-discussion-chat",
       "prepare-task-pipeline-input",
+      "select-task-pipeline",
+      "normalise-task-pipeline-selection",
       "create-in-progress-task",
       "start-selected-pipeline",
       "start-required-pipelines",
@@ -1862,23 +1881,14 @@ describe("memory pipeline functions", () => {
     expect(functions).toContain("dispatch.prepareShortLookupAnswer");
     expect(functions).toContain("dispatch.normaliseChatAgentWorkDecision");
     expect(functions).toContain("dispatch.prepareChatTaskPipelineInput");
-    expect(functions).not.toContain("dispatch.normaliseChatTaskPipelineSelection");
+    expect(functions).toContain("dispatch.normaliseChatTaskPipelineSelection");
     expect(spec.steps.find((step) => step.name === "analyse-intent")).toMatchObject({
       type: "classifier",
       provider: "openrouter",
       model: "openai/gpt-oss-120b:nitro",
       retries: 3,
     });
-    expect(spec.steps.find((step) => step.name === "mark-response-thinking")).toMatchObject({
-      type: "code",
-      input: {
-        value: {
-          status: "thinking",
-          label: "Thinking",
-          expiresInSeconds: 90,
-        },
-      },
-    });
+    expect(spec.steps.map((step) => step.name)).not.toContain("mark-response-thinking");
     expect(spec.steps.find((step) => step.name === "mark-response-drafting")).toMatchObject({
       type: "code",
       input: {
@@ -1893,13 +1903,14 @@ describe("memory pipeline functions", () => {
       type: "agent",
       when: { path: "$.decision.dispatchAgent", equals: true },
     });
-    expect(String(spec.steps.find((step) => step.name === "dispatch-agent")?.prompt)).toContain("<workdir>/tmp/flightdeck-docs");
     expect(String(spec.steps.find((step) => step.name === "dispatch-agent")?.prompt)).toContain("channelContext.contextPrompt as high-information channel/project policy");
-    expect(String(spec.steps.find((step) => step.name === "dispatch-agent")?.prompt)).toContain("Search local project roots for an obvious single match");
-    expect(String(spec.steps.find((step) => step.name === "dispatch-agent")?.prompt)).toContain("Never use agentWorkingDirectory when it is under data/agent-chat-workspaces");
-    expect(String(spec.steps.find((step) => step.name === "dispatch-agent")?.prompt)).toContain("return action clarify and ask for the target project/repo");
-    expect(spec.steps.map((step) => step.name)).not.toContain("select-task-pipeline");
-    expect(spec.steps.map((step) => step.name)).not.toContain("normalise-task-pipeline-selection");
+    expect(String(spec.steps.find((step) => step.name === "dispatch-agent")?.prompt)).toContain("final output should still be a chat reply");
+    expect(String(spec.steps.find((step) => step.name === "dispatch-agent")?.prompt)).toContain("Do not choose child pipelines in this step");
+    expect(String(spec.steps.find((step) => step.name === "analyse-intent")?.prompt)).toContain("answer_now|think_then_answer|create_task|ignore");
+    expect(spec.steps.find((step) => step.name === "select-task-pipeline")).toMatchObject({
+      type: "classifier",
+      when: { path: "$.decision.taskRoutingPending", equals: true },
+    });
 
     const prepare = spec.steps.find((step) => step.name === "prepare-chat-response");
     expect(prepare?.input).toEqual({

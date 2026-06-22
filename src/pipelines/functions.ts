@@ -1764,10 +1764,12 @@ export const builtinPipelineFunctions: FunctionRegistry = {
         "Use latestThread as the authoritative current conversation.",
         "Use channelContext.contextPrompt as channel-specific instructions for how this work should be handled.",
         "Use referencedRecords only as supporting Flight Deck context.",
-        "Classify only as answer_now, agent, or ignore.",
+        "Classify only as answer_now, think_then_answer, create_task, or ignore.",
         "Use answer_now only when chatResponse.body is the complete final reply.",
-        "Use agent when any answer requires inspecting sessions, logs, pipelines, files, projects, Tower/Flight Deck state, Autopilot runtime state, task creation, or child pipeline dispatch before reporting back.",
-        "Do not create a task draft or choose a child pipeline in this stage.",
+        "Use think_then_answer when the final output is still a chat answer but needs reasoning, context loading, lookup, or multiple internal steps.",
+        "Use create_task only for durable output such as code, docs, files, WApp changes, migrations, configuration, or other concrete artifacts.",
+        "For create_task, provide a compact taskDraft with title, instructions, acceptanceCriteria, executionPlan, and managerChecklist when enough information is available.",
+        "Do not choose a child pipeline in this stage.",
       ],
     };
   },
@@ -2632,19 +2634,19 @@ export const builtinPipelineFunctions: FunctionRegistry = {
       ?? getText(raw.responseDraft)
       ?? getText(raw.replyDraft)
       ?? getText(raw.answer);
-    if (recognisedIntent === "agent") {
+    if (recognisedIntent === "agent" || (recognisedIntent === "think_then_answer" && !chatResponseBody)) {
       return {
         dispatchAgent: true,
         dispatchTask: false,
         dispatchPipeline: false,
         requestedDispatchTask: false,
-        intent: "agent",
+        intent: recognisedIntent === "agent" ? "agent" : "think_then_answer",
         pipelineDefinitionId: null,
         scopeId: null,
         workdir: null,
         missing: [],
         clarifyingQuestion: null,
-        responseDraft: chatResponseBody ?? "I’ll take a look.",
+        responseDraft: chatResponseBody ?? "I’ll think this through and answer here.",
         shouldRespond: false,
         taskRoutingPending: false,
         taskDraft: {
@@ -3172,6 +3174,10 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     return {
       ...decision,
       dispatchTask: shouldDispatchTask,
+      dispatchPipeline: false,
+      pipelinesRequired: false,
+      dispatchSingleTaskPipeline: shouldDispatchTask,
+      dispatchSingleDirectPipeline: false,
       pipelineDefinitionId: shouldDispatchTask ? pipelineDefinitionId : null,
       scopeId: shouldDispatchTask ? getText(raw.scopeId ?? decision.scopeId) : null,
       workdir: shouldDispatchTask ? workdir : null,
