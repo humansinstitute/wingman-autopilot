@@ -47,6 +47,23 @@ function createPipelineJob(store: SchedulerStore): ScheduledJob {
   });
 }
 
+function createCleanupJob(store: SchedulerStore): ScheduledJob {
+  return store.createJob({
+    name: "cleanup job",
+    userNpub: "npub-user",
+    botNpub: "",
+    wrappedKeyCiphertext: "",
+    wrappedKeyNonce: "",
+    agent: "codex",
+    workingDirectory: "",
+    initialPrompt: "",
+    nightwatchmanEnabled: false,
+    triggerType: "cron",
+    cronExpression: "* * * * *",
+    actionType: "cleanup",
+  });
+}
+
 function createEngine(
   store: SchedulerStore,
   runPipeline: NonNullable<SchedulerEngineDeps["runPipeline"]>,
@@ -61,6 +78,23 @@ function createEngine(
     dispatchPrompt: () => {},
     getInstanceIdentity: () => identity,
     runPipeline,
+  });
+}
+
+function createCleanupEngine(
+  store: SchedulerStore,
+  cleanupStopNextActionSessions: NonNullable<SchedulerEngineDeps["cleanupStopNextActionSessions"]>,
+): SchedulerEngine {
+  return new SchedulerEngine({
+    store,
+    nightWatchStore: {} as NightWatchStore,
+    createSession: async () => {
+      throw new Error("cleanup jobs should not create sessions");
+    },
+    addPrompt: () => {},
+    dispatchPrompt: () => {},
+    cleanupStopNextActionSessions,
+    getInstanceIdentity: () => null,
   });
 }
 
@@ -105,6 +139,41 @@ describe("SchedulerEngine pipeline job bookkeeping", () => {
       pipelineRunId: "pipeline-error",
       sessionId: null,
       errorMessage: "pipeline failed",
+    });
+  });
+});
+
+describe("SchedulerEngine cleanup jobs", () => {
+  test("runs next-action cleanup without requiring an instance identity", async () => {
+    const store = new SchedulerStore(join(tempDir, "wingman.db"));
+    const job = createCleanupJob(store);
+    const engine = createCleanupEngine(store, async (cleanupJob) => {
+      expect(cleanupJob.id).toBe(job.id);
+      return {
+        checked: 3,
+        matched: 2,
+        stopped: 2,
+        archiveScheduled: 2,
+        failed: 0,
+      };
+    });
+
+    await expect(engine.executeJob(job.id)).resolves.toEqual({
+      cleanup: {
+        checked: 3,
+        matched: 2,
+        stopped: 2,
+        archiveScheduled: 2,
+        failed: 0,
+      },
+    });
+
+    const completedRun = store.getJobRuns(job.id, 1)[0];
+    expect(completedRun).toMatchObject({
+      status: "success",
+      pipelineRunId: null,
+      sessionId: null,
+      errorMessage: null,
     });
   });
 });

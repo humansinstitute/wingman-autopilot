@@ -42,6 +42,7 @@ import { messageStore } from "./storage/message-store";
 import type { SessionMetadataInput } from "./sessions/session-metadata";
 import { scheduleSessionArchive, cancelPendingArchive } from "./storage/session-archiver";
 import { sessionArchiveStore } from "./storage/session-archive-store";
+import { cleanupStopNextActionSessions } from "./sessions/next-action-cleanup";
 import { PromptQueueStore } from "./storage/prompt-queue-store";
 import { fileWatcherStore } from "./storage/file-watcher-store";
 import {
@@ -551,6 +552,10 @@ const schedulerEngine = new SchedulerEngine({
     });
     return run.id;
   },
+  cleanupStopNextActionSessions: async () => cleanupStopNextActionSessions({
+    manager,
+    scheduleArchive: (sessionId) => scheduleSessionArchive(sessionId, manager),
+  }),
   onBotKeyUnlocked: onBotKeyUnlockedHook,
   getInstanceIdentity: () => wingmanInstanceIdentity,
 });

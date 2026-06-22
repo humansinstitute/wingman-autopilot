@@ -42,6 +42,7 @@ export interface SchedulerEngineDeps {
   dispatchPrompt: (session: SessionSnapshot) => void;
   awaitSessionReadyForPrompt?: (session: SessionSnapshot, agent: AgentType) => Promise<void>;
   runPipeline?: (job: ScheduledJob, input: JsonObject, onRunCreated?: (pipelineRunId: string) => void, pipelineAgent?: string) => Promise<string>;
+  cleanupStopNextActionSessions?: (job: ScheduledJob) => Promise<SchedulerCleanupResult>;
   onBotKeyUnlocked?: (npub: string, secretKey: Uint8Array, botPubkeyHex: string) => void;
   getInstanceIdentity?: () => WingmanInstanceIdentity | null;
 }
@@ -49,6 +50,15 @@ export interface SchedulerEngineDeps {
 export interface SchedulerExecutionResult {
   sessionId?: string;
   pipelineRunId?: string;
+  cleanup?: SchedulerCleanupResult;
+}
+
+export interface SchedulerCleanupResult {
+  checked: number;
+  matched: number;
+  stopped: number;
+  archiveScheduled: number;
+  failed: number;
 }
 
 // ============================================================
@@ -320,6 +330,19 @@ class SchedulerEngine {
     let linkedPipelineRunId: string | undefined;
 
     try {
+      if (job.actionType === "cleanup") {
+        const cleanup = await this.runCleanupAction(job);
+        this.updateJobAfterSuccess(jobId);
+        this.deps.store.completeRun(
+          runId,
+          cleanup.failed > 0 ? "error" : "success",
+          undefined,
+          cleanup.failed > 0 ? `Cleanup failed for ${cleanup.failed} session(s)` : undefined,
+        );
+        console.log(`[scheduler] Job "${job.name}" triggered — cleaned up ${cleanup.stopped}/${cleanup.matched} session(s)`);
+        return { cleanup };
+      }
+
       const instanceIdentity = this.deps.getInstanceIdentity?.() ?? null;
       if (!instanceIdentity) {
         throw new Error("WINGMAN_PRIV is required to execute scheduled jobs");
@@ -411,6 +434,13 @@ class SchedulerEngine {
     }
     const pipelineAgent = job.pipelineAgent?.trim() || undefined;
     return this.deps.runPipeline(job, input, onRunCreated, pipelineAgent);
+  }
+
+  private async runCleanupAction(job: ScheduledJob): Promise<SchedulerCleanupResult> {
+    if (!this.deps.cleanupStopNextActionSessions) {
+      throw new Error("Scheduler cleanup execution is not configured");
+    }
+    return this.deps.cleanupStopNextActionSessions(job);
   }
 
   private updateJobAfterSuccess(jobId: string): void {

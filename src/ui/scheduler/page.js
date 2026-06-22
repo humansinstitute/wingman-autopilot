@@ -178,6 +178,14 @@ export function initSchedulerPage({ showToast }) {
       return this.actionType === "pipeline";
     },
 
+    get isSessionAction() {
+      return this.actionType === "session";
+    },
+
+    get isCleanupAction() {
+      return this.actionType === "cleanup";
+    },
+
     get isNostr() {
       return this.triggerType === "nostr";
     },
@@ -291,6 +299,14 @@ export function initSchedulerPage({ showToast }) {
       return this.editActionType === "pipeline";
     },
 
+    get editIsSessionAction() {
+      return this.editActionType === "session";
+    },
+
+    get editIsCleanupAction() {
+      return this.editActionType === "cleanup";
+    },
+
     get editIsNostr() {
       return this.editTriggerType === "nostr";
     },
@@ -365,6 +381,15 @@ export function initSchedulerPage({ showToast }) {
           payload.workingDirectory = "";
           payload.initialPrompt = "";
           payload.nightwatchmanEnabled = false;
+        } else if (this.editActionType === "cleanup") {
+          payload.triggerType = "cron";
+          payload.agent = "codex";
+          payload.workingDirectory = "";
+          payload.initialPrompt = "";
+          payload.nightwatchmanEnabled = false;
+          payload.pipelineDefinitionId = null;
+          payload.pipelineAgent = null;
+          payload.pipelineInput = {};
         } else {
           payload.agent = this.editForm.agent;
           payload.workingDirectory = this.editForm.workingDirectory;
@@ -441,6 +466,13 @@ export function initSchedulerPage({ showToast }) {
           payload.workingDirectory = "";
           payload.initialPrompt = "";
           payload.nightwatchmanEnabled = false;
+        } else if (this.actionType === "cleanup") {
+          payload.triggerType = "cron";
+          payload.agent = "codex";
+          payload.workingDirectory = "";
+          payload.initialPrompt = "";
+          payload.nightwatchmanEnabled = false;
+          payload.pipelineAgent = null;
         } else {
           payload.agent = this.form.agent;
           payload.workingDirectory = this.form.workingDirectory;
@@ -513,6 +545,7 @@ export function initSchedulerPage({ showToast }) {
 
     describeJobAction(job) {
       if ((job.actionType || "session") === "pipeline") return "PIPELINE";
+      if ((job.actionType || "session") === "cleanup") return "CLEANUP";
       return String(job.agent || "").toUpperCase();
     },
 
@@ -644,10 +677,12 @@ function getPageTemplate() {
           @click="triggerType = 'cron'">Schedule</button>
         <button type="button" class="wm-btn wm-btn--sm"
           :class="triggerType === 'file_watcher' ? 'wm-btn--primary' : ''"
-          @click="triggerType = 'file_watcher'">File Watcher</button>
+          @click="triggerType = 'file_watcher'"
+          x-show="!isCleanupAction">File Watcher</button>
         <button type="button" class="wm-btn wm-btn--sm"
           :class="triggerType === 'nostr' ? 'wm-btn--primary' : ''"
-          @click="triggerType = 'nostr'">Nostr</button>
+          @click="triggerType = 'nostr'"
+          x-show="!isCleanupAction">Nostr</button>
       </div>
 
       <!-- Action Type Selector -->
@@ -658,6 +693,9 @@ function getPageTemplate() {
         <button type="button" class="wm-btn wm-btn--sm"
           :class="actionType === 'pipeline' ? 'wm-btn--primary' : ''"
           @click="actionType = 'pipeline'">Pipeline</button>
+        <button type="button" class="wm-btn wm-btn--sm"
+          :class="actionType === 'cleanup' ? 'wm-btn--primary' : ''"
+          @click="actionType = 'cleanup'; triggerType = 'cron'">Cleanup</button>
       </div>
 
       <!-- Row 1: Name + Agent/Pipeline -->
@@ -666,7 +704,7 @@ function getPageTemplate() {
           <label>Trigger Name</label>
           <input type="text" class="wm-input" x-model="form.name" placeholder="e.g. Daily code review">
         </div>
-        <div class="wm-form-group" x-show="!isPipelineAction">
+        <div class="wm-form-group" x-show="isSessionAction">
           <label>Agent</label>
           <select class="wm-select" x-model="form.agent">
             ${renderAgentOptions()}
@@ -691,7 +729,7 @@ function getPageTemplate() {
       </div>
 
       <!-- Row 2: Working Directory -->
-      <div class="wm-form-group" style="margin-top: 0.75rem;" x-show="!isPipelineAction">
+      <div class="wm-form-group" style="margin-top: 0.75rem;" x-show="isSessionAction">
         <label>Working Directory</label>
         <input type="text" class="wm-input" x-model="form.workingDirectory" placeholder="/path/to/project"
           data-ac="create-workdir" list="create-workdir-suggestions" autocomplete="off">
@@ -703,6 +741,14 @@ function getPageTemplate() {
         <label>Pipeline Input</label>
         <textarea class="wm-input" x-model="form.pipelineInput" rows="7" spellcheck="false" style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;"></textarea>
       </div>
+
+      <template x-if="isCleanupAction">
+        <div style="margin-top: 0.75rem; padding: 0.75rem; background: var(--bg-primary); border-radius: 6px; border: 1px solid var(--border-primary);">
+          <p style="font-size: 0.85rem; color: var(--text-secondary); margin: 0;">
+            Stops and archives active sessions whose metadata nextAction is set to stop.
+          </p>
+        </div>
+      </template>
 
       <!-- Row 3a: Schedule Picker (cron only) -->
       <template x-if="isCron">
@@ -804,14 +850,14 @@ function getPageTemplate() {
       </template>
 
       <!-- Row 4: Initial Prompt -->
-      <div class="wm-form-group" style="margin-top: 0.75rem;" x-show="!isPipelineAction">
+      <div class="wm-form-group" style="margin-top: 0.75rem;" x-show="isSessionAction">
         <label>Initial Prompt</label>
         <textarea class="wm-input" x-model="form.initialPrompt" rows="4" placeholder="What should the agent do?"></textarea>
       </div>
 
       <!-- Row 5: Night Watchman + Timezone -->
-      <div style="display: flex; align-items: center; gap: 1rem; margin-top: 0.75rem; flex-wrap: wrap;" x-show="!isPipelineAction">
-        <label style="display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; cursor: pointer;">
+      <div style="display: flex; align-items: center; gap: 1rem; margin-top: 0.75rem; flex-wrap: wrap;" x-show="isSessionAction || isCleanupAction">
+        <label style="display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; cursor: pointer;" x-show="isSessionAction">
           <input type="checkbox" x-model="form.nightwatchmanEnabled">
           <span style="font-weight: 600;">Enable Night Watchman</span>
         </label>
@@ -870,7 +916,10 @@ function getPageTemplate() {
               <template x-if="(job.actionType || 'session') === 'pipeline'">
                 <span x-text="pipelineName(job.pipelineDefinitionId)" style="opacity: 0.8;"></span>
               </template>
-              <template x-if="(job.actionType || 'session') !== 'pipeline'">
+              <template x-if="(job.actionType || 'session') === 'cleanup'">
+                <span style="opacity: 0.8;">Stops sessions marked nextAction=stop</span>
+              </template>
+              <template x-if="(job.actionType || 'session') === 'session'">
                 <span x-text="job.workingDirectory" style="opacity: 0.8;"></span>
               </template>
               <template x-if="job.nextRunAt && job.triggerType !== 'file_watcher' && job.triggerType !== 'nostr'">
@@ -922,7 +971,7 @@ function getPageTemplate() {
         </template>
 
         <!-- Prompt preview (shown when NOT editing) -->
-        <template x-if="editingJobId !== job.id && (job.actionType || 'session') !== 'pipeline'">
+        <template x-if="editingJobId !== job.id && (job.actionType || 'session') === 'session'">
           <details style="margin-top: 0.5rem;">
             <summary style="cursor: pointer; font-size: 0.8rem; color: var(--text-secondary);">Prompt</summary>
             <pre style="font-size: 0.8rem; white-space: pre-wrap; margin: 0.25rem 0 0; padding: 0.5rem; background: var(--bg-primary); border-radius: 4px; max-height: 200px; overflow: auto;" x-text="job.initialPrompt"></pre>
@@ -946,10 +995,12 @@ function getPageTemplate() {
                 @click="editTriggerType = 'cron'">Schedule</button>
               <button type="button" class="wm-btn wm-btn--sm"
                 :class="editTriggerType === 'file_watcher' ? 'wm-btn--primary' : ''"
-                @click="editTriggerType = 'file_watcher'">File Watcher</button>
+                @click="editTriggerType = 'file_watcher'"
+                x-show="!editIsCleanupAction">File Watcher</button>
               <button type="button" class="wm-btn wm-btn--sm"
                 :class="editTriggerType === 'nostr' ? 'wm-btn--primary' : ''"
-                @click="editTriggerType = 'nostr'">Nostr</button>
+                @click="editTriggerType = 'nostr'"
+                x-show="!editIsCleanupAction">Nostr</button>
             </div>
 
             <!-- Action Type Selector -->
@@ -960,6 +1011,9 @@ function getPageTemplate() {
               <button type="button" class="wm-btn wm-btn--sm"
                 :class="editActionType === 'pipeline' ? 'wm-btn--primary' : ''"
                 @click="editActionType = 'pipeline'">Pipeline</button>
+              <button type="button" class="wm-btn wm-btn--sm"
+                :class="editActionType === 'cleanup' ? 'wm-btn--primary' : ''"
+                @click="editActionType = 'cleanup'; editTriggerType = 'cron'">Cleanup</button>
             </div>
 
             <!-- Row 1: Name + Agent/Pipeline -->
@@ -968,7 +1022,7 @@ function getPageTemplate() {
                 <label>Trigger Name</label>
                 <input type="text" class="wm-input" x-model="editForm.name">
               </div>
-              <div class="wm-form-group" x-show="!editIsPipelineAction">
+              <div class="wm-form-group" x-show="editIsSessionAction">
                 <label>Agent</label>
                 <select class="wm-select" x-model="editForm.agent">
                   ${renderAgentOptions()}
@@ -993,7 +1047,7 @@ function getPageTemplate() {
             </div>
 
             <!-- Row 2: Working Directory -->
-            <div class="wm-form-group" style="margin-top: 0.75rem;" x-show="!editIsPipelineAction">
+            <div class="wm-form-group" style="margin-top: 0.75rem;" x-show="editIsSessionAction">
               <label>Working Directory</label>
               <input type="text" class="wm-input" x-model="editForm.workingDirectory"
                 data-ac="edit-workdir" list="edit-workdir-suggestions" autocomplete="off">
@@ -1005,6 +1059,14 @@ function getPageTemplate() {
               <label>Pipeline Input</label>
               <textarea class="wm-input" x-model="editForm.pipelineInput" rows="7" spellcheck="false" style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;"></textarea>
             </div>
+
+            <template x-if="editIsCleanupAction">
+              <div style="margin-top: 0.75rem; padding: 0.75rem; background: var(--bg-primary); border-radius: 6px; border: 1px solid var(--border-primary);">
+                <p style="font-size: 0.85rem; color: var(--text-secondary); margin: 0;">
+                  Stops and archives active sessions whose metadata nextAction is set to stop.
+                </p>
+              </div>
+            </template>
 
             <!-- Row 3a: Schedule Picker (cron only) -->
             <template x-if="editIsCron">
@@ -1105,14 +1167,14 @@ function getPageTemplate() {
             </template>
 
             <!-- Row 4: Initial Prompt -->
-            <div class="wm-form-group" style="margin-top: 0.75rem;" x-show="!editIsPipelineAction">
+            <div class="wm-form-group" style="margin-top: 0.75rem;" x-show="editIsSessionAction">
               <label>Initial Prompt</label>
               <textarea class="wm-input" x-model="editForm.initialPrompt" rows="4"></textarea>
             </div>
 
             <!-- Row 5: Night Watchman + Timezone -->
-            <div style="display: flex; align-items: center; gap: 1rem; margin-top: 0.75rem; flex-wrap: wrap;" x-show="!editIsPipelineAction">
-              <label style="display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; cursor: pointer;">
+            <div style="display: flex; align-items: center; gap: 1rem; margin-top: 0.75rem; flex-wrap: wrap;" x-show="editIsSessionAction || editIsCleanupAction">
+              <label style="display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; cursor: pointer;" x-show="editIsSessionAction">
                 <input type="checkbox" x-model="editForm.nightwatchmanEnabled">
                 <span style="font-weight: 600;">Enable Night Watchman</span>
               </label>

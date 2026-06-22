@@ -94,7 +94,11 @@ async function handleCreateJob(
   const agent = typeof body.agent === "string" ? body.agent.trim() : "";
   const workingDirectory = typeof body.workingDirectory === "string" ? body.workingDirectory.trim() : "";
   const initialPrompt = typeof body.initialPrompt === "string" ? body.initialPrompt.trim() : "";
-  const actionType = body.actionType === "pipeline" ? "pipeline" as const : "session" as const;
+  const actionType = body.actionType === "pipeline"
+    ? "pipeline" as const
+    : body.actionType === "cleanup"
+      ? "cleanup" as const
+      : "session" as const;
   const pipelineDefinitionId = typeof body.pipelineDefinitionId === "string" ? body.pipelineDefinitionId.trim() : "";
   const pipelineInput = parsePipelineInput(body.pipelineInput ?? body.pipelineInputJson);
   const triggerType = body.triggerType === "file_watcher"
@@ -118,7 +122,7 @@ async function handleCreateJob(
     if (pipelineAgent && !VALID_AGENTS.includes(pipelineAgent as typeof VALID_AGENTS[number])) {
       return Response.json({ error: `pipelineAgent must be one of: ${AGENT_TYPE_LIST}` }, { status: 400 });
     }
-  } else {
+  } else if (actionType === "session") {
     if (!VALID_AGENTS.includes(agent as typeof VALID_AGENTS[number])) {
       return Response.json({ error: `agent must be one of: ${AGENT_TYPE_LIST}` }, { status: 400 });
     }
@@ -128,6 +132,8 @@ async function handleCreateJob(
       return Response.json({ error: wdResult.error.issues[0]?.message ?? "Invalid workingDirectory" }, { status: 400 });
     }
     if (!initialPrompt) return Response.json({ error: "initialPrompt is required" }, { status: 400 });
+  } else if (triggerType !== "cron") {
+    return Response.json({ error: "cleanup actions only support schedule triggers" }, { status: 400 });
   }
 
   // Validate active window times (HH:MM format)
@@ -157,20 +163,21 @@ async function handleCreateJob(
   // nostr triggers need no cron expression or watch directory
 
   const instanceIdentity = deps.getInstanceIdentity?.() ?? null;
-  if (!instanceIdentity) {
+  if (!instanceIdentity && actionType !== "cleanup") {
     return Response.json(
       { error: "WINGMAN_PRIV is not configured. A Wingman instance key is required for scheduled jobs." },
       { status: 400 },
     );
   }
 
-  const sessionSecretBytes = getSessionSecretBytes();
-  const wrapped = wrapEscrowUuid("wingman-instance", sessionSecretBytes);
+  const wrapped = actionType === "cleanup"
+    ? { ciphertext: "", nonce: "" }
+    : wrapEscrowUuid("wingman-instance", getSessionSecretBytes());
 
   const job = deps.store.createJob({
     name,
     userNpub,
-    botNpub: instanceIdentity.npub,
+    botNpub: instanceIdentity?.npub ?? "",
     wrappedKeyCiphertext: wrapped.ciphertext,
     wrappedKeyNonce: wrapped.nonce,
     agent: actionType === "session" ? agent : "codex",
@@ -194,7 +201,7 @@ async function handleCreateJob(
   deps.engine.scheduleJob(job);
 
   // For nostr triggers, include the bot pubkey hex so external apps know where to send events
-  const extra = triggerType === "nostr" ? { botPubkeyHex: instanceIdentity.pubkeyHex } : {};
+  const extra = triggerType === "nostr" && instanceIdentity ? { botPubkeyHex: instanceIdentity.pubkeyHex } : {};
   return Response.json({ job, ...extra }, { status: 201 });
 }
 
@@ -214,7 +221,7 @@ async function handleUpdateJob(
   const update: Record<string, unknown> = {};
 
   if (typeof body.name === "string") update.name = body.name.trim();
-  if (body.actionType === "session" || body.actionType === "pipeline") {
+  if (body.actionType === "session" || body.actionType === "pipeline" || body.actionType === "cleanup") {
     update.actionType = body.actionType;
   }
   if (typeof body.pipelineDefinitionId === "string") {
@@ -292,6 +299,12 @@ async function handleUpdateJob(
     }
   }
   if (typeof body.enabled === "boolean") update.enabled = body.enabled;
+
+  const nextActionType = (update.actionType ?? existing.actionType) as string;
+  const nextTriggerType = (update.triggerType ?? existing.triggerType) as string;
+  if (nextActionType === "cleanup" && nextTriggerType !== "cron") {
+    return Response.json({ error: "cleanup actions only support schedule triggers" }, { status: 400 });
+  }
 
   const job = deps.store.updateJob(jobId, update);
   if (!job) {
