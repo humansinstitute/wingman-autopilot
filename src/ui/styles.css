@@ -13390,9 +13390,19 @@ textarea.wm-input {
   z-index: 1300;
   display: grid;
   place-items: center;
+  width: 100vw;
+  max-width: none;
+  height: 100vh;
+  max-height: none;
+  margin: 0;
+  border: 0;
   background: color-mix(in srgb, var(--bg-primary) 88%, transparent);
   backdrop-filter: blur(8px);
   padding: clamp(0.75rem, 2vw, 1.5rem);
+}
+
+.wm-pipeline-value-modal::backdrop {
+  background: transparent;
 }
 
 .wm-pipeline-value-modal-content {

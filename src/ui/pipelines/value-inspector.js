@@ -23,7 +23,7 @@ function showPipelineValueInspector({ title, encodedValue }) {
   existing?.remove();
 
   const value = parseInspectionValue(encodedValue);
-  const modal = document.createElement("div");
+  const modal = document.createElement("dialog");
   modal.id = "pipeline-value-inspector";
   modal.className = "wm-pipeline-value-modal";
   modal.setAttribute("role", "dialog");
@@ -43,16 +43,36 @@ function showPipelineValueInspector({ title, encodedValue }) {
     </section>
   `;
 
+  const closeModal = () => {
+    if (typeof modal.close === "function" && modal.open) {
+      modal.close();
+    } else {
+      modal.remove();
+    }
+  };
+
   modal.addEventListener("click", (event) => {
     if (event.target === modal || event.target?.dataset?.action === "close-pipeline-value-inspector") {
-      modal.remove();
+      closeModal();
     }
   });
   modal.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") modal.remove();
+    if (event.key === "Escape") closeModal();
   });
+  modal.addEventListener("close", () => modal.remove(), { once: true });
 
   document.body.append(modal);
+  if (typeof modal.showModal === "function") {
+    try {
+      modal.showModal();
+    } catch {
+      modal.setAttribute("open", "open");
+    }
+  } else if (typeof modal.show === "function") {
+    modal.show();
+  } else {
+    modal.setAttribute("open", "open");
+  }
   const closeButton = modal.querySelector('[data-action="close-pipeline-value-inspector"]');
   if (closeButton && typeof closeButton.focus === "function") {
     closeButton.focus({ preventScroll: true });
