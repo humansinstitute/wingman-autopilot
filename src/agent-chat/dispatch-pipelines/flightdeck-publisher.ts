@@ -20,6 +20,7 @@ import {
   decodeFlightDeckPgDocumentBody,
   fetchFlightDeckPgChannelMessages,
   fetchFlightDeckPgDocument,
+  fetchFlightDeckPgDocumentComments,
   fetchFlightDeckPgTask,
   fetchFlightDeckPgWorkspaceMembers,
   listFlightDeckPgChannelDocs,
@@ -1069,6 +1070,250 @@ export function createDispatchDiscussionDocumentEnsurer(
         status: 'failed',
         operation: 'docs.ensure-discussion-document',
         reason: error instanceof Error ? error.message : String(error),
+      };
+    }
+  };
+}
+
+export function createDispatchDocumentInvocationContextPreparer(
+  context: DispatchPipelineFlightDeckPublisherContext,
+): DeclarativeFunction {
+  return async (input) => {
+    const payload = objectValue(context.eventInput.payload ?? objectValue(input.record).payload);
+    const target = objectValue(payload.target);
+    const documentId = getText(context.eventInput.bindingId)
+      ?? getText(payload.target_id)
+      ?? getText(target.id);
+    const documentTitleHint = getText(payload.target_title)
+      ?? getText(target.title)
+      ?? getText(payload.title);
+    const prompt = getText(payload.prompt)
+      ?? getText(payload.description)
+      ?? getText(input.prompt)
+      ?? '';
+    const channelId = resolveFlightDeckPgChannelId(context, getText(input.channelId ?? payload.channel_id));
+    const scopeId = getText(context.eventInput.scopeId ?? input.scopeId ?? payload.scope_id);
+    const invocationId = getText(payload.invocation_id ?? payload.id ?? context.eventInput.recordId);
+    const requesterNpub = getText(payload.created_by_npub ?? context.eventInput.updaterNpub);
+    const channelContext = objectValue(objectValue(input.flightDeckContext).channel);
+
+    if (!documentId) {
+      return {
+        status: 'failed',
+        operation: 'docs.prepare-document-invocation',
+        reason: 'Document invocation did not include a target document id.',
+        invocation: { invocationId, prompt, requesterNpub },
+      };
+    }
+    if (!canUseFlightDeckRuntime(context)) {
+      return {
+        status: 'failed',
+        operation: 'docs.prepare-document-invocation',
+        reason: context.runtime.error ?? 'Flight Deck runtime was not prepared.',
+        invocation: { invocationId, prompt, requesterNpub },
+        document: { documentId, title: documentTitleHint },
+      };
+    }
+
+    const pg = getFlightDeckPgPublishContext(context);
+    try {
+      const [documentResult, commentsResult] = await Promise.all([
+        fetchFlightDeckPgDocument({
+          backendBaseUrl: pg.backendBaseUrl,
+          workspaceId: pg.workspaceId,
+          documentId,
+          appNpub: pg.appNpub,
+          botIdentity: pg.botIdentity,
+          includeBody: true,
+        }),
+        fetchFlightDeckPgDocumentComments({
+          backendBaseUrl: pg.backendBaseUrl,
+          workspaceId: pg.workspaceId,
+          documentId,
+          appNpub: pg.appNpub,
+          botIdentity: pg.botIdentity,
+          limit: 200,
+        }).catch((error) => ({
+          comments: [],
+          next_cursor: null,
+          load_error: error instanceof Error ? error.message : String(error),
+        })),
+      ]);
+      const doc = objectValue(documentResult.doc);
+      const title = getText(doc.title) ?? documentTitleHint ?? 'Flight Deck document';
+      const body = decodeFlightDeckPgDocumentBody(documentResult) ?? '';
+      const comments = Array.isArray(commentsResult.comments) ? commentsResult.comments : [];
+      const storageReferences = extractStorageReferences(body);
+      const localPath = await writeDocumentInvocationSnapshot({
+        workdir: getText(objectValue(input.agent).workingDirectory ?? objectValue(input.defaults).workdir),
+        invocationId,
+        documentId,
+        title,
+        rowVersion: doc.row_version ?? doc.rowVersion ?? null,
+        prompt,
+        body,
+        comments,
+        storageReferences,
+      });
+      return {
+        status: 'loaded',
+        operation: 'docs.prepare-document-invocation',
+        invocation: {
+          invocationId,
+          prompt,
+          requesterNpub,
+          sourceSurface: getText(objectValue(payload.metadata).source_surface),
+          createdByNpub: getText(payload.created_by_npub),
+        },
+        workspace: {
+          workspaceId: pg.workspaceId,
+          workspaceOwnerNpub: getText(objectValue(input.workspace).workspaceOwnerNpub),
+          humanWorkspaceOwnerNpub: getText(objectValue(input.workspace).humanWorkspaceOwnerNpub),
+          backendBaseUrl: pg.backendBaseUrl,
+          appNpub: pg.appNpub,
+        },
+        location: {
+          scopeId,
+          channelId,
+          channelName: getText(channelContext.name),
+          channelContextPrompt: getText(channelContext.contextPrompt),
+          hasSpecificChannelContext: channelContext.hasSpecificContext === true,
+        },
+        document: {
+          documentId,
+          title,
+          mention: mention('document', documentId, title),
+          rowVersion: doc.row_version ?? doc.rowVersion ?? null,
+          bodyLength: body.length,
+          bodyExcerpt: truncateBlock(body, 5000),
+          bodyTruncated: body.length > 5000,
+          localPath,
+          storageReferences,
+          comments: comments.slice(0, 50).map((comment) => {
+            const item = objectValue(comment);
+            return {
+              commentId: getText(item.id),
+              parentCommentId: getText(item.parent_comment_id ?? item.parentCommentId),
+              authorNpub: getText(item.created_by_actor_npub ?? item.sender_npub),
+              body: getText(item.body),
+              createdAt: getText(item.created_at),
+              updatedAt: getText(item.updated_at),
+            };
+          }),
+          commentsLoadError: getText(objectValue(commentsResult).load_error),
+        },
+        guidance: [
+          'This is a Flight Deck Postgres document invocation, not a chat thread.',
+          'Use current Flight Deck PG helpers/MCP tools to refresh the document, download storage assets, edit the document, and create document comments when useful.',
+          'Do not create a task unless the user explicitly asks for a task.',
+          'Return structured closeout metadata only; the pipeline will post the channel summary.',
+        ],
+      };
+    } catch (error) {
+      return {
+        status: 'failed',
+        operation: 'docs.prepare-document-invocation',
+        reason: error instanceof Error ? error.message : String(error),
+        invocation: { invocationId, prompt, requesterNpub },
+        document: {
+          documentId,
+          title: documentTitleHint,
+          mention: mention('document', documentId, documentTitleHint ?? 'Flight Deck document'),
+        },
+      };
+    }
+  };
+}
+
+export function createDispatchDocumentInvocationSummaryPublisher(
+  context: DispatchPipelineFlightDeckPublisherContext,
+): DeclarativeFunction {
+  return async (input) => {
+    if (!canUseFlightDeckRuntime(context)) {
+      return {
+        published: false,
+        status: 'failed',
+        operation: 'docs.publish-document-invocation-summary',
+        reason: context.runtime.error ?? 'Flight Deck runtime was not prepared.',
+      };
+    }
+    if (!isFlightDeckPgPublisherContext(context)) {
+      return {
+        published: false,
+        status: 'failed',
+        operation: 'docs.publish-document-invocation-summary',
+        reason: 'Flight Deck PG context is required.',
+      };
+    }
+    const invocationContext = objectValue(input.invocationContext);
+    const document = objectValue(invocationContext.document);
+    const invocation = objectValue(invocationContext.invocation);
+    const location = objectValue(invocationContext.location);
+    const result = objectValue(input.agentResult ?? input.agentResponse ?? input.result);
+    const documentId = getText(document.documentId ?? context.eventInput.bindingId);
+    const title = getText(document.title) ?? getText(objectValue(context.eventInput.payload).target_title) ?? 'Flight Deck document';
+    const documentMention = getText(document.mention) ?? (documentId ? mention('document', documentId, title) : title);
+    const channelId = resolveFlightDeckPgChannelId(context, getText(location.channelId));
+    if (!channelId) {
+      return {
+        published: false,
+        status: 'failed',
+        operation: 'docs.publish-document-invocation-summary',
+        reason: 'Document invocation summary publish requires a channel id.',
+        agentResult: result,
+      };
+    }
+    const summary = getText(result.summary)
+      ?? getText(result.updateSummary)
+      ?? getText(result.reviewSummary)
+      ?? getText(result.result)
+      ?? 'I handled the document invocation.';
+    const changedSections = getStringArray(result.changedSections);
+    const commentsCreated = getStringArray(result.commentsCreated);
+    const openQuestions = getStringArray(result.openQuestions);
+    const body = [
+      `I handled ${documentMention}.`,
+      '',
+      summary,
+      ...formatList('Changed sections', changedSections),
+      ...formatList('Comments/questions added', commentsCreated),
+      ...formatList('Open questions', openQuestions),
+    ].join('\n').trim();
+    try {
+      const publishResult = await createFlightDeckPgChannelMessageFromContext(context, {
+        channelId,
+        body: normalisePublishedMarkdownBody(body),
+        createThread: true,
+        metadata: {
+          autopilot_dispatch: true,
+          operation: 'docs.document-invocation-summary',
+          invocation_id: getText(invocation.invocationId ?? context.eventInput.recordId),
+          document_id: documentId,
+          subscription_id: context.eventInput.subscription.subscriptionId,
+        },
+        speechMode: 'background',
+        speechTitle: 'Document update summary',
+        speechFilePrefix: 'document-invocation-summary',
+        userPrompt: getText(invocation.prompt),
+      });
+      return {
+        published: true,
+        status: 'ok',
+        operation: 'docs.publish-document-invocation-summary',
+        channelId,
+        documentId,
+        result: publishResult,
+        agentResult: result,
+      };
+    } catch (error) {
+      return {
+        published: false,
+        status: 'failed',
+        operation: 'docs.publish-document-invocation-summary',
+        channelId,
+        documentId,
+        reason: error instanceof Error ? error.message : String(error),
+        agentResult: result,
       };
     }
   };
@@ -2440,6 +2685,75 @@ function extractStorageReferences(body: string): string[] {
     .filter((value): value is string => Boolean(value)))];
 }
 
+async function writeDocumentInvocationSnapshot(input: {
+  workdir: string | null;
+  invocationId: string | null;
+  documentId: string;
+  title: string;
+  rowVersion: unknown;
+  prompt: string;
+  body: string;
+  comments: unknown[];
+  storageReferences: string[];
+}): Promise<string | null> {
+  if (!input.workdir) return null;
+  const snapshotDir = join(input.workdir, 'tmp', 'flightdeck-doc-invocations');
+  await mkdir(snapshotDir, { recursive: true });
+  const safeTitle = input.title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60)
+    || 'document';
+  const safeInvocation = (input.invocationId ?? 'invocation')
+    .replace(/[^a-zA-Z0-9-]+/g, '-')
+    .slice(0, 60)
+    || 'invocation';
+  const filePath = join(snapshotDir, `${safeInvocation}.${input.documentId}.${safeTitle}.md`);
+  const commentBlocks = input.comments.map((comment, index) => {
+    const item = objectValue(comment);
+    const id = getText(item.id) ?? `comment-${index + 1}`;
+    const author = getText(item.created_by_actor_npub ?? item.sender_npub) ?? 'unknown';
+    const created = getText(item.created_at) ?? 'unknown time';
+    const body = getText(item.body) ?? '';
+    return [
+      `### ${id}`,
+      `Author: ${author}`,
+      `Created: ${created}`,
+      '',
+      body.trim() || '(empty comment)',
+    ].join('\n');
+  });
+  const metadata = [
+    '<!--',
+    'Local snapshot for Flight Deck document invocation.',
+    `Invocation ID: ${input.invocationId ?? 'unknown'}`,
+    `Document ID: ${input.documentId}`,
+    `Title: ${input.title}`,
+    input.rowVersion !== null && input.rowVersion !== undefined ? `Row version: ${String(input.rowVersion)}` : null,
+    input.storageReferences.length > 0
+      ? `Storage references: ${input.storageReferences.join(', ')}`
+      : 'Storage references: none',
+    `Snapshot created: ${new Date().toISOString()}`,
+    '-->',
+    '',
+    '# Invocation Prompt',
+    '',
+    input.prompt.trim() || '(empty prompt)',
+    '',
+    '# Document Body',
+    '',
+    input.body.trim() || '(empty document)',
+    '',
+    '# Document Comments',
+    '',
+    commentBlocks.length > 0 ? commentBlocks.join('\n\n') : '(no comments)',
+    '',
+  ].filter((line): line is string => line !== null);
+  await writeFile(filePath, `${metadata.join('\n')}\n`, 'utf8');
+  return filePath;
+}
+
 export function createDispatchTaskStateUpdater(
   context: DispatchPipelineFlightDeckPublisherContext,
   targetState: 'in_progress' | 'review',
@@ -3097,6 +3411,8 @@ function stepNeedsFlightDeckPublisher(step: DeclarativeStep): boolean {
       || step.function === 'dispatch.ensureImplementationReviewTask'
       || step.function === 'dispatch.commentImplementationReviewProgress'
       || step.function === 'dispatch.ensureDiscussionDocument'
+      || step.function === 'dispatch.prepareDocumentInvocationContext'
+      || step.function === 'dispatch.publishDocumentInvocationSummary'
       || step.function === 'dispatch.completeReviewTaskFromChat'
     )
   ) {

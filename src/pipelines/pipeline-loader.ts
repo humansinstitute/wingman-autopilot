@@ -1297,6 +1297,7 @@ export async function ensurePipelineDirectories(ownerAlias: string | null): Prom
   }
   await ensurePipelineGitRepository();
   const documentDiscussionDefinition = await readBundledDefaultDefinition("document-discussion.json");
+  const flightDeckDocumentInvocationDefinition = await readBundledDefaultDefinition("fd-document-invocation.json");
   const softwareImplementationReviewLoopDefinition = await readBundledDefaultDefinition("software-implementation-review-loop.json");
   const dailyNoteReviewDefinition = await readBundledDefaultDefinition("daily-note-review.json");
   const defaultDefinitions = [
@@ -1305,6 +1306,7 @@ export async function ensurePipelineDirectories(ownerAlias: string | null): Prom
     ["fd-agent-dispatch-comment-response.json", buildFlightDeckPgDefaultDefinition(AGENT_DISPATCH_COMMENT_DEFINITION as unknown as DeclarativePipeline, "fd-agent-dispatch-comment-response")],
     ["design-review.json", DESIGN_REVIEW_DEFINITION],
     ["document-discussion.json", documentDiscussionDefinition],
+    ["fd-document-invocation.json", flightDeckDocumentInvocationDefinition],
     ["do-and-review.json", DO_AND_REVIEW_DEFINITION],
     ["research-and-report.json", RESEARCH_AND_REPORT_DEFINITION],
     ["software-implementation-review-loop.json", softwareImplementationReviewLoopDefinition],

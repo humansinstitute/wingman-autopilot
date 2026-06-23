@@ -12,6 +12,7 @@ const pgStorageUploadCalls: Array<Record<string, unknown>> = [];
 const pgDocumentCreateCalls: Array<Record<string, unknown>> = [];
 const pgDocumentListCalls: Array<Record<string, unknown>> = [];
 const pgDocumentFetchCalls: Array<Record<string, unknown>> = [];
+const pgDocumentCommentFetchCalls: Array<Record<string, unknown>> = [];
 const pgAudioNoteCreateCalls: Array<Record<string, unknown>> = [];
 const pgReactionCreateCalls: Array<Record<string, unknown>> = [];
 const pgTaskCreateCalls: Array<Record<string, unknown>> = [];
@@ -222,6 +223,22 @@ mock.module('../tower-client', () => ({
       },
     };
   }),
+  fetchFlightDeckPgDocumentComments: mock(async (input: Record<string, unknown>) => {
+    pgDocumentCommentFetchCalls.push(input);
+    return {
+      doc_id: input.documentId,
+      comments: [
+        {
+          id: 'doc-comment-1',
+          doc_id: input.documentId,
+          body: 'Please make the padding fix more explicit.',
+          created_by_actor_npub: 'npub1requester',
+          created_at: '2026-06-10T02:00:00.000Z',
+        },
+      ],
+      next_cursor: null,
+    };
+  }),
   decodeFlightDeckPgDocumentBody: (result: any) => {
     const raw = Buffer.from(result.body.base64_data, 'base64').toString('utf8');
     return JSON.parse(raw).body;
@@ -348,6 +365,8 @@ const {
   createDispatchChatContextHydrator,
   createDispatchChatThreadReloader,
   createDispatchDiscussionDocumentEnsurer,
+  createDispatchDocumentInvocationContextPreparer,
+  createDispatchDocumentInvocationSummaryPublisher,
   createDispatchChatTaskCreator,
   createDispatchImplementationReviewProgressCommenter,
   createDispatchImplementationReviewTaskEnsurer,
@@ -437,6 +456,7 @@ describe('dispatch pipeline Flight Deck publisher', () => {
     pgDocumentCreateCalls.length = 0;
     pgDocumentListCalls.length = 0;
     pgDocumentFetchCalls.length = 0;
+    pgDocumentCommentFetchCalls.length = 0;
     pgAudioNoteCreateCalls.length = 0;
     pgReactionCreateCalls.length = 0;
     pgTaskCreateCalls.length = 0;
@@ -466,6 +486,124 @@ describe('dispatch pipeline Flight Deck publisher', () => {
       reason: 'Flight Deck runtime was not prepared.',
     });
     expect(yokeCommandCalls).toHaveLength(0);
+  });
+
+  test('document invocation context preparation loads target document, comments, and snapshot', async () => {
+    const prepare = createDispatchDocumentInvocationContextPreparer(buildChatPublisherContext({
+      triggerKind: 'task',
+      capability: 'task_dispatch',
+      recordId: 'invocation-1',
+      recordFamily: 'invocation',
+      bindingType: 'document',
+      bindingId: 'doc-1',
+      threadId: null,
+      subscription: { workspaceId: 'workspace-1' },
+      payload: {
+        invocation_id: 'invocation-1',
+        prompt: 'Please flesh out this fix and check the embedded image.',
+        target_id: 'doc-1',
+        target_title: 'Bug Padding',
+        scope_id: 'scope-1',
+        channel_id: 'channel-1',
+      },
+      runtime: { mode: 'flightdeck_pg' },
+    }));
+
+    const result = await prepare({
+      agent: { workingDirectory: join(tmpdir(), 'wm-doc-invocation-test') },
+      workspace: { workspaceOwnerNpub: 'npub1workspace' },
+      flightDeckContext: {
+        channel: {
+          name: 'Bugs',
+          contextPrompt: 'Diagnose before solving.',
+          hasSpecificContext: true,
+        },
+      },
+    });
+
+    expect(result).toMatchObject({
+      status: 'loaded',
+      operation: 'docs.prepare-document-invocation',
+      invocation: {
+        invocationId: 'invocation-1',
+        prompt: 'Please flesh out this fix and check the embedded image.',
+      },
+      document: {
+        documentId: 'doc-1',
+        title: 'Design for Autopilot Overview',
+        comments: [
+          expect.objectContaining({
+            commentId: 'doc-comment-1',
+          }),
+        ],
+      },
+    });
+    expect(pgDocumentFetchCalls).toHaveLength(1);
+    expect(pgDocumentFetchCalls[0]).toMatchObject({ documentId: 'doc-1', includeBody: true });
+    expect(pgDocumentCommentFetchCalls).toHaveLength(1);
+    const localPath = (result as any).document.localPath;
+    expect(typeof localPath).toBe('string');
+    const snapshot = await readFile(localPath, 'utf8');
+    expect(snapshot).toContain('Please flesh out this fix');
+    expect(snapshot).toContain('# Design for Autopilot Overview');
+  });
+
+  test('document invocation summary publisher posts a channel message with document mention', async () => {
+    const publish = createDispatchDocumentInvocationSummaryPublisher(buildChatPublisherContext({
+      triggerKind: 'task',
+      capability: 'task_dispatch',
+      recordId: 'invocation-1',
+      recordFamily: 'invocation',
+      bindingType: 'document',
+      bindingId: 'doc-1',
+      threadId: null,
+      subscription: { workspaceId: 'workspace-1' },
+      payload: {
+        invocation_id: 'invocation-1',
+        prompt: 'Please update this document.',
+        target_id: 'doc-1',
+        target_title: 'Bug Padding',
+        channel_id: 'channel-1',
+      },
+      runtime: { mode: 'flightdeck_pg' },
+    }));
+
+    const result = await publish({
+      invocationContext: {
+        invocation: {
+          invocationId: 'invocation-1',
+          prompt: 'Please update this document.',
+        },
+        location: {
+          channelId: 'channel-1',
+        },
+        document: {
+          documentId: 'doc-1',
+          title: 'Bug Padding',
+          mention: '@[Bug Padding](mention:document:doc-1)',
+        },
+      },
+      agentResult: {
+        summary: 'Expanded the fix and verified the screenshot.',
+        changedSections: ['Fix notes'],
+        commentsCreated: ['Question about rollout'],
+      },
+    });
+
+    expect(result).toMatchObject({
+      published: true,
+      status: 'ok',
+      operation: 'docs.publish-document-invocation-summary',
+      channelId: 'channel-1',
+      documentId: 'doc-1',
+    });
+    expect(pgMessageCreateCalls).toHaveLength(1);
+    expect(pgMessageCreateCalls[0]).toMatchObject({
+      channelId: 'channel-1',
+      createThread: true,
+    });
+    expect(String(pgMessageCreateCalls[0].body)).toContain('@[Bug Padding](mention:document:doc-1)');
+    expect(String(pgMessageCreateCalls[0].body)).toContain('Expanded the fix');
   });
 
   test.skip('legacy Yoke chat context hydration retries sync and falls back to the dispatch payload', async () => {

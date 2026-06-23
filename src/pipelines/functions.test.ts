@@ -23,6 +23,7 @@ beforeAll(async () => {
     ["agent-dispatch-chat.json", "agent-dispatch-chat"],
     ["agent-dispatch-task-response.json", "agent-dispatch-task-response"],
     ["document-discussion.json", "document-discussion"],
+    ["fd-document-invocation.json", "fd-document-invocation"],
   ] as const;
   for (const [fileName, slug] of seededDefinitions) {
     const definition = await getPipelineDefinition(slug, "functions-test");
@@ -1570,6 +1571,49 @@ describe("memory pipeline functions", () => {
       "draft-next-question",
       "publish-document-discussion-reply",
     ]);
+  });
+
+  test("shared fd-document-invocation definition loads document, lets agent edit, and publishes summary", () => {
+    const spec = loadSharedPipelineSpec("fd-document-invocation.json");
+    expect(spec.name).toBe("fd-document-invocation");
+    expect(spec.steps.map((step) => step.name)).toEqual([
+      "prepare-document-invocation-context",
+      "handle-document-invocation",
+      "publish-document-invocation-summary",
+    ]);
+    expect(spec.steps[0]).toMatchObject({
+      type: "code",
+      function: "dispatch.prepareDocumentInvocationContext",
+    });
+    expect(spec.steps[2]).toMatchObject({
+      type: "code",
+      function: "dispatch.publishDocumentInvocationSummary",
+    });
+  });
+
+  test("document invocation dispatch functions are dry-run outside dispatch routes", async () => {
+    const prepared = await builtinPipelineFunctions["dispatch.prepareDocumentInvocationContext"]!({
+      record: {
+        payload: {
+          invocation_id: "invocation-1",
+          prompt: "Review this doc.",
+          target_id: "doc-1",
+        },
+      },
+    });
+    expect(prepared).toMatchObject({
+      status: "not_configured",
+      operation: "docs.prepare-document-invocation",
+    });
+
+    const published = await builtinPipelineFunctions["dispatch.publishDocumentInvocationSummary"]!({
+      agentResult: { summary: "Updated the document." },
+    });
+    expect(published).toMatchObject({
+      published: false,
+      status: "not_configured",
+      operation: "docs.publish-document-invocation-summary",
+    });
   });
 
   test("dispatch.prepareChatDispatchResponse replies when task creation fails", async () => {

@@ -3201,7 +3201,7 @@ export class WorkspaceSubscriptionManager {
       eventType: profileEventType,
       scopeId,
       channelId,
-      builtInDefaultPipelineId: 'fd-agent-dispatch-task-response',
+      builtInDefaultPipelineId: targetType === 'document' ? 'fd-document-invocation' : 'fd-agent-dispatch-task-response',
     });
     if (!profilePolicyAllowsDispatch(profileDecision)) {
       return this.appendProfilePolicySuppression({

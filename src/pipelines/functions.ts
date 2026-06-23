@@ -1711,6 +1711,25 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     };
   },
 
+  async "dispatch.prepareDocumentInvocationContext"(input) {
+    return {
+      status: "not_configured",
+      operation: "docs.prepare-document-invocation",
+      reason: "This function only prepares document invocation context when the pipeline is launched by a Wingman dispatch route.",
+      invocation: objectValue(objectValue(input.record).payload),
+    };
+  },
+
+  async "dispatch.publishDocumentInvocationSummary"(input) {
+    return {
+      published: false,
+      status: "not_configured",
+      operation: "docs.publish-document-invocation-summary",
+      reason: "This function only publishes document invocation summaries when the pipeline is launched by a Wingman dispatch route.",
+      agentResult: input.agentResult ?? null,
+    };
+  },
+
   async "dispatch.prepareChatIntentInput"(input) {
     const dispatch = objectValue(input.dispatch);
     const workspace = objectValue(input.workspace);
