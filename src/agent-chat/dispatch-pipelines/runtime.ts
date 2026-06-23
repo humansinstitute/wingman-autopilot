@@ -40,6 +40,8 @@ import {
   createDispatchImplementationReviewTaskEnsurer,
   createDispatchDocumentInvocationContextPreparer,
   createDispatchDocumentInvocationSummaryPublisher,
+  createDispatchTaskInvocationContextPreparer,
+  createDispatchTaskInvocationResponsePublisher,
   createDispatchNeedsInputPublisher,
   createDispatchResponseActivityPublisher,
   createDispatchReviewTaskCompleter,
@@ -488,6 +490,18 @@ export class DispatchPipelineRuntime {
         runtime: input.flightDeckRuntime,
       });
       registry['dispatch.publishDocumentInvocationSummary'] = createDispatchDocumentInvocationSummaryPublisher({
+        eventInput: input.eventInput,
+        agent: input.agent,
+        botIdentity: input.eventInput.botIdentity ?? null,
+        runtime: input.flightDeckRuntime,
+      });
+      registry['dispatch.prepareTaskInvocationContext'] = createDispatchTaskInvocationContextPreparer({
+        eventInput: input.eventInput,
+        agent: input.agent,
+        botIdentity: input.eventInput.botIdentity ?? null,
+        runtime: input.flightDeckRuntime,
+      });
+      registry['dispatch.publishTaskInvocationResponse'] = createDispatchTaskInvocationResponsePublisher({
         eventInput: input.eventInput,
         agent: input.agent,
         botIdentity: input.eventInput.botIdentity ?? null,

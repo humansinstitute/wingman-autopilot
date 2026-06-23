@@ -17,6 +17,7 @@ const pgAudioNoteCreateCalls: Array<Record<string, unknown>> = [];
 const pgReactionCreateCalls: Array<Record<string, unknown>> = [];
 const pgTaskCreateCalls: Array<Record<string, unknown>> = [];
 const pgTaskFetchCalls: Array<Record<string, unknown>> = [];
+const pgTaskCommentFetchCalls: Array<Record<string, unknown>> = [];
 const pgTaskStateUpdateCalls: Array<Record<string, unknown>> = [];
 const pgTaskCommentCreateCalls: Array<Record<string, unknown>> = [];
 const pgLeaseAcquireCalls: Array<Record<string, unknown>> = [];
@@ -303,11 +304,29 @@ mock.module('../tower-client', () => ({
     return {
       task: {
         id: input.taskId,
+        title: 'Fix padding',
+        description: 'The dashboard cards need tighter padding.',
         state: 'in_progress',
         channel_id: 'channel-1',
         thread_id: 'thread-1',
         row_version: 2,
       },
+    };
+  }),
+  fetchFlightDeckPgTaskComments: mock(async (input: Record<string, unknown>) => {
+    pgTaskCommentFetchCalls.push(input);
+    return {
+      task_id: input.taskId,
+      comments: [
+        {
+          id: 'task-comment-1',
+          task_id: input.taskId,
+          body: 'Prior task comment.',
+          created_by_actor_npub: 'npub1requester',
+          created_at: '2026-06-10T02:00:00.000Z',
+        },
+      ],
+      next_cursor: null,
     };
   }),
   acquireFlightDeckPgEditLease: mock(async (input: Record<string, unknown>) => {
@@ -367,6 +386,8 @@ const {
   createDispatchDiscussionDocumentEnsurer,
   createDispatchDocumentInvocationContextPreparer,
   createDispatchDocumentInvocationSummaryPublisher,
+  createDispatchTaskInvocationContextPreparer,
+  createDispatchTaskInvocationResponsePublisher,
   createDispatchChatTaskCreator,
   createDispatchImplementationReviewProgressCommenter,
   createDispatchImplementationReviewTaskEnsurer,
@@ -461,6 +482,7 @@ describe('dispatch pipeline Flight Deck publisher', () => {
     pgReactionCreateCalls.length = 0;
     pgTaskCreateCalls.length = 0;
     pgTaskFetchCalls.length = 0;
+    pgTaskCommentFetchCalls.length = 0;
     pgTaskStateUpdateCalls.length = 0;
     pgTaskCommentCreateCalls.length = 0;
     pgLeaseAcquireCalls.length = 0;
@@ -604,6 +626,124 @@ describe('dispatch pipeline Flight Deck publisher', () => {
     });
     expect(String(pgMessageCreateCalls[0].body)).toContain('@[Bug Padding](mention:document:doc-1)');
     expect(String(pgMessageCreateCalls[0].body)).toContain('Expanded the fix');
+  });
+
+  test('task invocation context preparation loads target task, comments, and snapshot', async () => {
+    const prepare = createDispatchTaskInvocationContextPreparer(buildChatPublisherContext({
+      triggerKind: 'task',
+      capability: 'task_dispatch',
+      recordId: 'invocation-1',
+      recordFamily: 'invocation',
+      bindingType: 'task',
+      bindingId: 'task-1',
+      threadId: null,
+      subscription: { workspaceId: 'workspace-1' },
+      payload: {
+        invocation_id: 'invocation-1',
+        prompt: 'Please implement the padding fix.',
+        target_id: 'task-1',
+        target_title: 'Fix padding',
+        scope_id: 'scope-1',
+        channel_id: 'channel-1',
+      },
+      runtime: { mode: 'flightdeck_pg' },
+    }));
+
+    const result = await prepare({
+      agent: { workingDirectory: join(tmpdir(), 'wm-task-invocation-test') },
+      workspace: { workspaceOwnerNpub: 'npub1workspace' },
+      flightDeckContext: {
+        channel: {
+          name: 'Bugs',
+          contextPrompt: 'Diagnose before solving.',
+          hasSpecificContext: true,
+        },
+      },
+    });
+
+    expect(result).toMatchObject({
+      status: 'loaded',
+      operation: 'tasks.prepare-task-invocation',
+      invocation: {
+        invocationId: 'invocation-1',
+        prompt: 'Please implement the padding fix.',
+      },
+      task: {
+        taskId: 'task-1',
+        title: 'Fix padding',
+        comments: [
+          expect.objectContaining({
+            commentId: 'task-comment-1',
+            body: 'Prior task comment.',
+          }),
+        ],
+      },
+    });
+    expect(pgTaskFetchCalls).toHaveLength(1);
+    expect(pgTaskFetchCalls[0]).toMatchObject({ taskId: 'task-1' });
+    expect(pgTaskCommentFetchCalls).toHaveLength(1);
+    expect(pgTaskCommentFetchCalls[0]).toMatchObject({ taskId: 'task-1' });
+    const localPath = (result as any).task.localPath;
+    expect(typeof localPath).toBe('string');
+    const snapshot = await readFile(localPath, 'utf8');
+    expect(snapshot).toContain('Please implement the padding fix');
+    expect(snapshot).toContain('Prior task comment.');
+  });
+
+  test('task invocation response publisher comments on invoked task', async () => {
+    const publish = createDispatchTaskInvocationResponsePublisher(buildChatPublisherContext({
+      triggerKind: 'task',
+      capability: 'task_dispatch',
+      recordId: 'invocation-1',
+      recordFamily: 'invocation',
+      bindingType: 'task',
+      bindingId: 'task-1',
+      threadId: null,
+      subscription: { workspaceId: 'workspace-1' },
+      payload: {
+        invocation_id: 'invocation-1',
+        prompt: 'Please update this task.',
+        target_id: 'task-1',
+        target_title: 'Fix padding',
+        channel_id: 'channel-1',
+      },
+      runtime: { mode: 'flightdeck_pg' },
+    }));
+
+    const result = await publish({
+      invocationContext: {
+        invocation: {
+          invocationId: 'invocation-1',
+          prompt: 'Please update this task.',
+        },
+        location: {
+          channelId: 'channel-1',
+        },
+        task: {
+          taskId: 'task-1',
+          title: 'Fix padding',
+          mention: '@[Fix padding](mention:task:task-1)',
+        },
+      },
+      plan: {
+        action: 'direct_response',
+        taskId: 'task-1',
+        taskComment: 'I checked it and updated the task details.',
+      },
+    });
+
+    expect(result).toMatchObject({
+      published: true,
+      status: 'ok',
+      operation: 'tasks.publish-task-invocation-response',
+      taskId: 'task-1',
+    });
+    expect(pgTaskCommentCreateCalls).toHaveLength(1);
+    expect(pgTaskCommentCreateCalls[0]).toMatchObject({
+      workspaceId: 'workspace-1',
+      taskId: 'task-1',
+    });
+    expect(String(pgTaskCommentCreateCalls[0].body)).toContain('I checked it and updated the task details.');
   });
 
   test.skip('legacy Yoke chat context hydration retries sync and falls back to the dispatch payload', async () => {

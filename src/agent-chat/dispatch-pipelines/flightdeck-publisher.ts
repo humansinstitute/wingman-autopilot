@@ -22,6 +22,7 @@ import {
   fetchFlightDeckPgDocument,
   fetchFlightDeckPgDocumentComments,
   fetchFlightDeckPgTask,
+  fetchFlightDeckPgTaskComments,
   fetchFlightDeckPgWorkspaceMembers,
   listFlightDeckPgChannelDocs,
   uploadFlightDeckPgStorageObject,
@@ -1314,6 +1315,237 @@ export function createDispatchDocumentInvocationSummaryPublisher(
         documentId,
         reason: error instanceof Error ? error.message : String(error),
         agentResult: result,
+      };
+    }
+  };
+}
+
+export function createDispatchTaskInvocationContextPreparer(
+  context: DispatchPipelineFlightDeckPublisherContext,
+): DeclarativeFunction {
+  return async (input) => {
+    const payload = objectValue(context.eventInput.payload ?? objectValue(input.record).payload);
+    const target = objectValue(payload.target);
+    const taskId = getText(context.eventInput.bindingId)
+      ?? getText(payload.target_id)
+      ?? getText(target.id)
+      ?? getText(payload.task_id);
+    const taskTitleHint = getText(payload.target_title)
+      ?? getText(target.title)
+      ?? getText(payload.title);
+    const prompt = getText(payload.prompt)
+      ?? getText(payload.description)
+      ?? getText(input.prompt)
+      ?? '';
+    const invocationId = getText(payload.invocation_id ?? payload.id ?? context.eventInput.recordId);
+    const requesterNpub = getText(payload.created_by_npub ?? context.eventInput.updaterNpub);
+    const channelContext = objectValue(objectValue(input.flightDeckContext).channel);
+
+    if (!taskId) {
+      return {
+        status: 'failed',
+        operation: 'tasks.prepare-task-invocation',
+        reason: 'Task invocation did not include a target task id.',
+        invocation: { invocationId, prompt, requesterNpub },
+      };
+    }
+    if (!canUseFlightDeckRuntime(context)) {
+      return {
+        status: 'failed',
+        operation: 'tasks.prepare-task-invocation',
+        reason: context.runtime.error ?? 'Flight Deck runtime was not prepared.',
+        invocation: { invocationId, prompt, requesterNpub },
+        task: { taskId, title: taskTitleHint },
+      };
+    }
+
+    const pg = getFlightDeckPgPublishContext(context);
+    try {
+      const [taskResult, commentsResult] = await Promise.all([
+        fetchFlightDeckPgTask({
+          backendBaseUrl: pg.backendBaseUrl,
+          workspaceId: pg.workspaceId,
+          taskId,
+          appNpub: pg.appNpub,
+          botIdentity: pg.botIdentity,
+        }),
+        fetchFlightDeckPgTaskComments({
+          backendBaseUrl: pg.backendBaseUrl,
+          workspaceId: pg.workspaceId,
+          taskId,
+          appNpub: pg.appNpub,
+          botIdentity: pg.botIdentity,
+          limit: 200,
+        }).catch((error) => ({
+          comments: [],
+          next_cursor: null,
+          load_error: error instanceof Error ? error.message : String(error),
+        })),
+      ]);
+      const task = objectValue(taskResult.task);
+      const title = getText(task.title) ?? taskTitleHint ?? 'Flight Deck task';
+      const description = getText(task.description) ?? '';
+      const comments = Array.isArray(commentsResult.comments) ? commentsResult.comments : [];
+      const channelId = getText(task.channel_id)
+        ?? resolveFlightDeckPgChannelId(context, getText(payload.channel_id));
+      const scopeId = getText(task.scope_id ?? context.eventInput.scopeId ?? payload.scope_id);
+      const localPath = await writeTaskInvocationSnapshot({
+        workdir: getText(objectValue(input.agent).workingDirectory ?? objectValue(input.defaults).workdir),
+        invocationId,
+        taskId,
+        title,
+        state: getText(task.state),
+        rowVersion: task.row_version ?? task.rowVersion ?? null,
+        prompt,
+        description,
+        comments,
+      });
+      return {
+        status: 'loaded',
+        operation: 'tasks.prepare-task-invocation',
+        invocation: {
+          invocationId,
+          prompt,
+          requesterNpub,
+          sourceSurface: getText(objectValue(payload.metadata).source_surface),
+          createdByNpub: getText(payload.created_by_npub),
+        },
+        workspace: {
+          workspaceId: pg.workspaceId,
+          workspaceOwnerNpub: getText(objectValue(input.workspace).workspaceOwnerNpub),
+          humanWorkspaceOwnerNpub: getText(objectValue(input.workspace).humanWorkspaceOwnerNpub),
+          backendBaseUrl: pg.backendBaseUrl,
+          appNpub: pg.appNpub,
+        },
+        location: {
+          scopeId,
+          channelId,
+          channelName: getText(channelContext.name),
+          channelContextPrompt: getText(channelContext.contextPrompt),
+          hasSpecificChannelContext: channelContext.hasSpecificContext === true,
+        },
+        task: {
+          taskId,
+          title,
+          mention: mention('task', taskId, title),
+          state: getText(task.state),
+          priority: getText(task.priority),
+          description,
+          rowVersion: task.row_version ?? task.rowVersion ?? null,
+          localPath,
+          comments: comments.slice(0, 50).map((comment) => {
+            const item = objectValue(comment);
+            return {
+              commentId: getText(item.id),
+              authorNpub: getText(item.created_by_actor_npub ?? item.sender_npub),
+              body: getText(item.body),
+              createdAt: getText(item.created_at),
+              updatedAt: getText(item.updated_at),
+            };
+          }),
+          commentsLoadError: getText(objectValue(commentsResult).load_error),
+        },
+        guidance: [
+          'This is a Flight Deck Postgres task invocation, not a chat thread.',
+          'Use the invocation prompt as the immediate instruction and the target task as the response surface.',
+          'If child work is required, launch an existing child pipeline with reporting.mode flightdeck_task and taskId set to this task.',
+          'Direct answers, needs-input questions, and status updates should be comments on this task.',
+        ],
+      };
+    } catch (error) {
+      return {
+        status: 'failed',
+        operation: 'tasks.prepare-task-invocation',
+        reason: error instanceof Error ? error.message : String(error),
+        invocation: { invocationId, prompt, requesterNpub },
+        task: {
+          taskId,
+          title: taskTitleHint,
+          mention: mention('task', taskId, taskTitleHint ?? 'Flight Deck task'),
+        },
+      };
+    }
+  };
+}
+
+export function createDispatchTaskInvocationResponsePublisher(
+  context: DispatchPipelineFlightDeckPublisherContext,
+): DeclarativeFunction {
+  return async (input) => {
+    if (!canUseFlightDeckRuntime(context)) {
+      return {
+        published: false,
+        status: 'failed',
+        operation: 'tasks.publish-task-invocation-response',
+        reason: context.runtime.error ?? 'Flight Deck runtime was not prepared.',
+      };
+    }
+    if (!isFlightDeckPgPublisherContext(context)) {
+      return {
+        published: false,
+        status: 'failed',
+        operation: 'tasks.publish-task-invocation-response',
+        reason: 'Flight Deck PG context is required.',
+      };
+    }
+    const plan = objectValue(input.plan ?? input.taskInvocationPlan ?? input.workPlan);
+    const invocationContext = objectValue(input.invocationContext);
+    const task = objectValue(invocationContext.task);
+    const invocation = objectValue(invocationContext.invocation);
+    const childPipeline = objectValue(input.childPipeline);
+    const taskId = getText(plan.taskId ?? task.taskId ?? context.eventInput.bindingId);
+    if (!taskId) {
+      return {
+        published: false,
+        status: 'failed',
+        operation: 'tasks.publish-task-invocation-response',
+        reason: 'Task invocation response publish requires a task id.',
+      };
+    }
+    const action = getText(plan.action) ?? 'direct_response';
+    const shouldComment = plan.shouldComment !== false;
+    if (!shouldComment) {
+      return {
+        published: false,
+        status: 'skipped',
+        operation: 'tasks.publish-task-invocation-response',
+        reason: getText(plan.reason) ?? 'Plan requested no task comment.',
+        taskId,
+      };
+    }
+    const commentBody = buildTaskInvocationComment({
+      action,
+      plan,
+      childPipeline,
+      invocation,
+      task,
+    });
+    try {
+      const commentResult = await createFlightDeckPgTaskCommentFromContext(context, taskId, commentBody, {
+        autopilot_dispatch: true,
+        operation: 'tasks.task-invocation-response',
+        invocation_id: getText(invocation.invocationId ?? context.eventInput.recordId),
+        task_invocation_action: action,
+        child_pipeline_run_id: getText(childPipeline.pipelineRunId),
+      });
+      return {
+        published: true,
+        status: 'ok',
+        operation: 'tasks.publish-task-invocation-response',
+        taskId,
+        action,
+        commentResult,
+        childPipeline,
+      };
+    } catch (error) {
+      return {
+        published: false,
+        status: 'failed',
+        operation: 'tasks.publish-task-invocation-response',
+        taskId,
+        action,
+        reason: error instanceof Error ? error.message : String(error),
+        childPipeline,
       };
     }
   };
@@ -2754,6 +2986,123 @@ async function writeDocumentInvocationSnapshot(input: {
   return filePath;
 }
 
+async function writeTaskInvocationSnapshot(input: {
+  workdir: string | null;
+  invocationId: string | null;
+  taskId: string;
+  title: string;
+  state: string | null;
+  rowVersion: unknown;
+  prompt: string;
+  description: string;
+  comments: unknown[];
+}): Promise<string | null> {
+  if (!input.workdir) return null;
+  const snapshotDir = join(input.workdir, 'tmp', 'flightdeck-task-invocations');
+  await mkdir(snapshotDir, { recursive: true });
+  const safeTitle = input.title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60)
+    || 'task';
+  const safeInvocation = (input.invocationId ?? 'invocation')
+    .replace(/[^a-zA-Z0-9-]+/g, '-')
+    .slice(0, 60)
+    || 'invocation';
+  const filePath = join(snapshotDir, `${safeInvocation}.${input.taskId}.${safeTitle}.md`);
+  const commentBlocks = input.comments.map((comment, index) => {
+    const item = objectValue(comment);
+    const id = getText(item.id) ?? `comment-${index + 1}`;
+    const author = getText(item.created_by_actor_npub ?? item.sender_npub) ?? 'unknown';
+    const created = getText(item.created_at) ?? 'unknown time';
+    const body = getText(item.body) ?? '';
+    return [
+      `### ${id}`,
+      `Author: ${author}`,
+      `Created: ${created}`,
+      '',
+      body.trim() || '(empty comment)',
+    ].join('\n');
+  });
+  const metadata = [
+    '<!--',
+    'Local snapshot for Flight Deck task invocation.',
+    `Invocation ID: ${input.invocationId ?? 'unknown'}`,
+    `Task ID: ${input.taskId}`,
+    `Title: ${input.title}`,
+    input.state ? `State: ${input.state}` : null,
+    input.rowVersion !== null && input.rowVersion !== undefined ? `Row version: ${String(input.rowVersion)}` : null,
+    `Snapshot created: ${new Date().toISOString()}`,
+    '-->',
+    '',
+    '# Invocation Prompt',
+    '',
+    input.prompt.trim() || '(empty prompt)',
+    '',
+    '# Task Description',
+    '',
+    input.description.trim() || '(empty task description)',
+    '',
+    '# Task Comments',
+    '',
+    commentBlocks.length > 0 ? commentBlocks.join('\n\n') : '(no comments)',
+    '',
+  ].filter((line): line is string => line !== null);
+  await writeFile(filePath, `${metadata.join('\n')}\n`, 'utf8');
+  return filePath;
+}
+
+function buildTaskInvocationComment(input: {
+  action: string;
+  plan: Record<string, unknown>;
+  childPipeline: Record<string, unknown>;
+  invocation: Record<string, unknown>;
+  task: Record<string, unknown>;
+}): string {
+  const childStarted = input.childPipeline.started === true;
+  const childRunId = getText(input.childPipeline.pipelineRunId);
+  const childName = getText(input.childPipeline.pipelineName ?? input.childPipeline.pipelineDefinitionId);
+  const summary = getText(input.plan.taskComment)
+    ?? getText(input.plan.responseDraft)
+    ?? getText(input.plan.summary)
+    ?? getText(input.plan.taskSummary)
+    ?? (childStarted ? 'Started follow-up pipeline work for this invocation.' : 'Handled this task invocation.');
+  const lines = [
+    input.action === 'start_pipeline'
+      ? 'Task invocation: started follow-up work.'
+      : input.action === 'needs_input'
+        ? 'Task invocation: needs input.'
+        : 'Task invocation response.',
+    `Summary: ${summary}`,
+  ];
+  const prompt = getText(input.invocation.prompt);
+  if (prompt) {
+    lines.push(`Invocation prompt: ${compactSingleLine(prompt, 500)}`);
+  }
+  if (childStarted) {
+    lines.push(`Child pipeline: ${childName ?? 'pipeline'}${childRunId ? ` (${childRunId})` : ''}.`);
+  } else if (input.action === 'start_pipeline') {
+    const reason = getText(input.childPipeline.reason) ?? getText(input.plan.reason) ?? 'No child pipeline run was started.';
+    lines.push(`Child pipeline not started: ${reason}`);
+  }
+  const changed = getStringArray(input.plan.changedSections ?? input.plan.evidence);
+  if (changed.length > 0) {
+    lines.push('Evidence:');
+    for (const item of changed.slice(0, 8)) {
+      lines.push(`- ${compactSingleLine(item, 300)}`);
+    }
+  }
+  const blockers = getStringArray(input.plan.blockers ?? input.plan.openQuestions);
+  if (blockers.length > 0) {
+    lines.push('Blockers/questions:');
+    for (const item of blockers.slice(0, 8)) {
+      lines.push(`- ${compactSingleLine(item, 300)}`);
+    }
+  }
+  return lines.join('\n');
+}
+
 export function createDispatchTaskStateUpdater(
   context: DispatchPipelineFlightDeckPublisherContext,
   targetState: 'in_progress' | 'review',
@@ -3413,6 +3762,8 @@ function stepNeedsFlightDeckPublisher(step: DeclarativeStep): boolean {
       || step.function === 'dispatch.ensureDiscussionDocument'
       || step.function === 'dispatch.prepareDocumentInvocationContext'
       || step.function === 'dispatch.publishDocumentInvocationSummary'
+      || step.function === 'dispatch.prepareTaskInvocationContext'
+      || step.function === 'dispatch.publishTaskInvocationResponse'
       || step.function === 'dispatch.completeReviewTaskFromChat'
     )
   ) {

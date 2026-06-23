@@ -24,6 +24,7 @@ beforeAll(async () => {
     ["agent-dispatch-task-response.json", "agent-dispatch-task-response"],
     ["document-discussion.json", "document-discussion"],
     ["fd-document-invocation.json", "fd-document-invocation"],
+    ["fd-task-invocation.json", "fd-task-invocation"],
   ] as const;
   for (const [fileName, slug] of seededDefinitions) {
     const definition = await getPipelineDefinition(slug, "functions-test");
@@ -1613,6 +1614,115 @@ describe("memory pipeline functions", () => {
       published: false,
       status: "not_configured",
       operation: "docs.publish-document-invocation-summary",
+    });
+  });
+
+  test("shared fd-task-invocation definition loads task, classifies work, launches child work, and comments on task", () => {
+    const spec = loadSharedPipelineSpec("fd-task-invocation.json");
+    expect(spec.name).toBe("fd-task-invocation");
+    expect(spec.steps.map((step) => step.name)).toEqual([
+      "prepare-task-invocation-context",
+      "classify-task-invocation",
+      "normalise-task-invocation-plan",
+      "start-task-child-pipeline",
+      "publish-task-invocation-response",
+    ]);
+    expect(spec.steps[0]).toMatchObject({
+      type: "code",
+      function: "dispatch.prepareTaskInvocationContext",
+    });
+    expect(spec.steps[2]).toMatchObject({
+      type: "code",
+      function: "dispatch.normaliseTaskInvocationPlan",
+    });
+    expect(spec.steps[4]).toMatchObject({
+      type: "code",
+      function: "dispatch.publishTaskInvocationResponse",
+    });
+  });
+
+  test("task invocation normaliser routes software work to task-backed implementation loop", async () => {
+    const result = await builtinPipelineFunctions["dispatch.normaliseTaskInvocationPlan"]!({
+      invocationContext: {
+        invocation: {
+          invocationId: "invocation-1",
+          prompt: "Please implement the padding fix.",
+          requesterNpub: "npub1requester",
+        },
+        location: {
+          scopeId: "scope-1",
+          channelId: "channel-1",
+        },
+        task: {
+          taskId: "task-1",
+          title: "Fix padding",
+          description: "The dashboard cards need tighter padding.",
+        },
+      },
+      agentResponse: {
+        accepted: true,
+        action: "start_pipeline",
+        workStyle: "software_implementation",
+        taskSummary: "Implement the dashboard padding fix",
+        instructions: "Make the padding match the design and add focused validation.",
+        workdir: "/repo/app",
+        targetSurface: {
+          route: "/dashboard",
+          surface: "cards",
+          files: ["src/dashboard/Card.tsx"],
+        },
+      },
+    });
+
+    expect(result).toMatchObject({
+      action: "start_pipeline",
+      shouldStartChild: true,
+      shouldComment: true,
+      taskId: "task-1",
+      childPipelineDefinitionId: "software-implementation-review-loop",
+      workPlan: {
+        taskId: "task-1",
+        taskTitle: "Fix padding",
+        taskSummary: "Implement the dashboard padding fix",
+        instructions: "Make the padding match the design and add focused validation.",
+        originalPrompt: "Please implement the padding fix.",
+        workdir: "/repo/app",
+        origin: {
+          kind: "flightdeck_task",
+          triggerKind: "task",
+          taskId: "task-1",
+          channelId: "channel-1",
+          messageId: "invocation-1",
+        },
+        reporting: {
+          mode: "flightdeck_task",
+        },
+      },
+    });
+  });
+
+  test("task invocation dispatch functions are dry-run outside dispatch routes", async () => {
+    const prepared = await builtinPipelineFunctions["dispatch.prepareTaskInvocationContext"]!({
+      record: {
+        payload: {
+          invocation_id: "invocation-1",
+          prompt: "Review this task.",
+          target_id: "task-1",
+        },
+      },
+    });
+    expect(prepared).toMatchObject({
+      status: "not_configured",
+      operation: "tasks.prepare-task-invocation",
+    });
+
+    const published = await builtinPipelineFunctions["dispatch.publishTaskInvocationResponse"]!({
+      plan: { taskComment: "Updated the task." },
+    });
+    expect(published).toMatchObject({
+      published: false,
+      status: "not_configured",
+      operation: "tasks.publish-task-invocation-response",
     });
   });
 

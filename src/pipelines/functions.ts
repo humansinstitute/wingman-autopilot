@@ -1730,6 +1730,127 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     };
   },
 
+  async "dispatch.prepareTaskInvocationContext"(input) {
+    return {
+      status: "not_configured",
+      operation: "tasks.prepare-task-invocation",
+      reason: "This function only prepares task invocation context when the pipeline is launched by a Wingman dispatch route.",
+      invocation: objectValue(objectValue(input.record).payload),
+    };
+  },
+
+  async "dispatch.normaliseTaskInvocationPlan"(input) {
+    const context = objectValue(input.invocationContext);
+    const task = objectValue(context.task);
+    const invocation = objectValue(context.invocation);
+    const location = objectValue(context.location);
+    const response = objectValue(input.agentResponse ?? input.decision ?? input);
+    const taskId = getText(task.taskId ?? response.taskId);
+    const taskTitle = getText(task.title ?? response.taskTitle) ?? "Flight Deck task";
+    const prompt = getText(invocation.prompt) ?? "";
+    const rawAction = getText(response.action ?? response.intent ?? response.classification)?.toLowerCase();
+    const requestedStyle = getText(response.workStyle ?? response.pipelineStyle ?? response.recommendedPipeline)?.toLowerCase() ?? "";
+    const requestedPipeline = getText(response.childPipelineDefinitionId ?? response.pipelineDefinitionId ?? response.recommendedPipelineId);
+    const directAction = rawAction === "direct_response"
+      || rawAction === "answer_on_task"
+      || rawAction === "comment_on_task"
+      || rawAction === "needs_input"
+      || rawAction === "ignore";
+    const workStyle = requestedStyle.includes("software") || requestedStyle.includes("implementation") || /software|implementation|code|bug|fix|repo|build|deploy|ui|api|database/.test(requestedStyle)
+      ? "software_implementation"
+      : requestedStyle.includes("research") || requestedStyle.includes("report")
+        ? "research_and_report"
+        : requestedStyle.includes("generic") || requestedStyle.includes("do")
+          ? "do_and_review"
+          : requestedPipeline
+            ? "custom_pipeline"
+            : null;
+    const childPipelineDefinitionId = requestedPipeline
+      ?? (workStyle === "software_implementation"
+        ? "software-implementation-review-loop"
+        : workStyle === "research_and_report"
+          ? "research-and-report"
+          : workStyle === "do_and_review"
+            ? "do-and-review"
+            : null);
+    const action = directAction
+      ? (rawAction === "needs_input" ? "needs_input" : rawAction === "ignore" ? "ignore" : "direct_response")
+      : childPipelineDefinitionId
+        ? "start_pipeline"
+        : "direct_response";
+    const taskSummary = getText(response.taskSummary ?? response.summary)
+      ?? `Task invocation for ${taskTitle}`;
+    const instructions = getText(response.instructions ?? response.implementationPrompt ?? response.taskInstructions)
+      ?? prompt
+      ?? taskSummary;
+    const workdir = getText(response.workdir ?? response.workingDirectory);
+    const workPlan = {
+      taskId,
+      taskTitle,
+      taskSummary,
+      instructions,
+      originalPrompt: prompt,
+      acceptanceCriteria: getStringArray(response.acceptanceCriteria),
+      executionPlan: getStringArray(response.executionPlan),
+      managerChecklist: getStringArray(response.managerChecklist),
+      initialFindings: getStringArray(response.initialFindings),
+      workStyle: workStyle ?? getText(response.workStyle),
+      childPipelineDefinitionId,
+      pipelineDefinitionId: childPipelineDefinitionId,
+      scopeId: getText(location.scopeId),
+      workdir,
+      targetSurface: objectValue(response.targetSurface),
+      visualReferences: Array.isArray(response.visualReferences) ? response.visualReferences.slice(0, 8) : [],
+      designDocumentUrl: getText(response.designDocumentUrl ?? response.referenceDocumentUrl),
+      designDocumentUnavailableReason: getText(response.designDocumentUnavailableReason),
+      assignerNpub: getText(invocation.requesterNpub),
+      reviewerNpub: getText(invocation.requesterNpub),
+      origin: {
+        kind: "flightdeck_task",
+        triggerKind: "task",
+        taskId,
+        channelId: getText(location.channelId),
+        messageId: getText(invocation.invocationId),
+      },
+      reporting: {
+        mode: "flightdeck_task",
+      },
+      invocation: {
+        invocationId: getText(invocation.invocationId),
+        prompt,
+      },
+    };
+    return {
+      accepted: response.accepted !== false,
+      status: response.accepted === false ? "rejected" : "ok",
+      action,
+      shouldStartChild: action === "start_pipeline" && Boolean(childPipelineDefinitionId),
+      shouldComment: action !== "ignore",
+      taskId,
+      taskTitle,
+      taskSummary,
+      workStyle,
+      childPipelineDefinitionId,
+      pipelineDefinitionId: childPipelineDefinitionId,
+      workPlan,
+      taskComment: getText(response.taskComment ?? response.responseDraft ?? response.replyDraft ?? response.commentDraft ?? response.summary),
+      summary: taskSummary,
+      blockers: getStringArray(response.blockers),
+      openQuestions: getStringArray(response.openQuestions ?? response.questions),
+      confidence: clampConfidence(response.confidence),
+    };
+  },
+
+  async "dispatch.publishTaskInvocationResponse"(input) {
+    return {
+      published: false,
+      status: "not_configured",
+      operation: "tasks.publish-task-invocation-response",
+      reason: "This function only comments on task invocations when the pipeline is launched by a Wingman dispatch route.",
+      plan: input.plan ?? null,
+    };
+  },
+
   async "dispatch.prepareChatIntentInput"(input) {
     const dispatch = objectValue(input.dispatch);
     const workspace = objectValue(input.workspace);
