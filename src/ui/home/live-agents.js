@@ -12,8 +12,6 @@ import {
 } from "./session-groups.js";
 import { createSessionGroupTabs } from "./session-group-tabs.js";
 import { canResumeNativeAgentSession } from "./native-session-resume.js";
-import { showArchiveSessionsModal } from "./archive-modal.js";
-
 export { canResumeNativeAgentSession };
 
 function shouldRenderSessionCards() {
@@ -208,7 +206,6 @@ export function createLiveAgentsSection(deps) {
     navigateToChat,
     openDialog,
     isFeatureEnabledForViewer,
-    showToast,
     buildSessionFilterOptions,
     fetchSessions,
     syncMenuTabs,
@@ -219,15 +216,31 @@ export function createLiveAgentsSection(deps) {
   } = deps;
 
   const liveCard = document.createElement("section");
-  liveCard.className = "wm-card wm-home-live";
+  liveCard.className = "wm-card wm-home-live wm-home-quadrant";
 
   const liveHeader = document.createElement("div");
-  liveHeader.className = "wm-home-section-header";
+  liveHeader.className = "wm-home-section-header wm-home-quadrant__header";
   liveHeader.setAttribute("role", "button");
   liveHeader.setAttribute("tabindex", "0");
 
+  const titleWrap = document.createElement("span");
+  titleWrap.className = "wm-home-quadrant__title";
+
   const liveTitle = document.createElement("h2");
-  liveTitle.textContent = "Live Agents";
+  liveTitle.textContent = "Live Sessions";
+
+  const groupCounts = countSessionsByHomeGroup(sessionsStore().items);
+  const totalCount = Object.values(groupCounts).reduce((sum, count) => sum + Number(count ?? 0), 0);
+  const badge = document.createElement("span");
+  badge.className = "wm-home-quadrant__badge";
+  badge.textContent = String(totalCount);
+  badge.setAttribute("aria-label", `${totalCount} live session${totalCount === 1 ? "" : "s"}`);
+  titleWrap.append(liveTitle, badge);
+
+  const collapseIcon = document.createElement("span");
+  collapseIcon.className = "wm-home-quadrant__collapse";
+  collapseIcon.setAttribute("aria-hidden", "true");
+  collapseIcon.textContent = "▼";
 
   const liveContent = document.createElement("div");
   liveContent.className = "wm-home-live-content";
@@ -258,7 +271,7 @@ export function createLiveAgentsSection(deps) {
     setCollapsed(!currentlyCollapsed);
   });
 
-  liveHeader.append(liveTitle);
+  liveHeader.append(titleWrap, collapseIcon);
   liveCard.append(liveHeader);
 
   const actions = document.createElement("div");
@@ -326,7 +339,6 @@ export function createLiveAgentsSection(deps) {
   });
   actions.append(refreshBtn);
 
-  const groupCounts = countSessionsByHomeGroup(sessionsStore().items);
   const activeGroup = HOME_SESSION_GROUPS.some((group) => group.id === sessionGroup)
     ? sessionGroup
     : HOME_SESSION_GROUPS[0].id;
@@ -362,27 +374,6 @@ export function createLiveAgentsSection(deps) {
     );
     liveContent.append(tableContainer);
   }
-  const archiveActions = document.createElement("div");
-  archiveActions.className = "wm-home-live-footer-actions";
-
-  const archiveButton = document.createElement("button");
-  archiveButton.type = "button";
-  archiveButton.className = "wm-button secondary";
-  archiveButton.textContent = "Archive";
-  archiveButton.dataset.testid = "live-agents-archive";
-  archiveButton.setAttribute("aria-label", "Open archived sessions");
-  archiveButton.addEventListener("click", () => {
-    showArchiveSessionsModal({
-      resumeNativeSession: deps.resumeNativeSession,
-      getSessionPendingAction: deps.getSessionPendingAction,
-      isSessionActionPending: deps.isSessionActionPending,
-      withPendingSessionAction: deps.withPendingSessionAction,
-      showToast,
-    });
-  });
-
-  archiveActions.append(archiveButton);
-  liveContent.append(archiveActions);
   liveCard.append(liveContent);
 
   setCollapsed(false);

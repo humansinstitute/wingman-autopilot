@@ -40,22 +40,24 @@ export function createRunningPipelinesSection({ showToast, isFeatureEnabledForVi
   let refreshTimer = null;
 
   const card = document.createElement("section");
-  card.className = "wm-card wm-home-running-pipelines";
+  card.className = "wm-card wm-home-running-pipelines wm-home-quadrant";
   card.dataset.testid = "home-running-pipelines";
   card.setAttribute("aria-labelledby", "home-running-pipelines-title");
 
-  const header = document.createElement("div");
-  header.className = "wm-home-section-header wm-home-running-pipelines__header";
+  const header = document.createElement("button");
+  header.type = "button";
+  header.className = "wm-home-section-header wm-home-running-pipelines__header wm-home-quadrant__header";
+  header.setAttribute("aria-expanded", "true");
 
   const titleWrap = document.createElement("div");
-  titleWrap.className = "wm-home-running-pipelines__title";
+  titleWrap.className = "wm-home-running-pipelines__title wm-home-quadrant__title";
 
   const title = document.createElement("h2");
   title.id = "home-running-pipelines-title";
   title.textContent = "Running Pipelines";
 
   const badge = document.createElement("span");
-  badge.className = "wm-home-running-pipelines__badge";
+  badge.className = "wm-home-running-pipelines__badge wm-home-quadrant__badge";
   badge.textContent = "0";
   badge.setAttribute("aria-label", "0 running pipelines");
 
@@ -96,14 +98,36 @@ export function createRunningPipelinesSection({ showToast, isFeatureEnabledForVi
     void loadRuns({ showErrors: true });
   });
 
+  const collapseIcon = document.createElement("span");
+  collapseIcon.className = "wm-home-quadrant__collapse";
+  collapseIcon.setAttribute("aria-hidden", "true");
+  collapseIcon.textContent = "▼";
+
   actions.append(openListButton, pipelinesLink, refreshButton);
-  header.append(titleWrap, actions);
+  header.append(titleWrap, collapseIcon);
 
   const content = document.createElement("div");
-  content.className = "wm-home-running-pipelines__content";
+  content.className = "wm-home-running-pipelines__content wm-home-quadrant__content";
   content.setAttribute("aria-live", "polite");
 
-  card.append(header, content);
+  header.addEventListener("click", () => {
+    const collapsed = card.dataset.collapsed === "true";
+    setCollapsed(!collapsed);
+  });
+
+  function setCollapsed(collapsed) {
+    if (collapsed) {
+      card.dataset.collapsed = "true";
+      content.hidden = true;
+      header.setAttribute("aria-expanded", "false");
+      return;
+    }
+    delete card.dataset.collapsed;
+    content.hidden = false;
+    header.setAttribute("aria-expanded", "true");
+  }
+
+  card.append(header, actions, content);
 
   function scheduleRefresh() {
     if (refreshTimer) {
