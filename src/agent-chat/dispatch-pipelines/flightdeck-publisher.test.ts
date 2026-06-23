@@ -2459,6 +2459,7 @@ describe('dispatch pipeline Flight Deck publisher', () => {
     expect(createdTask).toMatchObject({
       workPlan: {
         designDocumentUrl: '@[Design for Autopilot Overview](mention:doc:76ebf6ac-91ff-47e2-af36-b99d47a10d57)',
+        reporting: { mode: 'flightdeck_task' },
         designDocument: {
           status: 'loaded',
           id: '76ebf6ac-91ff-47e2-af36-b99d47a10d57',

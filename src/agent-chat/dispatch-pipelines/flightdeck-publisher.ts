@@ -2203,6 +2203,10 @@ export function createDispatchImplementationReviewTaskEnsurer(
         messageId: getText(objectValue(workPlan.origin).messageId)
           ?? context.eventInput.recordId,
       },
+      reporting: {
+        ...reporting,
+        mode: reportingMode ?? 'flightdeck_task',
+      },
     };
 
     return {
