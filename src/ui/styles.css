@@ -690,6 +690,13 @@ body[data-live-header-collapsed="true"]:has(#app[data-route="live"]) #app[data-r
   align-items: start;
 }
 
+.wm-home-quadrant-column {
+  display: grid;
+  gap: 1rem;
+  align-items: start;
+  min-width: 0;
+}
+
 .wm-home-quadrant {
   display: flex;
   flex-direction: column;

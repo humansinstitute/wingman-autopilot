@@ -178,6 +178,14 @@ export function initHomeView(deps) {
     quadrants.className = "wm-home-quadrants";
     quadrants.dataset.testid = "home-quadrants";
 
+    const leftColumn = document.createElement("div");
+    leftColumn.className = "wm-home-quadrant-column";
+    leftColumn.dataset.testid = "home-quadrants-left";
+
+    const rightColumn = document.createElement("div");
+    rightColumn.className = "wm-home-quadrant-column";
+    rightColumn.dataset.testid = "home-quadrants-right";
+
     archiveComponent = createArchiveComponent({
       titleText: "Archive Sessions",
       defaultCollapsed: false,
@@ -194,8 +202,7 @@ export function initHomeView(deps) {
     });
     archiveComponent.element.classList.add("wm-home-quadrant");
 
-    quadrants.append(
-      createLiveAgentsSection({
+    const liveSessionsSection = createLiveAgentsSection({
         state,
         sessionsStore,
         getCurrentRoute,
@@ -229,21 +236,23 @@ export function initHomeView(deps) {
           liveSessionGroup = nextGroup;
           rerenderHomeIfVisible();
         },
-      }),
-      createRunningAppsSection({
+      });
+    const runningAppsSection = createRunningAppsSection({
         appsStore,
         navigateToApps,
         isAppActionDisabled,
         triggerAppAction,
         appStatusLabels: APP_STATUS_LABELS,
         appActionLabels: APP_ACTION_LABELS,
-      }),
-      createRunningPipelinesSection({
+      });
+    const runningPipelinesSection = createRunningPipelinesSection({
         showToast,
         isFeatureEnabledForViewer,
-      }).element,
-      archiveComponent.element,
-    );
+      }).element;
+
+    leftColumn.append(liveSessionsSection, runningPipelinesSection);
+    rightColumn.append(runningAppsSection, archiveComponent.element);
+    quadrants.append(leftColumn, rightColumn);
 
     wrapper.append(quadrants);
 
