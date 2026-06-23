@@ -8,6 +8,23 @@ export function shouldFullRenderOnSessionUpdate(route) {
   return route !== "home" && route !== "files" && route !== "live" && route !== "settings" && route !== "pipelines" && route !== "terminal";
 }
 
+export function renderRouteErrorView(route, error) {
+  const wrapper = document.createElement("section");
+  wrapper.className = "wm-card wm-route-error";
+  wrapper.dataset.testid = "route-render-error";
+  wrapper.setAttribute("role", "alert");
+
+  const title = document.createElement("h2");
+  title.textContent = "This view failed to render";
+
+  const message = document.createElement("p");
+  const errorMessage = error instanceof Error ? error.message : String(error ?? "Unknown error");
+  message.textContent = `${route || "current"}: ${errorMessage}`;
+
+  wrapper.append(title, message);
+  return wrapper;
+}
+
 export function createAppRenderer({
   appRoot,
   sessionsStore,
@@ -110,8 +127,13 @@ export function createAppRenderer({
         previousRenderPath = currentPath;
 
         appRoot.innerHTML = "";
-        const view = authPending ? renderAuthPendingView() : renderRouteView(resolvedRoute);
-        appRoot.append(view);
+        try {
+          const view = authPending ? renderAuthPendingView() : renderRouteView(resolvedRoute);
+          appRoot.append(view);
+        } catch (error) {
+          console.error("[render] failed to render route", resolvedRoute, error);
+          appRoot.append(renderRouteErrorView(resolvedRoute, error));
+        }
         if (!authPending) {
           renderFileEditorOverlay();
           renderWorktreeModal();
