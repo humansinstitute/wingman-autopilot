@@ -92,6 +92,21 @@ async function handlePost(path: string, ctx: PipelineApiContext, viewerNpub = "n
   ) ?? new Response(null, { status: 404 });
 }
 
+async function handlePostJson(path: string, ctx: PipelineApiContext, body: Record<string, unknown>, viewerNpub = "npub1viewer"): Promise<Response> {
+  const url = new URL(`http://localhost${path}`);
+  return await handlePipelineApi(
+    new Request(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+    url,
+    "POST",
+    makeAuth(viewerNpub),
+    ctx,
+  ) ?? new Response(null, { status: 404 });
+}
+
 function writeSharedPipelineDefinition(slug: string, spec: Record<string, unknown>): void {
   const definitionsDir = join(process.env.WINGMEN_PIPELINES_ROOT!, "shared", "definitions");
   mkdirSync(definitionsDir, { recursive: true });
@@ -188,6 +203,64 @@ describe("pipeline run API visibility", () => {
     expect(summary?.definitionSlug).toBe("review-loop-v2");
     expect(summary?.definitionDefault).toBe(false);
     expect(summary?.tags).toEqual([]);
+  });
+
+  test("compacts completed run payloads for accessible owner runs", async () => {
+    const store = makeStore();
+    const run = store.createRun({
+      definitionId: "compact-definition",
+      name: "compact me",
+      ownerNpub: "npub1viewer",
+      ownerAlias: "viewer-alias",
+      scope: "user",
+      input: {},
+    });
+    const step = store.createStep({
+      runId: run.id,
+      stepIndex: 0,
+      name: "payload step",
+      kind: "code",
+      input: { value: "x".repeat(1024) },
+    });
+    store.completeStep({ id: step.id, status: "ok", result: { value: "y".repeat(1024) } });
+    store.completeRun(run.id, "ok", { done: true });
+    const otherRun = store.createRun({
+      definitionId: "compact-definition",
+      name: "compact me",
+      ownerNpub: "npub1other",
+      ownerAlias: "other-alias",
+      scope: "user",
+      input: {},
+    });
+    const otherStep = store.createStep({
+      runId: otherRun.id,
+      stepIndex: 0,
+      name: "other payload step",
+      kind: "code",
+      input: { value: "z".repeat(1024) },
+    });
+    store.completeStep({ id: otherStep.id, status: "ok", result: { value: "z".repeat(1024) } });
+    store.completeRun(otherRun.id, "ok", { done: true });
+
+    const dryRunResponse = await handlePostJson(
+      "/api/pipelines/runs/compact-completed",
+      makeContext(store, true),
+      { name: "compact me", dryRun: true },
+    );
+    const dryRunBody = await dryRunResponse.json() as { matchedRuns?: number; compactedSteps?: number; compactedEvents?: number };
+    const response = await handlePostJson(
+      "/api/pipelines/runs/compact-completed",
+      makeContext(store, true),
+      { name: "compact me" },
+    );
+    const body = await response.json() as { matchedRuns?: number; compactedSteps?: number; compactedEvents?: number };
+
+    expect(dryRunResponse.status).toBe(200);
+    expect(dryRunBody).toMatchObject({ matchedRuns: 1, compactedSteps: 1, compactedEvents: 2 });
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({ matchedRuns: 1, compactedSteps: 1, compactedEvents: 2 });
+    expect(store.getStep(step.id)?.input).toEqual({});
+    expect(store.getStep(otherStep.id)?.input).toEqual({ value: "z".repeat(1024) });
   });
 
   test("allows shared instance viewers to open shared run and step details", async () => {

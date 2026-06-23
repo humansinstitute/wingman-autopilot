@@ -12,6 +12,7 @@ Commands:
   show <run-id>              Show a pipeline run with payloads
   steps <run-id>             List steps for a pipeline run
   resume <run-id>            Resume an errored run from its failed step
+  compact-completed          Clear duplicate step/event payloads for completed runs
 
 Common options:
   --url <url>                Wingman URL (env: WINGMAN_URL, default: http://localhost:3000)
@@ -20,10 +21,19 @@ Common options:
   --json                     Print raw JSON response
   -h, --help                 Show help
 
+Compaction options:
+  --dry-run                  Count matching rows without clearing payloads
+  --name <name>              Compact only runs with this pipeline run name
+  --definition-id <id>       Compact only runs for this definition id
+  --older-than <iso>         Compact only runs completed before this timestamp
+  --limit <n>                Compact at most n matching runs
+  --include-errored          Include errored runs as completed history
+
 Examples:
   bun clis/pipelines.ts runs --bot-crypto
   bun clis/pipelines.ts show <run-id> --bot-crypto
-  bun clis/pipelines.ts resume <run-id> --bot-crypto`;
+  bun clis/pipelines.ts resume <run-id> --bot-crypto
+  bun clis/pipelines.ts compact-completed --dry-run --bot-crypto`;
 
 interface PipelineRun {
   id?: string;
@@ -49,6 +59,23 @@ interface PipelineStep {
   [key: string]: unknown;
 }
 
+interface PipelineCompactionResult {
+  ok?: boolean;
+  dryRun?: boolean;
+  matchedRuns?: number;
+  compactedSteps?: number;
+  compactedEvents?: number;
+}
+
+interface CompactCompletedOptions {
+  dryRun?: boolean;
+  includeErrored?: boolean;
+  name?: string;
+  definitionId?: string;
+  olderThan?: string;
+  limit?: number;
+}
+
 function printRunList(runs: PipelineRun[]): void {
   if (runs.length === 0) {
     console.log('No pipeline runs found.');
@@ -65,6 +92,60 @@ function printRunList(runs: PipelineRun[]): void {
     const error = String(run.error ?? '-');
     console.log(`${id}\t${status}\t${cursor}\t${started}\t${definition}\t${name}\t${error}`);
   }
+}
+
+function printCompactionResult(result: PipelineCompactionResult): void {
+  const mode = result.dryRun ? 'Dry run' : 'Compacted';
+  console.log(`${mode}: ${String(result.matchedRuns ?? 0)} run(s), ${String(result.compactedSteps ?? 0)} step row(s), ${String(result.compactedEvents ?? 0)} event row(s)`);
+}
+
+function parseCompactCompletedOptions(args: string[]): CompactCompletedOptions {
+  const options: CompactCompletedOptions = {};
+  for (let i = 0; i < args.length; i++) {
+    const flag = args[i]!;
+    switch (flag) {
+      case '--dry-run':
+        options.dryRun = true;
+        break;
+      case '--include-errored':
+        options.includeErrored = true;
+        break;
+      case '--name':
+      case '--run-name': {
+        const value = args[i + 1];
+        if (!value) throw new Error(`${flag} requires a value`);
+        options.name = value;
+        i++;
+        break;
+      }
+      case '--definition-id': {
+        const value = args[i + 1];
+        if (!value) throw new Error('--definition-id requires a value');
+        options.definitionId = value;
+        i++;
+        break;
+      }
+      case '--older-than': {
+        const value = args[i + 1];
+        if (!value) throw new Error('--older-than requires a value');
+        options.olderThan = value;
+        i++;
+        break;
+      }
+      case '--limit': {
+        const value = args[i + 1];
+        if (!value) throw new Error('--limit requires a value');
+        const parsed = Number(value);
+        if (!Number.isInteger(parsed) || parsed < 1) throw new Error('--limit must be a positive integer');
+        options.limit = parsed;
+        i++;
+        break;
+      }
+      default:
+        throw new Error(`Unknown compact-completed option: ${flag}`);
+    }
+  }
+  return options;
 }
 
 function printStepList(steps: PipelineStep[]): void {
@@ -156,6 +237,21 @@ async function run(): Promise<void> {
       } else {
         const run = (payload.run ?? {}) as PipelineRun;
         console.log(`Resumed pipeline run: ${String(run.id ?? id)} (${String(run.status ?? 'running')})`);
+      }
+      break;
+    }
+
+    case 'compact-completed': {
+      const options = parseCompactCompletedOptions(args.slice(1));
+      const payload = await req<PipelineCompactionResult>(
+        'POST',
+        '/api/pipelines/runs/compact-completed',
+        options,
+      );
+      if (asJson) {
+        console.log(JSON.stringify(payload, null, 2));
+      } else {
+        printCompactionResult(payload);
       }
       break;
     }

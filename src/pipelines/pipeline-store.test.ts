@@ -53,6 +53,99 @@ describe("PipelineStore run summaries", () => {
     });
   });
 
+  test("records compact step events instead of duplicating payloads", () => {
+    const store = makeStore();
+    const run = store.createRun({
+      definitionId: "definition-1",
+      name: "compact events",
+      ownerNpub: "npub-owner",
+      ownerAlias: "owner-alias",
+      scope: "user",
+      input: { value: 1 },
+    });
+    const largeInput = { text: "x".repeat(4096) };
+    const largeResult = { report: "y".repeat(8192) };
+    const step = store.createStep({
+      runId: run.id,
+      stepIndex: 0,
+      name: "large-step",
+      kind: "code",
+      input: largeInput,
+      metadata: { assign: "$.report" },
+    });
+    store.completeStep({ id: step.id, status: "ok", result: largeResult, output: { report: "done" } });
+
+    const events = store.listEventsForStep(step.id);
+    const started = events.find((event) => event.type === "step_started");
+    const completed = events.find((event) => event.type === "step_completed");
+    const startedData = JSON.parse(String(started?.data_json ?? "{}")) as Record<string, unknown>;
+    const completedData = JSON.parse(String(completed?.data_json ?? "{}")) as Record<string, unknown>;
+
+    expect(String(started?.data_json ?? "").length).toBeLessThan(512);
+    expect(String(completed?.data_json ?? "").length).toBeLessThan(512);
+    expect(startedData).toMatchObject({
+      storage: "compact",
+      phase: "started",
+      assign: "$.report",
+    });
+    expect(Number(startedData.inputBytes)).toBeGreaterThan(4096);
+    expect(completedData).toMatchObject({
+      storage: "compact",
+      phase: "completed",
+      status: "ok",
+      assign: "$.report",
+    });
+    expect(Number(completedData.resultBytes)).toBeGreaterThan(8192);
+  });
+
+  test("compacts completed step and event payloads while preserving running payloads", () => {
+    const store = makeStore();
+    const completed = store.createRun({
+      definitionId: "definition-1",
+      name: "completed",
+      ownerNpub: "npub-owner",
+      ownerAlias: "owner-alias",
+      scope: "user",
+      input: { value: 1 },
+    });
+    const completedStep = store.createStep({
+      runId: completed.id,
+      stepIndex: 0,
+      name: "completed-step",
+      kind: "code",
+      input: { text: "x".repeat(1024) },
+    });
+    store.completeStep({ id: completedStep.id, status: "ok", result: { text: "y".repeat(1024) } });
+    store.completeRun(completed.id, "ok", { done: true });
+
+    const running = store.createRun({
+      definitionId: "definition-1",
+      name: "running",
+      ownerNpub: "npub-owner",
+      ownerAlias: "owner-alias",
+      scope: "user",
+      input: { value: 2 },
+    });
+    const runningStep = store.createStep({
+      runId: running.id,
+      stepIndex: 0,
+      name: "running-step",
+      kind: "code",
+      input: { text: "z".repeat(1024) },
+    });
+
+    const dryRun = store.compactCompletedRunPayloads({ ownerNpub: "npub-owner", dryRun: true });
+    const result = store.compactCompletedRunPayloads({ ownerNpub: "npub-owner" });
+
+    expect(dryRun).toEqual({ matchedRuns: 1, compactedSteps: 1, compactedEvents: 2 });
+    expect(result).toEqual({ matchedRuns: 1, compactedSteps: 1, compactedEvents: 2 });
+    expect(store.getStep(completedStep.id)?.input).toEqual({});
+    expect(store.getStep(completedStep.id)?.result).toBeNull();
+    expect(store.listEventsForStep(completedStep.id).map((event) => event.data_json)).toEqual(["{}", "{}"]);
+    expect(store.getRun(completed.id)?.result).toEqual({ done: true });
+    expect(store.getStep(runningStep.id)?.input).toEqual({ text: "z".repeat(1024) });
+  });
+
   test("lists run metadata and payload sizes without decoded run payloads", () => {
     const store = makeStore();
     const run = store.createRun({

@@ -303,6 +303,21 @@ export async function handlePipelineApi(
     return Response.json({ runs: runs.map((run) => serializeRunSummary(run, definitions)) });
   }
 
+  if (pathname === "/api/pipelines/runs/compact-completed" && method === "POST") {
+    const body = await request.json().catch(() => ({})) as Record<string, unknown>;
+    const result = ctx.store.compactCompletedRunPayloads({
+      ownerNpub,
+      includeShared: Boolean(ctx.sharedInstanceAccess),
+      definitionId: normaliseOptionalString(body.definitionId),
+      runName: normaliseOptionalString(body.name ?? body.runName),
+      includeErrored: body.includeErrored === true,
+      olderThan: normaliseOptionalString(body.olderThan),
+      limit: normalisePositiveInteger(body.limit),
+      dryRun: body.dryRun === true,
+    });
+    return Response.json({ ok: true, ...result, dryRun: body.dryRun === true });
+  }
+
   const runResumeMatch = pathname.match(/^\/api\/pipelines\/runs\/([^/]+)\/resume-from-failure$/);
   if (runResumeMatch && method === "POST") {
     const id = decodeURIComponent(runResumeMatch[1]!);
@@ -482,6 +497,12 @@ async function getHttpTriggerPipelineDefinition(key: string, ownerAlias: string 
 
 function normaliseOptionalString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function normalisePositiveInteger(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 function readCancelReason(payload: unknown): string {

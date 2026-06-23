@@ -85,8 +85,16 @@ export interface PipelineStepSummary {
   completedAt: string | null;
   inputBytes: number;
   resultBytes: number;
+  outputBytes: number;
   hasInput: boolean;
   hasResult: boolean;
+  hasOutput: boolean;
+}
+
+export interface PipelinePayloadCompactionResult {
+  matchedRuns: number;
+  compactedSteps: number;
+  compactedEvents: number;
 }
 
 const DEFAULT_DB_PATH = "data/pipelines.sqlite";
@@ -97,6 +105,10 @@ function now(): string {
 
 function encodeJson(value: unknown): string {
   return JSON.stringify(value ?? {});
+}
+
+function jsonByteLength(value: unknown): number {
+  return Buffer.byteLength(encodeJson(value), "utf8");
 }
 
 function decodeJsonObject(value: unknown): JsonObject {
@@ -263,7 +275,12 @@ export class PipelineStore {
       level: "info",
       type: status === "queued" ? "step_queued" : "step_started",
       message: input.name,
-      data: input.input,
+      data: compactStepEventData({
+        storage: "compact",
+        phase: "started",
+        inputBytes: jsonByteLength(input.input),
+        metadata: input.metadata ?? null,
+      }),
     });
     return this.getStep(id)!;
   }
@@ -271,7 +288,19 @@ export class PipelineStore {
   startStep(id: string): PipelineStepRecord {
     this.db.run(`UPDATE pipeline_steps SET status = 'running', started_at = COALESCE(started_at, ?) WHERE id = ?`, [now(), id]);
     const step = this.getStep(id)!;
-    this.addEvent({ runId: step.runId, stepId: id, level: "info", type: "step_started", message: step.name, data: step.input });
+    this.addEvent({
+      runId: step.runId,
+      stepId: id,
+      level: "info",
+      type: "step_started",
+      message: step.name,
+      data: compactStepEventData({
+        storage: "compact",
+        phase: "started",
+        inputBytes: jsonByteLength(step.input),
+        metadata: step.metadata,
+      }),
+    });
     return step;
   }
 
@@ -304,7 +333,15 @@ export class PipelineStore {
       level: input.status === "ok" ? "info" : "warn",
       type: "step_completed",
       message: input.status,
-      data: input.result ?? {},
+      data: compactStepEventData({
+        storage: "compact",
+        phase: "completed",
+        inputBytes: jsonByteLength(step.input),
+        resultBytes: input.result ? jsonByteLength(input.result) : 0,
+        outputBytes: input.output ? jsonByteLength(input.output) : 0,
+        status: input.status,
+        metadata: step.metadata,
+      }),
     });
     return step;
   }
@@ -402,13 +439,125 @@ export class PipelineStore {
           id, run_id, step_index, name, kind, status, error, wingman_session_id,
           parent_step_id, logical_key, callback_token, metadata_json, started_at, completed_at,
           length(coalesce(input_json, '')) AS input_bytes,
-          length(coalesce(result_json, '')) AS result_bytes
+          length(coalesce(result_json, '')) AS result_bytes,
+          length(coalesce(output_json, '')) AS output_bytes
         FROM pipeline_steps
         WHERE run_id = ?
         ORDER BY step_index ASC
       `)
       .all(runId) as Record<string, unknown>[];
     return rows.map(mapStepSummary);
+  }
+
+  compactCompletedRunPayloads(options: {
+    ownerNpub?: string | null;
+    includeShared?: boolean;
+    definitionId?: string | null;
+    runName?: string | null;
+    includeErrored?: boolean;
+    olderThan?: string | null;
+    limit?: number;
+    dryRun?: boolean;
+  } = {}): PipelinePayloadCompactionResult {
+    const filters = [
+      "status IN ('ok', 'cancelled', 'skipped', 'needs_input')",
+      `EXISTS (
+        SELECT 1 FROM pipeline_steps
+        WHERE pipeline_steps.run_id = pipeline_runs.id
+          AND (
+            pipeline_steps.input_json <> '{}'
+            OR pipeline_steps.result_json IS NOT NULL
+            OR pipeline_steps.output_json IS NOT NULL
+          )
+      )`,
+    ];
+    const args: unknown[] = [];
+    if (options.includeErrored) {
+      filters[0] = "status IN ('ok', 'cancelled', 'skipped', 'needs_input', 'error')";
+    }
+    if (options.ownerNpub) {
+      filters.push("(owner_npub = ? OR (? = 1 AND scope = 'shared'))");
+      args.push(options.ownerNpub, options.includeShared ? 1 : 0);
+    }
+    if (options.definitionId) {
+      filters.push("definition_id = ?");
+      args.push(options.definitionId);
+    }
+    if (options.runName) {
+      filters.push("name = ?");
+      args.push(options.runName);
+    }
+    if (options.olderThan) {
+      filters.push("completed_at IS NOT NULL AND completed_at < ?");
+      args.push(options.olderThan);
+    }
+    const limit = normalisePositiveInteger(options.limit);
+    const limitSql = limit === null ? "" : ` LIMIT ${limit}`;
+    const targetSql = `
+      SELECT id FROM pipeline_runs
+      WHERE ${filters.join(" AND ")}
+      ORDER BY completed_at ASC, started_at ASC
+      ${limitSql}
+    `;
+
+    const rows = this.db.query(targetSql).all(...args) as Array<{ id: string }>;
+    if (rows.length === 0 || options.dryRun) {
+      return {
+        matchedRuns: rows.length,
+        compactedSteps: this.countCompactableSteps(rows.map((row) => row.id)),
+        compactedEvents: this.countCompactableEvents(rows.map((row) => row.id)),
+      };
+    }
+
+    return this.db.transaction((runIds: string[]) => {
+      const placeholders = runIds.map(() => "?").join(", ");
+      const compactedSteps = Number((this.db.query(
+        `SELECT count(*) AS count FROM pipeline_steps
+         WHERE run_id IN (${placeholders})
+           AND (input_json <> '{}' OR result_json IS NOT NULL OR output_json IS NOT NULL)`,
+      ).get(...runIds) as { count?: number } | null)?.count ?? 0);
+      const compactedEvents = Number((this.db.query(
+        `SELECT count(*) AS count FROM pipeline_events
+         WHERE run_id IN (${placeholders}) AND type IN ('step_started', 'step_queued', 'step_completed') AND data_json <> '{}'`,
+      ).get(...runIds) as { count?: number } | null)?.count ?? 0);
+
+      this.db.run(
+        `UPDATE pipeline_steps
+         SET input_json = '{}', result_json = NULL, output_json = NULL
+         WHERE run_id IN (${placeholders})`,
+        runIds,
+      );
+      this.db.run(
+        `UPDATE pipeline_events
+         SET data_json = '{}'
+         WHERE run_id IN (${placeholders}) AND type IN ('step_started', 'step_queued', 'step_completed')`,
+        runIds,
+      );
+      return {
+        matchedRuns: runIds.length,
+        compactedSteps,
+        compactedEvents,
+      };
+    })(rows.map((row) => row.id));
+  }
+
+  private countCompactableSteps(runIds: string[]): number {
+    if (runIds.length === 0) return 0;
+    const placeholders = runIds.map(() => "?").join(", ");
+    return Number((this.db.query(
+      `SELECT count(*) AS count FROM pipeline_steps
+       WHERE run_id IN (${placeholders})
+         AND (input_json <> '{}' OR result_json IS NOT NULL OR output_json IS NOT NULL)`,
+    ).get(...runIds) as { count?: number } | null)?.count ?? 0);
+  }
+
+  private countCompactableEvents(runIds: string[]): number {
+    if (runIds.length === 0) return 0;
+    const placeholders = runIds.map(() => "?").join(", ");
+    return Number((this.db.query(
+      `SELECT count(*) AS count FROM pipeline_events
+       WHERE run_id IN (${placeholders}) AND type IN ('step_started', 'step_queued', 'step_completed') AND data_json <> '{}'`,
+    ).get(...runIds) as { count?: number } | null)?.count ?? 0);
   }
 
   listEventsForStep(stepId: string): Array<Record<string, unknown>> {
@@ -624,6 +773,7 @@ function mapStep(row: Record<string, unknown>): PipelineStepRecord {
 function mapStepSummary(row: Record<string, unknown>): PipelineStepSummary {
   const inputBytes = Number(row.input_bytes ?? 0);
   const resultBytes = Number(row.result_bytes ?? 0);
+  const outputBytes = Number(row.output_bytes ?? 0);
   return {
     id: String(row.id),
     runId: String(row.run_id),
@@ -641,7 +791,50 @@ function mapStepSummary(row: Record<string, unknown>): PipelineStepSummary {
     completedAt: row.completed_at === null || row.completed_at === undefined ? null : String(row.completed_at),
     inputBytes,
     resultBytes,
+    outputBytes,
     hasInput: inputBytes > 0,
     hasResult: resultBytes > 0,
+    hasOutput: outputBytes > 0,
   };
+}
+
+function compactStepEventData(input: {
+  storage: "compact";
+  phase: "started" | "completed";
+  inputBytes?: number;
+  resultBytes?: number;
+  outputBytes?: number;
+  status?: PipelineStatus;
+  metadata?: JsonObject | null;
+}): JsonObject {
+  const metadata = input.metadata && typeof input.metadata === "object" ? input.metadata : {};
+  return compactObject({
+    storage: input.storage,
+    phase: input.phase,
+    status: input.status,
+    inputBytes: input.inputBytes,
+    resultBytes: input.resultBytes,
+    outputBytes: input.outputBytes,
+    hasInput: typeof input.inputBytes === "number" ? input.inputBytes > 2 : undefined,
+    hasResult: typeof input.resultBytes === "number" ? input.resultBytes > 0 : undefined,
+    hasOutput: typeof input.outputBytes === "number" ? input.outputBytes > 0 : undefined,
+    assign: metadata.assign,
+    logicalKey: metadata.logicalKey,
+  });
+}
+
+function compactObject(input: Record<string, unknown>): JsonObject {
+  const output: JsonObject = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (value === undefined || value === null) continue;
+    output[key] = value;
+  }
+  return output;
+}
+
+function normalisePositiveInteger(value: unknown): number | null {
+  if (value === undefined || value === null) return null;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) return null;
+  return parsed;
 }
