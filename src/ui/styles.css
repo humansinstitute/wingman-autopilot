@@ -650,9 +650,16 @@ body[data-menu-open="true"] .wm-menu-panel {
   max-width: 1100px;
 }
 
+#app[data-route="files"],
+#app[data-route="apps"],
+#app[data-route="scheduler"],
+#app[data-route="pipelines"],
 #app[data-route="live"] {
   max-width: 90vw;
   width: 90vw;
+}
+
+#app[data-route="live"] {
   padding-top: 0;
   padding-bottom: 0;
 }
@@ -5389,9 +5396,16 @@ body[data-keyboard-open="true"] .wm-composer-shell {
     padding: 1.75rem 1.35rem;
   }
 
+  #app[data-route="files"],
+  #app[data-route="apps"],
+  #app[data-route="scheduler"],
+  #app[data-route="pipelines"],
   #app[data-route="live"] {
     max-width: none;
     width: 100%;
+  }
+
+  #app[data-route="live"] {
     padding-top: 0;
   }
 
@@ -5572,9 +5586,16 @@ body[data-keyboard-open="true"] .wm-composer-shell {
     padding: 1.4rem 1rem;
   }
 
+  #app[data-route="files"],
+  #app[data-route="apps"],
+  #app[data-route="scheduler"],
+  #app[data-route="pipelines"],
   #app[data-route="live"] {
     max-width: none;
     width: 100%;
+  }
+
+  #app[data-route="live"] {
     padding-top: 0;
     padding-left: 0;
     padding-right: 0;
@@ -5888,9 +5909,16 @@ body[data-keyboard-open="true"] .wm-composer-shell {
     padding: 1.35rem 1rem 4.5rem;
   }
 
+  #app[data-route="files"],
+  #app[data-route="apps"],
+  #app[data-route="scheduler"],
+  #app[data-route="pipelines"],
   #app[data-route="live"] {
     max-width: none;
     width: 100%;
+  }
+
+  #app[data-route="live"] {
     padding-top: 0;
     padding-left: 0;
     padding-right: 0;
