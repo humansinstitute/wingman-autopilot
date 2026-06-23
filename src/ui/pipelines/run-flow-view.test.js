@@ -153,6 +153,59 @@ describe("pipeline run flow visualization", () => {
     expect(html).not.toContain("commandPrefix");
   });
 
+  test("shows child field previews for object values on timeline cards", () => {
+    const objectStep = {
+      id: "step-object",
+      stepIndex: 1,
+      name: "Create work plan",
+      kind: "code",
+      status: "ok",
+      input: {
+        request: {
+          prompt: "This is the prompt that was used when we kicked off the work.",
+          working_dir: "~/code/wingmanbefree/wm-fd-2",
+          instructions: {
+            goal: "Do the work",
+            acceptance: "Make it readable",
+          },
+        },
+      },
+      metadata: {
+        description: "Prepare the work request.",
+        input: { pick: { request: "$.request" } },
+        assign: "$.workPlan",
+      },
+      output: {
+        workPlan: {
+          prompt: "This is the prompt that was used when we kicked off the work.",
+          working_dir: "~/code/wingmanbefree/wm-fd-2",
+          instructions: {
+            goal: "Do the work",
+            acceptance: "Make it readable",
+          },
+        },
+      },
+      result: {
+        workPlan: {
+          prompt: "This is the prompt that was used when we kicked off the work.",
+          working_dir: "~/code/wingmanbefree/wm-fd-2",
+          instructions: {
+            goal: "Do the work",
+            acceptance: "Make it readable",
+          },
+        },
+      },
+    };
+    const html = renderStepCardTimeline({
+      selectedRun: { steps: [objectStep] },
+      selectedStep: null,
+    }, { id: "run-object", input: {} }, [objectStep]);
+
+    expect(html).toContain("prompt: This is the prompt that was used");
+    expect(html).toContain("working dir: ~/code/wingmanbefree/wm-fd-2");
+    expect(html).toContain("instructions: 2 fields");
+  });
+
   test("does not display data rows for skipped steps", () => {
     const skippedSteps = [{
       id: "step-skipped",

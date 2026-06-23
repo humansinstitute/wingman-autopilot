@@ -16,6 +16,9 @@ const FIELD_LIMIT = 40;
 const FIELD_ROW_LIMIT = 5;
 const LEDGER_LIMIT = 120;
 const PREVIEW_LIMIT = 96;
+const COMPOSITE_PREVIEW_LIMIT = 132;
+const COMPOSITE_PREVIEW_FIELDS = 3;
+const NESTED_PREVIEW_LIMIT = 44;
 
 export function renderStepCardTimeline(state, run, steps, options = {}) {
   const sortedSteps = sortSteps(steps);
@@ -185,8 +188,8 @@ function renderFieldRows(rows, idPrefix) {
 }
 
 function renderFieldRow(row, contextLabel = "") {
-  const preview = formatPreviewValue(row.value);
   const inspectValue = Object.prototype.hasOwnProperty.call(Object(row), "inspectValue") ? row.inspectValue : row.value;
+  const preview = formatDisplayPreviewValue(row.value, inspectValue);
   const title = [contextLabel, row.name].filter(Boolean).join(": ") || "Value";
   return `
     <div class="wm-pipeline-flow-row">
@@ -375,8 +378,8 @@ function getPathValue(value, path) {
 }
 
 function formatPreviewValue(value) {
-  if (Array.isArray(value)) return `${value.length} item${value.length === 1 ? "" : "s"}`;
-  if (isObjectLike(value)) return `${Object.keys(value).length} field${Object.keys(value).length === 1 ? "" : "s"}`;
+  if (Array.isArray(value)) return formatArrayPreview(value);
+  if (isObjectLike(value)) return formatObjectPreview(value);
   if (typeof value === "string") {
     const compact = value.replace(/\s+/g, " ").trim();
     return compact.length > PREVIEW_LIMIT ? `${compact.slice(0, PREVIEW_LIMIT - 3)}...` : compact;
@@ -385,6 +388,64 @@ function formatPreviewValue(value) {
   if (value === null) return "null";
   if (typeof value === "boolean") return value ? "True" : "False";
   return String(value);
+}
+
+function formatDisplayPreviewValue(displayValue, inspectValue) {
+  if (isCompositeValue(inspectValue)) return formatPreviewValue(inspectValue);
+  return formatPreviewValue(displayValue);
+}
+
+function formatObjectPreview(value) {
+  const entries = Object.entries(value);
+  if (!entries.length) return "0 fields";
+  const preview = entries
+    .slice(0, COMPOSITE_PREVIEW_FIELDS)
+    .map(([key, child]) => `${humanizePreviewKey(key)}: ${formatNestedPreviewValue(child)}`)
+    .join("; ");
+  const suffix = entries.length > COMPOSITE_PREVIEW_FIELDS ? `; +${entries.length - COMPOSITE_PREVIEW_FIELDS} more` : "";
+  return trimPreview(`${preview}${suffix}`, COMPOSITE_PREVIEW_LIMIT);
+}
+
+function formatArrayPreview(value) {
+  if (!value.length) return "0 items";
+  const primitiveItems = value.filter((item) => !isCompositeValue(item));
+  if (primitiveItems.length === value.length) {
+    return trimPreview(value.slice(0, COMPOSITE_PREVIEW_FIELDS).map(formatNestedPreviewValue).join(", "), COMPOSITE_PREVIEW_LIMIT);
+  }
+  const sample = value.slice(0, COMPOSITE_PREVIEW_FIELDS)
+    .map((item, index) => `${index + 1}: ${formatNestedPreviewValue(item)}`)
+    .join("; ");
+  const suffix = value.length > COMPOSITE_PREVIEW_FIELDS ? `; +${value.length - COMPOSITE_PREVIEW_FIELDS} more` : "";
+  return trimPreview(`${sample}${suffix}`, COMPOSITE_PREVIEW_LIMIT);
+}
+
+function formatNestedPreviewValue(value) {
+  if (Array.isArray(value)) return `${value.length} item${value.length === 1 ? "" : "s"}`;
+  if (isObjectLike(value)) return `${Object.keys(value).length} field${Object.keys(value).length === 1 ? "" : "s"}`;
+  if (typeof value === "string") return trimPreview(value.replace(/\s+/g, " ").trim(), NESTED_PREVIEW_LIMIT);
+  if (value === undefined) return "undefined";
+  if (value === null) return "null";
+  if (typeof value === "boolean") return value ? "True" : "False";
+  return trimPreview(String(value), NESTED_PREVIEW_LIMIT);
+}
+
+function humanizePreviewKey(key) {
+  return String(key ?? "")
+    .replace(/[_-]+/g, " ")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function trimPreview(value, limit) {
+  const compact = String(value ?? "").replace(/\s+/g, " ").trim();
+  if (compact.length <= limit) return compact;
+  return `${compact.slice(0, Math.max(0, limit - 3))}...`;
+}
+
+function isCompositeValue(value) {
+  return Array.isArray(value) || isObjectLike(value);
 }
 
 function sortSteps(steps) {
