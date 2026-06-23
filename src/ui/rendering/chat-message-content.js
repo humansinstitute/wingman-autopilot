@@ -53,7 +53,7 @@ function buildImageHtml(alt, url) {
     return null;
   }
   const safeAlt = escapeHtml(alt || "uploaded image").replace(/"/g, "&quot;");
-  return `<a class="wm-inline-image-link" href="${safeUrl}" target="_blank" rel="noopener noreferrer"><img class="wm-inline-image" src="${safeUrl}" alt="${safeAlt}" loading="lazy" /></a>`;
+  return `<a class="wm-inline-image-link" href="${safeUrl}" target="_blank" rel="noopener noreferrer" aria-label="Open ${safeAlt} preview" data-testid="inline-image-preview-link"><img class="wm-inline-image" src="${safeUrl}" alt="${safeAlt}" loading="lazy" /></a>`;
 }
 
 export function renderChatMessageHtml(content, options = {}) {

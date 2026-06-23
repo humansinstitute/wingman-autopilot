@@ -1914,6 +1914,7 @@ handleImageUploads = imageAttachmentsModule.handleImageUploads;
 handleAttachmentUploads = imageAttachmentsModule.handleAttachmentUploads;
 cleanupOrphanedMarkers = imageAttachmentsModule.cleanupOrphanedMarkers;
 prepareImagePreviewsForComposer = imageAttachmentsModule.prepareImagePreviewsForComposer;
+imageAttachmentsModule.bindInlineImagePreviewLinks();
 
 const voiceNotesModule = initVoiceNotes({
   state,

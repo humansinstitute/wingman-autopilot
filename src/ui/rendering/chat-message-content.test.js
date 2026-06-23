@@ -28,5 +28,7 @@ describe("chat message content rendering", () => {
 
     expect(html).toContain("Here is the thing you asked for.");
     expect(html).toContain("wm-inline-image");
+    expect(html).toContain('data-testid="inline-image-preview-link"');
+    expect(html).toContain('aria-label="Open upload preview"');
   });
 });

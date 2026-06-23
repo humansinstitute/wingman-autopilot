@@ -4,6 +4,86 @@
  * Depends on: state.messageDrafts, getSessionById (via DI).
  */
 
+export function openImagePreviewModal(attachment) {
+  const imageSrc = attachment?.publicPath || attachment?.objectUrl;
+  if (!imageSrc) return;
+
+  const existing = document.querySelector('.wm-image-preview-dialog');
+  if (existing instanceof HTMLDialogElement) {
+    existing.close();
+    existing.remove();
+  }
+
+  const dialog = document.createElement('dialog');
+  dialog.className = 'wm-image-preview-dialog';
+  dialog.dataset.testid = 'image-preview-modal';
+  dialog.setAttribute('aria-labelledby', 'image-preview-title');
+  const panel = document.createElement('div');
+  panel.className = 'wm-image-preview-dialog__panel';
+  const header = document.createElement('header');
+  header.className = 'wm-image-preview-dialog__header';
+  const title = document.createElement('h2');
+  title.id = 'image-preview-title';
+  title.textContent = 'Image preview';
+  const closeButton = document.createElement('button');
+  closeButton.type = 'button';
+  closeButton.className = 'wm-image-preview-dialog__close';
+  closeButton.setAttribute('aria-label', 'Close image preview');
+  closeButton.dataset.testid = 'image-preview-close';
+  closeButton.textContent = '\u00d7';
+  const body = document.createElement('div');
+  body.className = 'wm-image-preview-dialog__body';
+  const image = document.createElement('img');
+  image.src = imageSrc;
+  image.alt = attachment.name || 'Uploaded image preview';
+  image.dataset.testid = 'image-preview-full-image';
+  header.append(title, closeButton);
+  body.append(image);
+  panel.append(header, body);
+  dialog.append(panel);
+
+  dialog.addEventListener('click', (event) => {
+    if (event.target === dialog) {
+      dialog.close();
+    }
+  });
+  closeButton.addEventListener('click', () => {
+    dialog.close();
+  });
+  dialog.addEventListener('close', () => {
+    dialog.remove();
+  });
+
+  document.body.append(dialog);
+  if (typeof dialog.showModal === 'function') {
+    dialog.showModal();
+  } else {
+    dialog.setAttribute('open', 'open');
+  }
+}
+
+export function bindInlineImagePreviewLinks({ root = document, openPreview = openImagePreviewModal } = {}) {
+  const clickRoot = root?.addEventListener ? root : document;
+  const handleClick = (event) => {
+    const target = event.target;
+    const link = target?.closest?.('.wm-inline-image-link');
+    if (!link) {
+      return;
+    }
+    event.preventDefault();
+
+    const image = link.querySelector?.('img');
+    const publicPath = image?.currentSrc || image?.src || link.href || link.getAttribute?.('href') || '';
+    const name = image?.alt || link.getAttribute?.('aria-label') || 'Inline image preview';
+    openPreview({ publicPath, name });
+  };
+
+  clickRoot.addEventListener('click', handleClick);
+  return () => {
+    clickRoot.removeEventListener?.('click', handleClick);
+  };
+}
+
 export function initImageAttachments(deps) {
   const { state, getSessionById, showToast } = deps;
 
@@ -131,64 +211,6 @@ export function initImageAttachments(deps) {
   const getImagePreviewContainer = (sessionId) => {
     const composerShell = document.querySelector(`.wm-composer-shell[data-session-id="${sessionId}"]`);
     return composerShell?.querySelector('.wm-image-preview-container') ?? null;
-  };
-
-  const openImagePreviewModal = (attachment) => {
-    const imageSrc = attachment.publicPath || attachment.objectUrl;
-    if (!imageSrc) return;
-
-    const existing = document.querySelector('.wm-image-preview-dialog');
-    if (existing instanceof HTMLDialogElement) {
-      existing.close();
-      existing.remove();
-    }
-
-    const dialog = document.createElement('dialog');
-    dialog.className = 'wm-image-preview-dialog';
-    dialog.dataset.testid = 'image-preview-modal';
-    dialog.setAttribute('aria-labelledby', 'image-preview-title');
-    const panel = document.createElement('div');
-    panel.className = 'wm-image-preview-dialog__panel';
-    const header = document.createElement('header');
-    header.className = 'wm-image-preview-dialog__header';
-    const title = document.createElement('h2');
-    title.id = 'image-preview-title';
-    title.textContent = 'Image preview';
-    const closeButton = document.createElement('button');
-    closeButton.type = 'button';
-    closeButton.className = 'wm-image-preview-dialog__close';
-    closeButton.setAttribute('aria-label', 'Close image preview');
-    closeButton.dataset.testid = 'image-preview-close';
-    closeButton.textContent = '\u00d7';
-    const body = document.createElement('div');
-    body.className = 'wm-image-preview-dialog__body';
-    const image = document.createElement('img');
-    image.src = imageSrc;
-    image.alt = attachment.name || 'Uploaded image preview';
-    image.dataset.testid = 'image-preview-full-image';
-    header.append(title, closeButton);
-    body.append(image);
-    panel.append(header, body);
-    dialog.append(panel);
-
-    dialog.addEventListener('click', (event) => {
-      if (event.target === dialog) {
-        dialog.close();
-      }
-    });
-    closeButton.addEventListener('click', () => {
-      dialog.close();
-    });
-    dialog.addEventListener('close', () => {
-      dialog.remove();
-    });
-
-    document.body.append(dialog);
-    if (typeof dialog.showModal === 'function') {
-      dialog.showModal();
-    } else {
-      dialog.setAttribute('open', 'open');
-    }
   };
 
   const syncPreviewContainerVisibility = (container) => {
@@ -533,5 +555,7 @@ export function initImageAttachments(deps) {
     handleImageUploads,
     handleAttachmentUploads,
     cleanupOrphanedMarkers,
+    openImagePreviewModal,
+    bindInlineImagePreviewLinks,
   };
 }

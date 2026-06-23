@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
-import { initImageAttachments } from "./image-attachments.js";
+import { bindInlineImagePreviewLinks, initImageAttachments } from "./image-attachments.js";
 
 class FakeElement {
   constructor(tagName) {
@@ -52,6 +52,11 @@ class FakeElement {
     this.eventListeners.get(type).push(handler);
   }
 
+  removeEventListener(type, handler) {
+    const handlers = this.eventListeners.get(type) ?? [];
+    this.eventListeners.set(type, handlers.filter((item) => item !== handler));
+  }
+
   dispatchEvent(event) {
     try {
       if (!event.target) {
@@ -67,6 +72,17 @@ class FakeElement {
 
   click() {
     this.dispatchEvent({ type: "click", target: this });
+  }
+
+  closest(selector) {
+    let current = this;
+    while (current) {
+      if (matchesSelector(current, selector)) {
+        return current;
+      }
+      current = current.parentElement;
+    }
+    return null;
   }
 
   querySelector(selector) {
@@ -97,6 +113,9 @@ function hasClass(element, className) {
 function matchesSelector(element, selector) {
   if (selector === "textarea") {
     return element.tagName === "TEXTAREA";
+  }
+  if (selector === "img") {
+    return element.tagName === "IMG";
   }
   const dataTestIdMatch = selector.match(/^\[data-testid="([^"]+)"\]$/);
   if (dataTestIdMatch) {
@@ -207,5 +226,43 @@ describe("image attachment previews", () => {
     expect(state.imageAttachmentDrafts.has("session-1")).toBe(false);
     expect(firstMount.container.hidden).toBe(true);
     expect(firstMount.textarea.value).toBe("hello ");
+  });
+
+  test("opens inline chat images in the preview modal instead of navigating", () => {
+    const root = new FakeElement("div");
+    const link = new FakeElement("a");
+    link.className = "wm-inline-image-link";
+    link.href = "/uploads/images/user/codex/screen.png";
+    link.setAttribute("href", link.href);
+    const image = new FakeElement("img");
+    image.src = "http://localhost:3600/uploads/images/user/codex/screen.png";
+    image.alt = "uploaded image";
+    link.append(image);
+    root.append(link);
+
+    let prevented = false;
+    let previewAttachment = null;
+    const detach = bindInlineImagePreviewLinks({
+      root,
+      openPreview: (attachment) => {
+        previewAttachment = attachment;
+      },
+    });
+
+    root.dispatchEvent({
+      type: "click",
+      target: image,
+      preventDefault: () => {
+        prevented = true;
+      },
+    });
+
+    expect(prevented).toBe(true);
+    expect(previewAttachment).toEqual({
+      publicPath: image.src,
+      name: "uploaded image",
+    });
+
+    detach();
   });
 });
