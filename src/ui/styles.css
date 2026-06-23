@@ -697,6 +697,53 @@ body[data-live-header-collapsed="true"]:has(#app[data-route="live"]) #app[data-r
   min-width: 0;
 }
 
+.wm-home-tabs {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.wm-home-tabs__list {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border-primary);
+  padding-bottom: 0.55rem;
+}
+
+.wm-home-tabs__tab {
+  flex: 0 0 auto;
+  min-height: 2.25rem;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 700;
+  padding: 0.35rem 0.8rem;
+}
+
+.wm-home-tabs__tab:hover,
+.wm-home-tabs__tab:focus-visible {
+  border-color: color-mix(in srgb, var(--accent-primary) 45%, var(--border-primary));
+  color: var(--text-primary);
+  outline: none;
+}
+
+.wm-home-tabs__tab.is-active {
+  border-color: color-mix(in srgb, var(--accent-primary) 50%, var(--border-primary));
+  background: color-mix(in srgb, var(--accent-primary) 12%, var(--bg-secondary));
+  color: var(--accent-primary);
+}
+
+.wm-home-tabs__panel {
+  min-width: 0;
+}
+
 .wm-home-quadrant {
   display: flex;
   flex-direction: column;
@@ -715,6 +762,10 @@ body[data-live-header-collapsed="true"]:has(#app[data-route="live"]) #app[data-r
   text-align: left;
   cursor: pointer;
   user-select: none;
+}
+
+.wm-home-quadrant[data-collapsible="false"] .wm-home-quadrant__header {
+  cursor: default;
 }
 
 .wm-home-quadrant__header:focus-visible {

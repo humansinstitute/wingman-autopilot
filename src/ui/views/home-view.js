@@ -11,6 +11,13 @@ import { createRunningPipelinesSection } from "../home/running-pipelines.js";
 import { DEFAULT_LIVE_SESSION_SORT } from "../home/session-table.js";
 import { HOME_SESSION_GROUPS } from "../home/session-groups.js";
 
+const HOME_TABS = Object.freeze([
+  { id: "sessions", label: "Sessions" },
+  { id: "pipelines", label: "Pipelines" },
+  { id: "apps", label: "Apps" },
+  { id: "archive", label: "Archive" },
+]);
+
 export function initHomeView(deps) {
   const {
     state,
@@ -54,6 +61,7 @@ export function initHomeView(deps) {
   let archiveComponent = null;
   let liveSessionSort = { ...DEFAULT_LIVE_SESSION_SORT };
   let liveSessionGroup = HOME_SESSION_GROUPS[0]?.id ?? 'my';
+  let activeHomeTab = HOME_TABS[0].id;
   const sessionActionPending = new Map();
 
   function getSessionPendingAction(sessionId) {
@@ -174,35 +182,66 @@ export function initHomeView(deps) {
       // void ensureAppsLoaded(); // DISABLED
     }
 
-    const quadrants = document.createElement("div");
-    quadrants.className = "wm-home-quadrants";
-    quadrants.dataset.testid = "home-quadrants";
+    const tabShell = document.createElement("section");
+    tabShell.className = "wm-home-tabs";
+    tabShell.dataset.testid = "home-tabs";
 
-    const leftColumn = document.createElement("div");
-    leftColumn.className = "wm-home-quadrant-column";
-    leftColumn.dataset.testid = "home-quadrants-left";
+    const tabList = document.createElement("div");
+    tabList.className = "wm-home-tabs__list";
+    tabList.setAttribute("role", "tablist");
+    tabList.setAttribute("aria-label", "Home sections");
 
-    const rightColumn = document.createElement("div");
-    rightColumn.className = "wm-home-quadrant-column";
-    rightColumn.dataset.testid = "home-quadrants-right";
+    const activeTab = HOME_TABS.some((tab) => tab.id === activeHomeTab)
+      ? activeHomeTab
+      : HOME_TABS[0].id;
+    activeHomeTab = activeTab;
 
-    archiveComponent = createArchiveComponent({
-      titleText: "Archive Sessions",
-      defaultCollapsed: false,
-      onViewSession: (session) => {
-        const targetPath = `${LIVE_ROUTE_PREFIX}/${session.id}`;
-        window.history.pushState({ route: "live", sessionId: session.id }, "", targetPath);
-        setCurrentRoute("live");
-        render();
-      },
-      resumeNativeSession,
-      getSessionPendingAction,
-      isSessionActionPending,
-      withPendingSessionAction,
+    HOME_TABS.forEach((tab) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "wm-home-tabs__tab";
+      button.textContent = tab.label;
+      button.dataset.testid = `home-tab-${tab.id}`;
+      button.setAttribute("role", "tab");
+      button.setAttribute("aria-selected", tab.id === activeTab ? "true" : "false");
+      button.setAttribute("aria-controls", "home-tab-panel");
+      if (tab.id === activeTab) {
+        button.classList.add("is-active");
+      }
+      button.addEventListener("click", () => {
+        activeHomeTab = tab.id;
+        rerenderHomeIfVisible();
+      });
+      tabList.append(button);
     });
-    archiveComponent.element.classList.add("wm-home-quadrant");
 
-    const liveSessionsSection = createLiveAgentsSection({
+    const panel = document.createElement("div");
+    panel.id = "home-tab-panel";
+    panel.className = "wm-home-tabs__panel";
+    panel.setAttribute("role", "tabpanel");
+    panel.dataset.testid = "home-tab-panel";
+
+    const createArchiveSection = () => {
+      archiveComponent = createArchiveComponent({
+        titleText: "Archive Sessions",
+        defaultCollapsed: false,
+        collapsible: false,
+        onViewSession: (session) => {
+          const targetPath = `${LIVE_ROUTE_PREFIX}/${session.id}`;
+          window.history.pushState({ route: "live", sessionId: session.id }, "", targetPath);
+          setCurrentRoute("live");
+          render();
+        },
+        resumeNativeSession,
+        getSessionPendingAction,
+        isSessionActionPending,
+        withPendingSessionAction,
+      });
+      archiveComponent.element.classList.add("wm-home-quadrant");
+      return archiveComponent.element;
+    };
+
+    const createLiveSessionsSection = () => createLiveAgentsSection({
         state,
         sessionsStore,
         getCurrentRoute,
@@ -226,6 +265,7 @@ export function initHomeView(deps) {
         getSessionPendingAction,
         isSessionActionPending,
         withPendingSessionAction,
+        collapsible: false,
         sessionSort: liveSessionSort,
         onSessionSortChange(nextSort) {
           liveSessionSort = nextSort;
@@ -237,24 +277,33 @@ export function initHomeView(deps) {
           rerenderHomeIfVisible();
         },
       });
-    const runningAppsSection = createRunningAppsSection({
+    const createAppsSection = () => createRunningAppsSection({
         appsStore,
         navigateToApps,
         isAppActionDisabled,
         triggerAppAction,
         appStatusLabels: APP_STATUS_LABELS,
         appActionLabels: APP_ACTION_LABELS,
+        collapsible: false,
       });
-    const runningPipelinesSection = createRunningPipelinesSection({
+    const createPipelinesSection = () => createRunningPipelinesSection({
         showToast,
         isFeatureEnabledForViewer,
+        collapsible: false,
       }).element;
 
-    leftColumn.append(liveSessionsSection, runningPipelinesSection);
-    rightColumn.append(runningAppsSection, archiveComponent.element);
-    quadrants.append(leftColumn, rightColumn);
+    if (activeTab === "sessions") {
+      panel.append(createLiveSessionsSection());
+    } else if (activeTab === "pipelines") {
+      panel.append(createPipelinesSection());
+    } else if (activeTab === "apps") {
+      panel.append(createAppsSection());
+    } else {
+      panel.append(createArchiveSection());
+    }
 
-    wrapper.append(quadrants);
+    tabShell.append(tabList, panel);
+    wrapper.append(tabShell);
 
     return wrapper;
   };
@@ -275,13 +324,17 @@ function createRunningAppsSection({
   triggerAppAction,
   appStatusLabels = {},
   appActionLabels = {},
+  collapsible = true,
 } = {}) {
   const card = document.createElement("section");
   card.className = "wm-card wm-home-apps wm-home-quadrant";
+  card.dataset.collapsible = String(collapsible);
   card.dataset.testid = "home-running-apps";
 
-  const header = document.createElement("button");
-  header.type = "button";
+  const header = document.createElement(collapsible ? "button" : "div");
+  if (collapsible) {
+    header.type = "button";
+  }
   header.className = "wm-home-section-header wm-home-quadrant__header";
   header.setAttribute("aria-expanded", "true");
   header.dataset.testid = "home-running-apps-toggle";
@@ -303,7 +356,10 @@ function createRunningAppsSection({
   collapseIcon.className = "wm-home-quadrant__collapse";
   collapseIcon.setAttribute("aria-hidden", "true");
   collapseIcon.textContent = "▼";
-  header.append(titleWrap, collapseIcon);
+  header.append(titleWrap);
+  if (collapsible) {
+    header.append(collapseIcon);
+  }
 
   const actions = document.createElement("div");
   actions.className = "wm-home-section-actions wm-home-quadrant__actions";
@@ -321,10 +377,12 @@ function createRunningAppsSection({
   const content = document.createElement("div");
   content.className = "wm-home-apps-content wm-home-quadrant__content";
 
-  header.addEventListener("click", () => {
-    const collapsed = card.dataset.collapsed === "true";
-    setCollapsed(!collapsed);
-  });
+  if (collapsible) {
+    header.addEventListener("click", () => {
+      const collapsed = card.dataset.collapsed === "true";
+      setCollapsed(!collapsed);
+    });
+  }
 
   function setCollapsed(collapsed) {
     if (collapsed) {

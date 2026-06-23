@@ -213,15 +213,19 @@ export function createLiveAgentsSection(deps) {
     onSessionSortChange,
     sessionGroup,
     onSessionGroupChange,
+    collapsible = true,
   } = deps;
 
   const liveCard = document.createElement("section");
   liveCard.className = "wm-card wm-home-live wm-home-quadrant";
+  liveCard.dataset.collapsible = String(collapsible);
 
   const liveHeader = document.createElement("div");
   liveHeader.className = "wm-home-section-header wm-home-quadrant__header";
-  liveHeader.setAttribute("role", "button");
-  liveHeader.setAttribute("tabindex", "0");
+  if (collapsible) {
+    liveHeader.setAttribute("role", "button");
+    liveHeader.setAttribute("tabindex", "0");
+  }
 
   const titleWrap = document.createElement("span");
   titleWrap.className = "wm-home-quadrant__title";
@@ -258,20 +262,25 @@ export function createLiveAgentsSection(deps) {
     liveHeader.setAttribute("aria-expanded", "true");
   }
 
-  liveHeader.addEventListener("click", () => {
-    const currentlyCollapsed = liveCard.dataset.collapsed === "true";
-    setCollapsed(!currentlyCollapsed);
-  });
-  liveHeader.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter" && event.key !== " ") {
-      return;
-    }
-    event.preventDefault();
-    const currentlyCollapsed = liveCard.dataset.collapsed === "true";
-    setCollapsed(!currentlyCollapsed);
-  });
+  if (collapsible) {
+    liveHeader.addEventListener("click", () => {
+      const currentlyCollapsed = liveCard.dataset.collapsed === "true";
+      setCollapsed(!currentlyCollapsed);
+    });
+    liveHeader.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") {
+        return;
+      }
+      event.preventDefault();
+      const currentlyCollapsed = liveCard.dataset.collapsed === "true";
+      setCollapsed(!currentlyCollapsed);
+    });
+  }
 
-  liveHeader.append(titleWrap, collapseIcon);
+  liveHeader.append(titleWrap);
+  if (collapsible) {
+    liveHeader.append(collapseIcon);
+  }
   liveCard.append(liveHeader);
 
   const actions = document.createElement("div");

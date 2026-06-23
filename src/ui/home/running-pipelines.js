@@ -29,7 +29,7 @@ export function getHomeRunningPipelineRows(runs) {
     }));
 }
 
-export function createRunningPipelinesSection({ showToast, isFeatureEnabledForViewer = () => false } = {}) {
+export function createRunningPipelinesSection({ showToast, isFeatureEnabledForViewer = () => false, collapsible = true } = {}) {
   const state = {
     rows: [],
     loading: false,
@@ -41,11 +41,14 @@ export function createRunningPipelinesSection({ showToast, isFeatureEnabledForVi
 
   const card = document.createElement("section");
   card.className = "wm-card wm-home-running-pipelines wm-home-quadrant";
+  card.dataset.collapsible = String(collapsible);
   card.dataset.testid = "home-running-pipelines";
   card.setAttribute("aria-labelledby", "home-running-pipelines-title");
 
-  const header = document.createElement("button");
-  header.type = "button";
+  const header = document.createElement(collapsible ? "button" : "div");
+  if (collapsible) {
+    header.type = "button";
+  }
   header.className = "wm-home-section-header wm-home-running-pipelines__header wm-home-quadrant__header";
   header.setAttribute("aria-expanded", "true");
 
@@ -104,16 +107,21 @@ export function createRunningPipelinesSection({ showToast, isFeatureEnabledForVi
   collapseIcon.textContent = "▼";
 
   actions.append(openListButton, pipelinesLink, refreshButton);
-  header.append(titleWrap, collapseIcon);
+  header.append(titleWrap);
+  if (collapsible) {
+    header.append(collapseIcon);
+  }
 
   const content = document.createElement("div");
   content.className = "wm-home-running-pipelines__content wm-home-quadrant__content";
   content.setAttribute("aria-live", "polite");
 
-  header.addEventListener("click", () => {
-    const collapsed = card.dataset.collapsed === "true";
-    setCollapsed(!collapsed);
-  });
+  if (collapsible) {
+    header.addEventListener("click", () => {
+      const collapsed = card.dataset.collapsed === "true";
+      setCollapsed(!collapsed);
+    });
+  }
 
   function setCollapsed(collapsed) {
     if (collapsed) {
