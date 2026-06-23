@@ -232,8 +232,14 @@ export class AppRegistry {
       if (!nextOwnerNpub) {
         throw new Error("Unable to assign a web app port without a registered owner.");
       }
-      const preferred = requestedPort ?? existing.webAppPort ?? undefined;
-      nextWebAppPort = this.assignWebAppPort(nextOwnerNpub, id, preferred);
+      const ownerChanged = nextOwnerNpub !== existing.ownerNpub;
+      const webAppEnabled = !existing.webApp;
+      const missingAssignedPort = typeof existing.webAppPort !== "number";
+      const requestedPortChanged = requestedPort !== undefined && requestedPort !== existing.webAppPort;
+      if (webAppEnabled || ownerChanged || missingAssignedPort || requestedPortChanged) {
+        const preferred = requestedPort ?? existing.webAppPort ?? undefined;
+        nextWebAppPort = this.assignWebAppPort(nextOwnerNpub, id, preferred);
+      }
     }
     const next: AppRecord = {
       ...existing,

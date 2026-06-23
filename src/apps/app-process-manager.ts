@@ -23,7 +23,7 @@ import {
 } from "../agents/pm2-wrapper";
 import { readCombinedLogs } from "../agents/log-reader";
 import { runtimePortRegistry } from "./runtime-port-registry";
-import { waitForListeningPort } from "../utils/port-utils";
+import { waitForListeningPort, waitForTcpPort } from "../utils/port-utils";
 import { wappStore, type WappStore } from "../wapps/wapp-store";
 import type { RuntimeBotIdentity } from "../agent-chat/types";
 import {
@@ -537,6 +537,10 @@ export class AppProcessManager {
 
       // Use known webAppPort if this is a web app with assigned port
       if (app.webApp && typeof app.webAppPort === "number" && app.webAppPort > 0) {
+        const ready = await waitForTcpPort(app.webAppPort);
+        if (!ready) {
+          throw new Error(`App ${app.id} did not listen on assigned port ${app.webAppPort} after PM2 start`);
+        }
         runtimePortRegistry.set(app.id, app.webAppPort, pid);
         console.log(`[app-process-manager] Registered known port ${app.webAppPort} for ${processName}`);
         return;
@@ -556,6 +560,9 @@ export class AppProcessManager {
         console.warn(`[app-process-manager] Could not detect listening port for ${processName} (pid ${pid})`);
       }
     } catch (error) {
+      if (app.webApp && typeof app.webAppPort === "number" && app.webAppPort > 0) {
+        throw error;
+      }
       console.warn(`[app-process-manager] Error registering port for ${processName}:`, error);
     }
   }

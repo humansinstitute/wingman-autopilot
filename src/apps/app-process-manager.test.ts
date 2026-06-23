@@ -8,6 +8,7 @@ import { WappStore } from "../wapps/wapp-store";
 
 const ecosystemCalls: string[] = [];
 const pm2Starts: string[] = [];
+let assignedPortReady = true;
 
 mock.module("../agents/ecosystem-generator", () => ({
   addUserAppToEcosystem: async () => {
@@ -34,6 +35,12 @@ mock.module("../agents/pm2-wrapper", () => ({
   stopProcess: async () => undefined,
 }));
 
+mock.module("../utils/port-utils", () => ({
+  isPortAvailable: () => true,
+  waitForListeningPort: async () => 4100,
+  waitForTcpPort: async () => assignedPortReady,
+}));
+
 const { AppProcessManager } = await import("./app-process-manager");
 const { TowerWappRegistrationError } = await import("../wapps/tower-registration");
 
@@ -55,6 +62,7 @@ function makeManager(input: {
 }): { manager: InstanceType<typeof AppProcessManager>; cleanup: () => void } {
   ecosystemCalls.length = 0;
   pm2Starts.length = 0;
+  assignedPortReady = true;
   const dir = mkdtempSync(join(tmpdir(), "app-process-manager-"));
   const store = new WappStore(join(dir, "wapps.sqlite"));
   store.createTowerBinding({
@@ -165,6 +173,28 @@ describe("AppProcessManager Tower WApp lifecycle registration", () => {
       const status = await manager.getStatus(app.id);
       expect(status.status).toBe("failed");
       expect(status.message).toContain("Missing workspace app authority");
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("prevents launch success when assigned web app port is not ready", async () => {
+    const { manager, cleanup } = makeManager({
+      registrar: {
+        register: async (registration) => ({
+          workspaceOwnerNpub: registration.workspaceOwnerNpub,
+          appNpub: registration.appNpub,
+          app: { app_npub: registration.appNpub },
+        }),
+      },
+    });
+    assignedPortReady = false;
+    try {
+      await expect(manager.start(app.id)).rejects.toThrow("did not listen on assigned port 4100");
+      expect(pm2Starts).toEqual(["app-test-process"]);
+      const status = await manager.getStatus(app.id);
+      expect(status.status).toBe("failed");
+      expect(status.message).toContain("did not listen on assigned port 4100");
     } finally {
       cleanup();
     }

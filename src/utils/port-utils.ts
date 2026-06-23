@@ -1,6 +1,7 @@
 /**
  * Port availability checking utilities.
  */
+import { Socket } from "node:net";
 
 /**
  * Check if a port is available by attempting to bind to it.
@@ -118,4 +119,46 @@ export async function waitForListeningPort(
     }
   }
   return null;
+}
+
+async function canConnectToTcpPort(port: number, host: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = new Socket();
+    socket.setTimeout(500);
+    socket.once("connect", () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.once("error", () => {
+      socket.destroy();
+      resolve(false);
+    });
+    socket.once("timeout", () => {
+      socket.destroy();
+      resolve(false);
+    });
+    socket.connect(port, host);
+  });
+}
+
+/**
+ * Poll until a TCP port accepts localhost connections.
+ */
+export async function waitForTcpPort(
+  port: number,
+  options: { maxAttempts?: number; delayMs?: number; hosts?: string[] } = {},
+): Promise<boolean> {
+  const { maxAttempts = 20, delayMs = 250, hosts = ["127.0.0.1", "::1"] } = options;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    for (const host of hosts) {
+      if (await canConnectToTcpPort(port, host)) {
+        return true;
+      }
+    }
+    if (attempt < maxAttempts) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  return false;
 }

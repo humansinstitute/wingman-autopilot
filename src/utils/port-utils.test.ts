@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createServer } from "node:net";
 
-import { isPortAvailable } from "./port-utils";
+import { isPortAvailable, waitForTcpPort } from "./port-utils";
 
 function listen(host: string, port = 0): Promise<import("node:net").Server> {
   return new Promise((resolve, reject) => {
@@ -54,5 +54,33 @@ describe("isPortAvailable", () => {
     expect(port).toBeGreaterThan(0);
     await close(server);
     expect(isPortAvailable(port)).toBe(true);
+  });
+});
+
+describe("waitForTcpPort", () => {
+  test("returns true when a localhost listener accepts connections", async () => {
+    const server = await listen("127.0.0.1");
+    try {
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : 0;
+      expect(port).toBeGreaterThan(0);
+      await expect(waitForTcpPort(port, { maxAttempts: 1, hosts: ["127.0.0.1"] })).resolves.toBe(true);
+    } finally {
+      await close(server);
+    }
+  });
+
+  test("returns false when no listener accepts connections", async () => {
+    const server = await listen("127.0.0.1");
+    const address = server.address();
+    const port = typeof address === "object" && address ? address.port : 0;
+    expect(port).toBeGreaterThan(0);
+    await close(server);
+
+    await expect(waitForTcpPort(port, {
+      maxAttempts: 1,
+      delayMs: 1,
+      hosts: ["127.0.0.1"],
+    })).resolves.toBe(false);
   });
 });
