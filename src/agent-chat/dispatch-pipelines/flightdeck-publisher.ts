@@ -64,6 +64,31 @@ const CHAT_REPLY_TTS_DEFAULT_SUMMARY_MODEL = 'openai/gpt-4o-mini';
 const CHAT_REPLY_TTS_MAX_TEXT_LENGTH = 8000;
 const IMPLEMENTATION_REVIEW_DOC_SNAPSHOT_FALLBACK_DIR = '/Users/mini/.wingmen/pipelines/shared/artifacts/implementation-review-docs';
 
+function isPrivateAgentSoftwareWorkdir(value: string | null | undefined): boolean {
+  const workdir = getText(value);
+  return !workdir
+    || workdir === '/Users/mini/code/wingmen'
+    || workdir.includes('/data/agent-chat-workspaces/')
+    || /\/wingmen\/wingman\d+(?:\/|$)/.test(workdir);
+}
+
+function resolveImplementationReviewWorkdir(
+  input: JsonObject,
+  workPlan: JsonObject,
+  context: DispatchPipelineFlightDeckPublisherContext,
+): string {
+  const explicitWorkdir = getText(workPlan.workdir ?? workPlan.workingDirectory)
+    ?? getText(input.workingDirectory);
+  if (explicitWorkdir) {
+    return explicitWorkdir;
+  }
+  const agentWorkdir = context.agent?.workingDirectory;
+  if (isPrivateAgentSoftwareWorkdir(agentWorkdir)) {
+    throw new Error('Software implementation review workdir is required; refusing to use private agent workspace as the target repo.');
+  }
+  return agentWorkdir!;
+}
+
 export function pipelineNeedsFlightDeckPublisher(pipeline: DeclarativePipeline): boolean {
   return pipeline.steps.some(stepNeedsFlightDeckPublisher);
 }
@@ -1966,10 +1991,7 @@ export function createDispatchImplementationReviewTaskEnsurer(
     }
 
     if (directChatRun) {
-      const workdir = getText(workPlan.workdir ?? workPlan.workingDirectory)
-        ?? getText(input.workingDirectory)
-        ?? context.agent?.workingDirectory
-        ?? process.cwd();
+      const workdir = resolveImplementationReviewWorkdir(input, workPlan, context);
       const designDocumentReference = resolveImplementationDesignDocumentReference(context, input, workPlan)
         ?? resolveChatThreadImplementationReference(context, input, workPlan);
       const designDocument = await hydrateImplementationDesignDocument(context, designDocumentReference, workdir);
@@ -2141,10 +2163,7 @@ export function createDispatchImplementationReviewTaskEnsurer(
     }
 
     const designDocumentReference = resolveImplementationDesignDocumentReference(context, input, workPlan);
-    const workdir = getText(workPlan.workdir ?? workPlan.workingDirectory)
-      ?? getText(input.workingDirectory)
-      ?? context.agent?.workingDirectory
-      ?? process.cwd();
+    const workdir = resolveImplementationReviewWorkdir(input, workPlan, context);
     const designDocument = await hydrateImplementationDesignDocument(context, designDocumentReference, workdir);
     const nextWorkPlan = {
       ...workPlan,

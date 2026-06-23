@@ -2171,6 +2171,109 @@ describe("memory pipeline functions", () => {
     });
   });
 
+  test("shared chat dispatch does not advertise archived wingman checkout as software default", async () => {
+    const execution = await runChatDispatchSpec({
+      latestMessage: "Please implement the Tiptap design spec as the new docs editor.",
+      agent: {
+        workingDirectory: "/Users/mini/wingmen/wingman21",
+        defaultAgent: "codex",
+      },
+      channelContext: {
+        channelId: "channel-1",
+        scopeId: "scope-1",
+        name: "Implementation",
+        contextPrompt: "This is the Implementation channel scope for the Flight Deck project (~/code/wingmanbefree/wm-fd-2).",
+        hasSpecificContext: true,
+      },
+      agentDecision: {
+        intent: "agent",
+        chatResponse: { body: null },
+        confidence: 0.95,
+      },
+      agentWorkDecision: {
+        action: "start_pipeline",
+        recommendedPipelineId: "software-implementation-review-loop",
+        createTask: true,
+        taskDraft: {
+          title: "Implement Tiptap docs editor",
+          instructions: "Implement the Tiptap docs editor design.",
+          acceptanceCriteria: ["The docs editor is implemented."],
+        },
+        workPlan: {
+          taskSummary: "Implement Tiptap docs editor",
+          instructions: "Implement the Tiptap docs editor design.",
+          targetSurface: {
+            route: "/docs",
+            surface: "Docs editor",
+          },
+          designDocumentUrl: "@[Tiptap Design Spec](mention:doc:79b6684f-b5c6-4bb7-8deb-0d6b6c905d05)",
+        },
+        confidence: 0.91,
+      },
+    });
+
+    const result = currentAfterStep(execution, "prepare-chat-response");
+    expect(result.decision).toMatchObject({
+      dispatchTask: true,
+      pipelineDefinitionId: "software-implementation-review-loop",
+      workdir: "/Users/mini/code/wingmanbefree/wm-fd-2",
+    });
+  });
+
+  test("chat task pipeline input hides archived wingman checkout defaults", async () => {
+    const result = await builtinPipelineFunctions["dispatch.prepareChatTaskPipelineInput"]!({
+      dispatch: { triggerKind: "chat", routeId: "route-1" },
+      workspace: { workspaceOwnerNpub: "npub1owner", sourceAppNpub: "npub1app" },
+      agent: {
+        workingDirectory: "/Users/mini/wingmen/wingman21",
+        defaultAgent: "codex",
+      },
+      chat: {
+        channelId: "channel-1",
+        threadId: "thread-1",
+      },
+      record: {
+        recordId: "message-1",
+        payload: {
+          body: "Please implement the Tiptap design spec.",
+        },
+      },
+      runtime: {
+        availablePipelines: [
+          {
+            id: "shared:software",
+            slug: "software-implementation-review-loop",
+            name: "software-implementation-review-loop",
+            scope: "shared",
+          },
+        ],
+      },
+      chatContext: {
+        messages: [
+          { id: "message-1", body: "Please implement the Tiptap design spec." },
+        ],
+        channelContext: {
+          contextPrompt: "This is the Implementation channel scope for the Flight Deck project (~/code/wingmanbefree/wm-fd-2).",
+          hasSpecificContext: true,
+        },
+      },
+      decision: {
+        intent: "create_task",
+        taskDraft: {
+          title: "Implement Tiptap docs editor",
+          instructions: "Implement the Tiptap docs editor design.",
+        },
+      },
+    });
+
+    expect(result.defaults).toMatchObject({
+      workdir: "/Users/mini/code/wingmanbefree/wm-fd-2",
+    });
+    expect(result.defaults).not.toMatchObject({
+      workdir: "/Users/mini/wingmen/wingman21",
+    });
+  });
+
   test("shared chat dispatch direct software run gets chat-thread design reference", async () => {
     const execution = await runChatDispatchSpec({
       latestMessage: "Please make the focused docs route fix in this repo.",
@@ -2423,6 +2526,57 @@ describe("memory pipeline functions", () => {
     });
     expect(result.createdTask).toBeUndefined();
     expect(String(result.agentResponse.responseDraft)).toContain("non-placeholder workdir");
+  });
+
+  test("shared chat dispatch rejects software work when only archived wingman checkout is available", async () => {
+    const execution = await runChatDispatchSpec({
+      latestMessage: "Please implement the Tiptap design spec.",
+      agent: {
+        workingDirectory: "/Users/mini/wingmen/wingman21",
+        defaultAgent: "codex",
+      },
+      channelContext: {
+        channelId: "channel-1",
+        scopeId: "scope-1",
+        name: "Implementation",
+        contextPrompt: "Implementation channel, but no repo path is configured.",
+        hasSpecificContext: true,
+      },
+      agentDecision: {
+        intent: "agent",
+        chatResponse: { body: null },
+        confidence: 0.95,
+      },
+      agentWorkDecision: {
+        action: "start_pipeline",
+        recommendedPipelineId: "software-implementation-review-loop",
+        createTask: true,
+        taskDraft: {
+          title: "Implement Tiptap docs editor",
+          instructions: "Implement the Tiptap docs editor design.",
+          acceptanceCriteria: ["The docs editor is implemented."],
+        },
+        workPlan: {
+          taskSummary: "Implement Tiptap docs editor",
+          instructions: "Implement the Tiptap docs editor design.",
+          targetSurface: {
+            route: "/docs",
+            surface: "Docs editor",
+          },
+          designDocumentUrl: "@[Tiptap Design Spec](mention:doc:79b6684f-b5c6-4bb7-8deb-0d6b6c905d05)",
+        },
+        confidence: 0.91,
+      },
+    });
+
+    const result = currentAfterStep(execution, "prepare-chat-response");
+    expect(result.decision).toMatchObject({
+      dispatchTask: false,
+      intent: "clarify",
+      missing: ["non-placeholder workdir"],
+      workdir: null,
+    });
+    expect(result.createdTask).toBeUndefined();
   });
 
   test("shared chat dispatch execution answer_now stays chat-only", async () => {

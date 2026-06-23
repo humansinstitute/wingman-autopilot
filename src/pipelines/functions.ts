@@ -698,7 +698,8 @@ function isSoftwareImplementationPipelineIdentifier(value: string | null): boole
 function isPlaceholderSoftwareWorkdir(value: string | null): boolean {
   if (!value) return true;
   return value === "/Users/mini/code/wingmen"
-    || value.includes("/data/agent-chat-workspaces/");
+    || value.includes("/data/agent-chat-workspaces/")
+    || /\/wingmen\/wingman\d+(?:\/|$)/.test(value);
 }
 
 function extractRepoWorkdirFromText(value: string | null): string | null {
@@ -1919,6 +1920,8 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const decision = objectValue(input.decision);
     const latestThread = latestThreadWithTrigger(chatContext, record, chat);
     const channelContext = resolveFlightDeckChannelContext(chatContext.channelContext, input.flightDeckContext);
+    const channelWorkdir = resolveRepoWorkdirFromHighSignalText(getText(channelContext.contextPrompt));
+    const defaultWorkdir = channelWorkdir ?? getText(agent.workingDirectory);
     const promptTokens = tokenizeForMatch([
       latestThread.map((message) => getText(message.body)).filter(Boolean).join(" "),
       getText(objectValue(decision.taskDraft).title),
@@ -1955,7 +1958,7 @@ export const builtinPipelineFunctions: FunctionRegistry = {
         sourceAppNpub: getText(workspace.sourceAppNpub),
       },
       defaults: {
-        workdir: getText(agent.workingDirectory),
+        workdir: isPlaceholderSoftwareWorkdir(defaultWorkdir) ? null : defaultWorkdir,
         defaultAgent: getText(agent.defaultAgent),
       },
       intent: getText(decision.intent) ?? "create_task",

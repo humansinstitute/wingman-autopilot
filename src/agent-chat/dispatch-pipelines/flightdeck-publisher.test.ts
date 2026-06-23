@@ -2474,6 +2474,39 @@ describe('dispatch pipeline Flight Deck publisher', () => {
     expect(String((createdTask as any).workPlan.designDocumentAccessInstructions)).toContain('localPath');
   });
 
+  test('implementation review task ensurer refuses archived agent workdir fallback', async () => {
+    const context = buildChatPublisherContext({
+      subscription: {
+        subscriptionId: 'sub-pg-1',
+        workspaceOwnerNpub: 'npub1workspace',
+        sourceAppNpub: 'npub1source',
+        backendBaseUrl: 'https://tower.example.com',
+        workspaceId: 'workspace-pg-1',
+        botNpub: 'npub1bot',
+        wsKeyNpub: null,
+      },
+      runtime: {
+        mode: 'flightdeck_pg',
+        yokeStateDir: null,
+        commandPrefix: null,
+        commands: {},
+        error: null,
+      },
+    }) as any;
+    context.agent.workingDirectory = '/Users/mini/wingmen/wingman21';
+    const ensureTask = createDispatchImplementationReviewTaskEnsurer(context);
+
+    await expect(ensureTask({
+      implementationPrompt: 'Implement the Tiptap docs editor.',
+      designDocumentUrl: '@[Tiptap Design Spec](mention:doc:79b6684f-b5c6-4bb7-8deb-0d6b6c905d05)',
+      workPlan: {
+        taskSummary: 'Implement Tiptap docs editor',
+        reviewerNpub: 'npub1requester',
+      },
+    })).rejects.toThrow(/private agent workspace/);
+    expect(pgDocumentFetchCalls).toHaveLength(0);
+  });
+
   test('implementation review task ensurer extracts design doc mention from instructions before snapshotting', async () => {
     const workdir = join(tmpdir(), `autopilot-doc-snapshot-${randomUUID()}`);
     const ensureTask = createDispatchImplementationReviewTaskEnsurer(buildChatPublisherContext({
