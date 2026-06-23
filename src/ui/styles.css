@@ -651,6 +651,8 @@ body[data-menu-open="true"] .wm-menu-panel {
 }
 
 #app[data-route="live"] {
+  max-width: 90vw;
+  width: 90vw;
   padding-top: 0;
   padding-bottom: 0;
 }
@@ -3224,7 +3226,7 @@ body[data-live-header-collapsed="true"]:has(#app[data-route="live"]) #app[data-r
 
 .wm-live {
   --wm-live-drawer-width: min(24rem, 32vw);
-  --wm-live-drawer-offset: max(0.75rem, calc((100vw - 1080px) / 2 + 1.15rem));
+  --wm-live-drawer-offset: max(0.75rem, calc(5vw + 1.15rem));
   display: flex;
   flex-direction: column;
   gap: 1rem;
@@ -5388,6 +5390,8 @@ body[data-keyboard-open="true"] .wm-composer-shell {
   }
 
   #app[data-route="live"] {
+    max-width: none;
+    width: 100%;
     padding-top: 0;
   }
 
@@ -5569,6 +5573,8 @@ body[data-keyboard-open="true"] .wm-composer-shell {
   }
 
   #app[data-route="live"] {
+    max-width: none;
+    width: 100%;
     padding-top: 0;
     padding-left: 0;
     padding-right: 0;
@@ -5883,6 +5889,8 @@ body[data-keyboard-open="true"] .wm-composer-shell {
   }
 
   #app[data-route="live"] {
+    max-width: none;
+    width: 100%;
     padding-top: 0;
     padding-left: 0;
     padding-right: 0;
