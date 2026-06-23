@@ -742,6 +742,7 @@ body[data-live-header-collapsed="true"]:has(#app[data-route="live"]) #app[data-r
 
 .wm-home-tabs__panel {
   min-width: 0;
+  min-height: calc(var(--wm-viewport-height) - var(--nav-height) - 8rem);
 }
 
 .wm-home-quadrant {
@@ -9847,6 +9848,10 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
   margin-top: 0;
 }
 
+.wm-home-tabs__panel .wm-home-archive {
+  min-height: calc(var(--wm-viewport-height) - var(--nav-height) - 8rem);
+}
+
 .wm-home-live-footer-actions {
   display: flex;
   justify-content: flex-end;
@@ -9918,6 +9923,14 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
   overflow: auto;
 }
 
+.wm-home-tabs__panel .wm-home-archive-content {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(var(--wm-viewport-height) - var(--nav-height) - 12rem);
+  max-height: none;
+  overflow: visible;
+}
+
 .wm-home-archive-filter {
   margin-bottom: 1rem;
 }
@@ -9933,6 +9946,12 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
   gap: 0.5rem;
   max-height: 400px;
   overflow-y: auto;
+}
+
+.wm-home-tabs__panel .wm-home-archive-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
 }
 
 .wm-home-archive-status {
