@@ -29,7 +29,6 @@ export function initHomeView(deps) {
     // Navigation
     openIdentityLoginDialog,
     navigateToApps,
-    navigateToChat,
     openDialog,
     ensureFeatureFlagsLoaded,
     isFeatureEnabledForViewer,
@@ -246,9 +245,7 @@ export function initHomeView(deps) {
         sessionsStore,
         getCurrentRoute,
         render,
-        navigateToChat,
         openDialog,
-        isFeatureEnabledForViewer,
         isSessionActive,
         resumeSession,
         resumeNativeSession,

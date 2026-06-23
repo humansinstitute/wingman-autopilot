@@ -203,9 +203,7 @@ export function createLiveAgentsSection(deps) {
     sessionsStore,
     getCurrentRoute,
     render,
-    navigateToChat,
     openDialog,
-    isFeatureEnabledForViewer,
     buildSessionFilterOptions,
     fetchSessions,
     syncMenuTabs,
@@ -329,15 +327,6 @@ export function createLiveAgentsSection(deps) {
   launchBtn.textContent = "Launch Agent Session";
   launchBtn.addEventListener("click", openDialog);
   actions.append(launchBtn);
-
-  if (isFeatureEnabledForViewer("private_chats_enabled")) {
-    const privateChatBtn = document.createElement("button");
-    privateChatBtn.className = "wm-button secondary";
-    privateChatBtn.textContent = "Private Chats";
-    privateChatBtn.title = "View private AI chats";
-    privateChatBtn.addEventListener("click", () => navigateToChat(null));
-    actions.append(privateChatBtn);
-  }
 
   const refreshBtn = document.createElement("button");
   refreshBtn.className = "wm-button secondary";
