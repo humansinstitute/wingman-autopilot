@@ -43,6 +43,7 @@ export function initHomeView(deps) {
     isAppActionDisabled,
     triggerAppAction,
     // Utilities
+    escapeHtml,
     // Constants
     APP_STATUS_LABELS,
     APP_ACTION_LABELS,
@@ -214,6 +215,7 @@ export function initHomeView(deps) {
         fetchSessions,
         syncMenuTabs,
         showToast,
+        escapeHtml,
         getSessionPendingAction,
         isSessionActionPending,
         withPendingSessionAction,

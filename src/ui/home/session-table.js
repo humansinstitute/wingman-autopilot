@@ -23,6 +23,15 @@ export const DEFAULT_LIVE_SESSION_SORT = Object.freeze({
 
 const DIRECTORY_DISPLAY_MAX_LENGTH = 44;
 
+function defaultEscapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function resolveTimestamp(value) {
   if (typeof value !== "string" || value.trim().length === 0) {
     return null;
@@ -227,7 +236,7 @@ export function createSessionTable(orderedSessions, deps) {
     createAgentStatusIndicator,
     getSessionDisplayName,
     promptRenameSession,
-    escapeHtml,
+    escapeHtml = defaultEscapeHtml,
     isSessionActionPending,
     renderSessionActions,
     emptyLabel = 'No active sessions',
