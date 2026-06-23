@@ -223,7 +223,7 @@ describe("flight deck settings panel", () => {
       expect(text).toContain("Onboarding Ready");
       expect(text).toContain("Yoke Synced");
       expect(text).toContain("Default Dispatch Ready");
-      expect(text).toContain("5/8 enabled");
+      expect(text).toContain("7/10 enabled");
       expect(text).toContain("Workspace id");
       expect(text).toContain("workspace-swipeback");
       expect(text).toContain("Workspace service");
@@ -301,7 +301,7 @@ describe("flight deck settings panel", () => {
       expect(queryByTestId(panel, "flight-deck-dispatch-row-task_assigned")).not.toBeNull();
       expect(text).toContain("Selected workspace: Empty Routes");
       expect(text).toContain("Built-in default");
-      expect(text).toContain("5/8 enabled");
+      expect(text).toContain("7/10 enabled");
     });
   });
 

@@ -122,7 +122,7 @@ describe('AgentProfilePolicyStore', () => {
     expect(second.workspace.towerServiceNpub).toBe('npub1service');
     expect(second.workspace.workspaceId).toBe('workspace-1');
     expect(second.workspace.workspaceServiceNpub).toBe('npub1workspaceservice');
-    expect(second.policies).toHaveLength(10);
+    expect(second.policies).toHaveLength(12);
     expect(second.policies.find((policy) => policy.eventType === 'chat_mention')).toMatchObject({
       enabled: true,
       defaultAction: 'respond',
@@ -254,9 +254,11 @@ describe('agent workspace policy helpers', () => {
       'document_comment_observe',
       'document_comment_tagged',
       'document_created',
+      'document_invocation',
       'flow_step_assigned',
       'task_assigned',
       'task_comment',
+      'task_invocation',
     ]);
   });
 

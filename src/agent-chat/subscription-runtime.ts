@@ -279,7 +279,7 @@ function safeJsonParse(value: string): unknown | null {
 }
 
 function defaultActionForEventType(eventType: AgentWorkspaceEventType) {
-  if (eventType === 'task_assigned') return 'work';
+  if (eventType === 'task_assigned' || eventType === 'task_invocation' || eventType === 'document_invocation') return 'work';
   if (eventType === 'task_comment' || eventType === 'document_comment_tagged') return 'respond';
   if (eventType === 'approval_assigned') return 'notify';
   if (eventType === 'flow_step_assigned') return 'run_flow_handler';
@@ -368,6 +368,99 @@ function normaliseFlightDeckPgChatPayload(
       cursor: event.cursor ?? null,
     },
   };
+}
+
+function normaliseFlightDeckPgInvocationPayload(event: FlightDeckPgEvent): {
+  invocationId: string | null;
+  prompt: string;
+  status: string | null;
+  recipients: Array<Record<string, unknown>>;
+  targets: Array<Record<string, unknown>>;
+  target: Record<string, unknown> | null;
+  targetType: string | null;
+  targetId: string | null;
+  targetTitle: string | null;
+  actorNpub: string | null;
+  scopeId: string | null;
+  channelId: string | null;
+  metadata: Record<string, unknown>;
+  payload: Record<string, unknown>;
+} {
+  const eventPayload = event.payload && typeof event.payload === 'object' && !Array.isArray(event.payload)
+    ? event.payload as Record<string, unknown>
+    : {};
+  const recipients = Array.isArray(eventPayload.recipients)
+    ? eventPayload.recipients.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && !Array.isArray(item)))
+    : [];
+  const targets = Array.isArray(eventPayload.targets)
+    ? eventPayload.targets.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && !Array.isArray(item)))
+    : [];
+  const target = targets[0] ?? null;
+  const metadata = eventPayload.metadata && typeof eventPayload.metadata === 'object' && !Array.isArray(eventPayload.metadata)
+    ? eventPayload.metadata as Record<string, unknown>
+    : {};
+  const targetType = getOptionalText(target?.type) ?? getOptionalText(eventPayload.target_type);
+  const targetId = getOptionalText(target?.id) ?? getOptionalText(target?.target_id) ?? getOptionalText(eventPayload.target_id);
+  const targetTitle = getOptionalText(target?.title) ?? getOptionalText(metadata.target_title);
+  const prompt = getOptionalText(eventPayload.prompt) ?? '';
+  const scopeId = getOptionalText(event.scope_id) ?? getOptionalText(eventPayload.scope_id);
+  const channelId = getOptionalText(event.channel_id) ?? getOptionalText(eventPayload.channel_id);
+  const actorNpub = getOptionalText(eventPayload.created_by_npub) ?? getOptionalText(eventPayload.actor_npub);
+  const invocationId = getOptionalText(eventPayload.invocation_id) ?? getOptionalText(event.entity_id);
+
+  return {
+    invocationId,
+    prompt,
+    status: getOptionalText(eventPayload.status),
+    recipients,
+    targets,
+    target,
+    targetType,
+    targetId,
+    targetTitle,
+    actorNpub,
+    scopeId,
+    channelId,
+    metadata,
+    payload: {
+      id: invocationId,
+      record_id: invocationId,
+      invocation_id: invocationId,
+      prompt,
+      status: getOptionalText(eventPayload.status),
+      recipients,
+      targets,
+      target,
+      target_type: targetType,
+      target_id: targetId,
+      target_title: targetTitle,
+      task_id: targetType === 'task' ? targetId : null,
+      title: targetTitle ?? (targetType === 'task' ? 'Invoked task' : 'Invoked document'),
+      description: prompt,
+      state: 'invoked',
+      scope_id: scopeId,
+      channel_id: channelId,
+      created_by_npub: actorNpub,
+      metadata,
+      flightdeck_pg_event: {
+        id: event.event_id ?? event.id ?? null,
+        event_type: event.event_type ?? null,
+        entity_type: event.entity_type ?? null,
+        operation: event.operation ?? null,
+        cursor: event.cursor ?? null,
+      },
+    },
+  };
+}
+
+function flightDeckPgInvocationTargetsBot(recipients: Array<Record<string, unknown>>, botNpub: string | null | undefined): boolean {
+  const cleanBotNpub = getOptionalText(botNpub);
+  if (!cleanBotNpub) return false;
+  return recipients.some((recipient) => {
+    const type = getOptionalText(recipient.type);
+    const npub = firstNpub(getOptionalText(recipient.npub), getOptionalText(recipient.agent_npub));
+    return type === 'agent' && npub === cleanBotNpub;
+  });
 }
 
 function profilePolicyAllowsLegacyPrompt(decision: AgentProfileRuntimeDecision | null): boolean {
@@ -3022,7 +3115,205 @@ export class WorkspaceSubscriptionManager {
       return await this.handleFlightDeckPgChatEvent(record, event);
     }
 
+    if (event.entity_type === 'invocation' && event.operation !== 'deleted') {
+      return await this.handleFlightDeckPgInvocationEvent(record, event);
+    }
+
     return record;
+  }
+
+  private async handleFlightDeckPgInvocationEvent(
+    record: WorkspaceSubscriptionRecord,
+    event: FlightDeckPgEvent,
+  ): Promise<WorkspaceSubscriptionRecord> {
+    const runtime = this.getRuntime(record.subscriptionId);
+    const workspaceId = record.workspaceId;
+    const invocation = normaliseFlightDeckPgInvocationPayload(event);
+    const recordId = invocation.invocationId;
+    const targetType = invocation.targetType;
+    const targetId = invocation.targetId;
+    const scopeId = invocation.scopeId;
+    const channelId = invocation.channelId;
+    const bindingType = targetType === 'document' ? 'document' : targetType === 'task' ? 'task' : null;
+    if (!workspaceId || !recordId || !targetType || !targetId || !scopeId || !channelId) {
+      record.lastRoutingResult = buildFailureDiagnostic(
+        'flightdeck_pg_invocation_event_missing_identity',
+        'Flight Deck PG invocation event did not include workspace, invocation, target, scope, or channel identity.',
+        'flightdeck_pg_invocation_event_missing_identity',
+        {
+          workspace_id: workspaceId,
+          invocation_id: recordId,
+          target_type: targetType,
+          target_id: targetId,
+          scope_id: scopeId,
+          channel_id: channelId,
+        },
+      );
+      return this.saveRecord(this.recomputeHealth(record));
+    }
+
+    if (!flightDeckPgInvocationTargetsBot(invocation.recipients, record.botNpub)) {
+      return this.appendDispatchHistory(record, {
+        at: new Date().toISOString(),
+        kind: 'task',
+        action: 'invocation_skip_not_targeted',
+        agentId: 'dispatch-pipeline',
+        sessionId: null,
+        recordId,
+        bindingId: targetId,
+        bindingType,
+        details: {
+          source: 'flightdeck_pg',
+          target_type: targetType,
+          target_id: targetId,
+          recipient_count: invocation.recipients.length,
+        },
+      });
+    }
+
+    if (targetType !== 'document' && targetType !== 'task') {
+      record.lastRoutingResult = buildFailureDiagnostic(
+        'flightdeck_pg_invocation_target_unsupported',
+        'Flight Deck PG invocation target type is not supported by Autopilot dispatch yet.',
+        'flightdeck_pg_invocation_target_unsupported',
+        {
+          invocation_id: recordId,
+          target_type: targetType,
+          target_id: targetId,
+        },
+      );
+      return this.saveRecord(this.recomputeHealth(record));
+    }
+
+    if (!this.dispatchPipelineRuntime) {
+      record.lastRoutingResult = buildFailureDiagnostic(
+        'flightdeck_pg_invocation_pipeline_unavailable',
+        'No dispatch pipeline runtime is configured for Flight Deck PG invocation events.',
+        'flightdeck_pg_invocation_pipeline_unavailable',
+        { subscription_id: record.subscriptionId, event_id: event.event_id ?? event.id ?? null },
+      );
+      return this.saveRecord(this.recomputeHealth(record));
+    }
+
+    const profileEventType: AgentWorkspaceEventType = targetType === 'document' ? 'document_invocation' : 'task_invocation';
+    const profileDecision = this.resolveProfileRuntimeDecision({
+      subscription: record,
+      eventType: profileEventType,
+      scopeId,
+      channelId,
+      builtInDefaultPipelineId: 'fd-agent-dispatch-task-response',
+    });
+    if (!profilePolicyAllowsDispatch(profileDecision)) {
+      return this.appendProfilePolicySuppression({
+        record,
+        decision: profileDecision!,
+        kind: 'task',
+        recordId,
+        bindingId: targetId,
+        bindingType,
+        details: {
+          channel_id: channelId,
+          scope_id: scopeId,
+          target_type: targetType,
+          target_id: targetId,
+          source: 'flightdeck_pg',
+        },
+      });
+    }
+
+    record.lastRoutingResult = buildSuccessDiagnostic('Flight Deck PG invocation dispatch pipeline start requested.', {
+      subscription_id: record.subscriptionId,
+      event_id: event.event_id ?? event.id ?? null,
+      invocation_id: recordId,
+      target_type: targetType,
+      target_id: targetId,
+      channel_id: channelId,
+      scope_id: scopeId,
+    });
+    record = this.saveRecord(this.recomputeHealth(record));
+
+    try {
+      const pipelineResult = await withTimeout(
+        this.dispatchPipelineRuntime.dispatch({
+          subscription: record,
+          triggerKind: 'task',
+          capability: 'task_dispatch',
+          recordId,
+          record: {
+            id: recordId,
+            record_id: recordId,
+            record_state: event.operation === 'deleted' ? 'deleted' : 'active',
+            version: event.entity_row_version ?? event.row_version ?? null,
+            row_version: event.entity_row_version ?? event.row_version ?? null,
+            payload: invocation.payload,
+            flightdeck_pg_event: event,
+          },
+          payload: invocation.payload,
+          recordFamily: 'invocation',
+          recordState: event.operation === 'deleted' ? 'deleted' : 'active',
+          recordVersion: event.entity_row_version ?? event.row_version ?? null,
+          updaterNpub: invocation.actorNpub,
+          bindingType,
+          bindingId: targetId,
+          scopeId,
+          channelId,
+          threadId: null,
+          changedFields: ['invocation'],
+          groupNpubs: [],
+          botIdentity: runtime.botIdentity,
+          profileRuntime: this.buildProfileRuntimeContext(profileDecision),
+        }),
+        CHAT_ADVISORY_PIPELINE_TIMEOUT_MS,
+        'flightdeck_pg_invocation_pipeline_dispatch_timeout',
+      );
+      if (pipelineResult.handled) {
+        record.lastRoutingResult = buildSuccessDiagnostic('Flight Deck PG invocation dispatch pipeline route evaluated.', {
+          subscription_id: record.subscriptionId,
+          event_id: event.event_id ?? event.id ?? null,
+          invocation_id: recordId,
+          target_type: targetType,
+          target_id: targetId,
+          route_ids: pipelineResult.historyEntries.map((entry) => entry.routeId).filter(Boolean),
+          pipeline_run_ids: pipelineResult.historyEntries.map((entry) => entry.pipelineRunId).filter(Boolean),
+        });
+        record.lastErrorCode = null;
+        record.lastErrorAt = null;
+        this.clearRuntimeFailure(record.subscriptionId, 'flightdeck_pg_invocation_pipeline_dispatched');
+        return this.applyDispatchPipelineResult(this.saveRecord(this.recomputeHealth(record)), pipelineResult);
+      }
+
+      record.lastRoutingResult = buildFailureDiagnostic(
+        'flightdeck_pg_invocation_pipeline_not_handled',
+        'No dispatch pipeline route handled this Flight Deck PG invocation event.',
+        'flightdeck_pg_invocation_pipeline_not_handled',
+        {
+          subscription_id: record.subscriptionId,
+          event_id: event.event_id ?? event.id ?? null,
+          invocation_id: recordId,
+          target_type: targetType,
+          target_id: targetId,
+        },
+      );
+      return this.saveRecord(this.recomputeHealth(record));
+    } catch (error) {
+      const detailCode = getErrorDetailCode(error) ?? 'flightdeck_pg_invocation_dispatch_failed';
+      record.lastRoutingResult = buildFailureDiagnostic(
+        'flightdeck_pg_invocation_dispatch_failed',
+        error instanceof Error ? error.message : 'Failed to dispatch Flight Deck PG invocation event.',
+        detailCode,
+        {
+          subscription_id: record.subscriptionId,
+          event_id: event.event_id ?? event.id ?? null,
+          invocation_id: recordId,
+          target_type: targetType,
+          target_id: targetId,
+        },
+      );
+      record.lastErrorCode = 'flightdeck_pg_invocation_dispatch_failed';
+      record.lastErrorAt = new Date().toISOString();
+      this.markRuntimeFailure(record.subscriptionId, detailCode, 'flightdeck_pg_invocation_dispatch_failed');
+      return this.saveRecord(this.recomputeHealth(record));
+    }
   }
 
   private async handleFlightDeckPgChatEvent(

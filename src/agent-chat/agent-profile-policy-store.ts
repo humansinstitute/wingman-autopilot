@@ -24,9 +24,11 @@ export type AgentWorkspaceEventType =
   | 'chat_mention'
   | 'chat_observe'
   | 'document_created'
+  | 'document_invocation'
   | 'document_comment_tagged'
   | 'document_comment_observe'
   | 'task_assigned'
+  | 'task_invocation'
   | 'task_comment'
   | 'approval_assigned'
   | 'flow_step_assigned';
@@ -155,9 +157,11 @@ const DEFAULT_EVENT_POLICIES: Array<Pick<AgentWorkspaceEventPolicyRecord, 'event
   { eventType: 'chat_mention', enabled: true, defaultAction: 'respond', quietMode: false },
   { eventType: 'chat_observe', enabled: false, defaultAction: 'observe', quietMode: true },
   { eventType: 'document_created', enabled: false, defaultAction: 'index', quietMode: true },
+  { eventType: 'document_invocation', enabled: true, defaultAction: 'work', quietMode: false },
   { eventType: 'document_comment_tagged', enabled: true, defaultAction: 'respond', quietMode: false },
   { eventType: 'document_comment_observe', enabled: false, defaultAction: 'observe', quietMode: true },
   { eventType: 'task_assigned', enabled: true, defaultAction: 'work', quietMode: false },
+  { eventType: 'task_invocation', enabled: true, defaultAction: 'work', quietMode: false },
   { eventType: 'task_comment', enabled: true, defaultAction: 'respond', quietMode: false },
   { eventType: 'approval_assigned', enabled: true, defaultAction: 'notify', quietMode: false },
   { eventType: 'flow_step_assigned', enabled: true, defaultAction: 'run_flow_handler', quietMode: false },

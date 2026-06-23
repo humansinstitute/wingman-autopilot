@@ -1318,6 +1318,7 @@ function normaliseStoredBindingType(value: string | null): AgentChatDispatchHist
   if (
     value === 'chat'
     || value === 'task'
+    || value === 'document'
     || value === 'flow_run'
     || value === 'thread'
   ) {
