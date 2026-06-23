@@ -226,7 +226,7 @@ function renderJsonTextValue(value) {
 }
 
 function shouldRenderTextLines(value) {
-  return value.includes("\n") || value.includes("\r") || value.length > 160;
+  return value.includes("\n") || value.includes("\r") || value.length > 80 || /\s/.test(value);
 }
 
 function splitTextLines(value) {

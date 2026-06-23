@@ -13634,7 +13634,7 @@ textarea.wm-input {
 
 .wm-pipeline-json-branch,
 .wm-pipeline-json-row {
-  min-width: max-content;
+  min-width: 0;
   padding: 0.08rem 0;
 }
 
@@ -13662,9 +13662,11 @@ textarea.wm-input {
   display: flex;
   align-items: flex-start;
   gap: 0.55rem;
+  max-width: 100%;
 }
 
 .wm-pipeline-json-key {
+  flex: 0 0 auto;
   color: var(--accent-primary);
   font-weight: 700;
 }
@@ -13694,7 +13696,8 @@ textarea.wm-input {
 
 .wm-pipeline-json-text {
   display: grid;
-  max-width: min(100%, 52rem);
+  width: 100%;
+  max-width: min(100%, 72rem);
   max-height: 18rem;
   overflow: auto;
   border: 1px solid var(--border-primary);
@@ -13705,8 +13708,8 @@ textarea.wm-input {
 
 .wm-pipeline-json-text-line {
   display: grid;
-  grid-template-columns: 3.2rem minmax(24rem, 1fr);
-  min-width: max-content;
+  grid-template-columns: 3.2rem minmax(0, 1fr);
+  min-width: 0;
 }
 
 .wm-pipeline-json-line-number {
@@ -13720,7 +13723,9 @@ textarea.wm-input {
 
 .wm-pipeline-json-text-line code {
   padding: 0.08rem 0.65rem;
-  white-space: pre;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
   color: inherit;
 }
 

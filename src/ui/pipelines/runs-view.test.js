@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { renderRunsWorkspace, renderStepDetail } from "./runs-view.js";
+import { renderJsonBlock } from "./view-utils.js";
 
 function makeState() {
   return {
@@ -148,5 +149,13 @@ describe("pipeline run detail rendering", () => {
     expect(rawHtml).not.toContain("Cleartext should be only relay-safe classification.");
     expect(formattedHtml).toContain("Cleartext should be only relay-safe classification.");
     expect(formattedHtml).toContain("<summary>Raw output</summary>");
+  });
+
+  test("renders prompt-like scalar strings as readable text blocks", () => {
+    const html = renderJsonBlock("Value", "Please dispatch a software pipeline to implement the selected document and preserve the full prompt for inspection.");
+
+    expect(html).toContain("wm-pipeline-json-text");
+    expect(html).toContain("Please dispatch a software pipeline");
+    expect(html).not.toContain("wm-pipeline-json-value-string");
   });
 });
