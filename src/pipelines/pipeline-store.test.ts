@@ -141,6 +141,10 @@ describe("PipelineStore run summaries", () => {
     expect(result).toEqual({ matchedRuns: 1, compactedSteps: 1, compactedEvents: 2 });
     expect(store.getStep(completedStep.id)?.input).toEqual({});
     expect(store.getStep(completedStep.id)?.result).toBeNull();
+    expect(store.getStep(completedStep.id)?.metadata?.compactedDisplay).toMatchObject({
+      in: [{ name: "text" }],
+      out: [{ name: "text" }],
+    });
     expect(store.listEventsForStep(completedStep.id).map((event) => event.data_json)).toEqual(["{}", "{}"]);
     expect(store.getRun(completed.id)?.result).toEqual({ done: true });
     expect(store.getStep(runningStep.id)?.input).toEqual({ text: "z".repeat(1024) });

@@ -182,6 +182,37 @@ describe("pipeline run flow visualization", () => {
     expect(html).not.toContain("secret output");
   });
 
+  test("renders compacted display rows when full step payloads were cleared", () => {
+    const compactedSteps = [{
+      id: "step-compacted",
+      stepIndex: 1,
+      name: "Compacted step",
+      kind: "code",
+      status: "ok",
+      input: {},
+      result: null,
+      output: null,
+      metadata: {
+        compactedDisplay: {
+          in: [{ name: "Chat Message", value: "Please inspect this pipeline" }],
+          out: [{ name: "Summary", value: "Pipeline inspection complete" }],
+        },
+        executor: { kind: "function", function: "pipeline.inspect" },
+      },
+    }];
+
+    const html = renderStepCardTimeline({
+      selectedRun: { steps: compactedSteps },
+      selectedStep: null,
+    }, run, compactedSteps);
+
+    expect(html).toContain("<code>Chat Message</code>");
+    expect(html).toContain("Please inspect this pipeline");
+    expect(html).toContain("<code>Summary</code>");
+    expect(html).toContain("Pipeline inspection complete");
+    expect(html).not.toContain("No user-facing fields");
+  });
+
   test("supports explicit agentText display rows", () => {
     const agentSteps = [{
       id: "step-agent-text",

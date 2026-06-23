@@ -10,6 +10,7 @@ import {
 import { renderStepCardTimeline } from "./run-flow-view.js";
 import { renderStepDetail } from "./runs-view.js";
 import { getDefinitionFlowRows } from "./definitions-view.js";
+import { bindPipelineValueInspector } from "./value-inspector.js";
 
 const ACTIVE_PIPELINE_RUN_STATUSES = new Set(["queued", "running"]);
 const RECENT_PIPELINE_RUN_PAGE_SIZE = 5;
@@ -867,16 +868,18 @@ export function showRunningPipelinesModal({ showToast, agentOutputFormattingEnab
     body.innerHTML = "";
     if (viewMode === "definitions") {
       renderDefinitionListView();
-      return;
-    }
-    title.textContent = "Running Pipelines";
-    definitionsButton.textContent = "Definitions";
-    definitionsButton.setAttribute("aria-label", "Show pipeline definitions");
-    if (selectedRunId) {
+    } else if (selectedRunId) {
+      title.textContent = "Running Pipelines";
+      definitionsButton.textContent = "Definitions";
+      definitionsButton.setAttribute("aria-label", "Show pipeline definitions");
       renderDetailsView();
-      return;
+    } else {
+      title.textContent = "Running Pipelines";
+      definitionsButton.textContent = "Definitions";
+      definitionsButton.setAttribute("aria-label", "Show pipeline definitions");
+      renderListView();
     }
-    renderListView();
+    bindPipelineValueInspector(body);
   }
 
   refreshButton.addEventListener("click", () => {

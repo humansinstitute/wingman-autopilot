@@ -248,7 +248,9 @@ function renderLedgerRow(row) {
 
 function getStepWriteRows(run, steps, step, options = {}) {
   const explicitRows = buildExplicitDisplayRows(step, "out", options);
-  if (explicitRows) return explicitRows;
+  if (explicitRows?.length) return explicitRows;
+  const compactedRows = getCompactedDisplayRows(step, "out");
+  if (compactedRows.length) return compactedRows;
   if (typeof step.metadata?.assign === "string" && step.metadata.assign.trim()) {
     return buildAssignedOutputRows(step.metadata.assign.trim(), getStepOutput(step));
   }
@@ -262,7 +264,9 @@ function getStepWriteRows(run, steps, step, options = {}) {
 
 function getStepReadRows(step, options = {}) {
   const explicitRows = buildExplicitDisplayRows(step, "in", options);
-  if (explicitRows) return explicitRows;
+  if (explicitRows?.length) return explicitRows;
+  const compactedRows = getCompactedDisplayRows(step, "in");
+  if (compactedRows.length) return compactedRows;
   const selector = step.metadata?.input;
   if (typeof selector === "string" && selector.trim()) {
     const selectorName = displayPath(selector.trim());
@@ -277,6 +281,15 @@ function getStepReadRows(step, options = {}) {
     }
   }
   return buildFallbackDisplayRows(step.input);
+}
+
+function getCompactedDisplayRows(step, direction) {
+  const rows = step?.metadata?.compactedDisplay?.[direction];
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .filter((row) => row && typeof row === "object" && typeof row.name === "string")
+    .slice(0, FIELD_LIMIT)
+    .map((row) => ({ name: row.name, value: row.value }));
 }
 
 function resolveStateBeforeStep(run, steps, targetStep) {

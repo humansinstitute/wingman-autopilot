@@ -122,6 +122,14 @@ function decodeNullableJsonObject(value: unknown): JsonObject | null {
   return decodeJsonObject(value);
 }
 
+function tryDecodeJsonObject(value: unknown): JsonObject {
+  try {
+    return decodeJsonObject(value);
+  } catch {
+    return {};
+  }
+}
+
 export class PipelineStore {
   readonly path: string;
   private readonly db: Database;
@@ -521,6 +529,30 @@ export class PipelineStore {
          WHERE run_id IN (${placeholders}) AND type IN ('step_started', 'step_queued', 'step_completed') AND data_json <> '{}'`,
       ).get(...runIds) as { count?: number } | null)?.count ?? 0);
 
+      const stepRows = this.db.query(
+        `SELECT id, input_json, result_json, output_json, metadata_json
+         FROM pipeline_steps
+         WHERE run_id IN (${placeholders})
+           AND (input_json <> '{}' OR result_json IS NOT NULL OR output_json IS NOT NULL)`,
+      ).all(...runIds) as Array<Record<string, unknown>>;
+      for (const row of stepRows) {
+        const metadata = tryDecodeJsonObject(row.metadata_json);
+        this.db.run(
+          `UPDATE pipeline_steps SET metadata_json = ? WHERE id = ?`,
+          [
+            encodeJson({
+              ...metadata,
+              compactedDisplay: buildCompactedDisplaySnapshot({
+                input: tryDecodeJsonObject(row.input_json),
+                result: row.result_json === null || row.result_json === undefined ? null : tryDecodeJsonObject(row.result_json),
+                output: row.output_json === null || row.output_json === undefined ? null : tryDecodeJsonObject(row.output_json),
+              }),
+            }),
+            String(row.id),
+          ],
+        );
+      }
+
       this.db.run(
         `UPDATE pipeline_steps
          SET input_json = '{}', result_json = NULL, output_json = NULL
@@ -837,4 +869,49 @@ function normalisePositiveInteger(value: unknown): number | null {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 1) return null;
   return parsed;
+}
+
+function buildCompactedDisplaySnapshot(input: {
+  input: JsonObject;
+  result: JsonObject | null;
+  output: JsonObject | null;
+}): JsonObject {
+  return {
+    in: buildCompactedDisplayRows(input.input),
+    out: buildCompactedDisplayRows(input.output ?? input.result ?? {}),
+  };
+}
+
+function buildCompactedDisplayRows(value: unknown): Array<{ name: string; value: unknown }> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  return Object.entries(value as Record<string, unknown>)
+    .filter(([, child]) => child !== undefined && child !== null)
+    .slice(0, 8)
+    .map(([name, child]) => ({
+      name,
+      value: compactDisplayValue(child),
+    }));
+}
+
+function compactDisplayValue(value: unknown): unknown {
+  if (typeof value === "string") {
+    return value.length > 500 ? `${value.slice(0, 497)}...` : value;
+  }
+  if (typeof value === "number" || typeof value === "boolean" || value === null) return value;
+  if (Array.isArray(value)) {
+    return {
+      type: "array",
+      count: value.length,
+      preview: value.slice(0, 5).map(compactDisplayValue),
+    };
+  }
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>);
+    return {
+      type: "object",
+      fields: entries.length,
+      preview: Object.fromEntries(entries.slice(0, 5).map(([key, child]) => [key, compactDisplayValue(child)])),
+    };
+  }
+  return String(value);
 }
