@@ -890,6 +890,7 @@ function buildCompactedDisplayRows(value: unknown): Array<{ name: string; value:
     .map(([name, child]) => ({
       name,
       value: compactDisplayValue(child),
+      inspectValue: child,
     }));
 }
 

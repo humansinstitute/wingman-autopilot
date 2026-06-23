@@ -102,6 +102,7 @@ describe("pipeline run flow visualization", () => {
   });
 
   test("uses declarative display fields for the default field summary", () => {
+    const longMessage = "Can you check the pipeline and explain every issue in detail without truncating the prompt when I open the value inspector because the full prompt matters for debugging?";
     const plumbingSteps = [{
       id: "step-routing",
       stepIndex: 1,
@@ -112,7 +113,7 @@ describe("pipeline run flow visualization", () => {
         dispatch: { routeId: "route-1", triggerKind: "chat", source: "router" },
         runtime: { commandPrefix: "wm" },
         agent: { defaultAgent: "codex" },
-        chat: { messageText: "Can you check the pipeline?", channelId: "chan-1" },
+        chat: { messageText: longMessage, channelId: "chan-1" },
       },
       metadata: {
         input: { pick: { dispatch: "$.dispatch", chat: "$.chat", runtime: "$.runtime" } },
@@ -142,7 +143,9 @@ describe("pipeline run flow visualization", () => {
     }, run, plumbingSteps);
 
     expect(html).toContain("<code>Message</code>");
-    expect(html).toContain("Can you check the pipeline?");
+    expect(html).toContain("Can you check the pipeline and explain every issue in detail without truncating the prompt wh...");
+    const messageValue = html.match(/data-value-title="Fields In: Message"[\s\S]*?data-value="([^"]+)"/)?.[1] ?? "";
+    expect(decodeURIComponent(messageValue)).toContain(longMessage);
     expect(html).toContain("<code>Objective</code>");
     expect(html).toContain("<code>Thread</code>");
     expect(html).not.toContain("<code>dispatch</code>");

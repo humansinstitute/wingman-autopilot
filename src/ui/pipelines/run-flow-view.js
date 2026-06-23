@@ -186,6 +186,7 @@ function renderFieldRows(rows, idPrefix) {
 
 function renderFieldRow(row, contextLabel = "") {
   const preview = formatPreviewValue(row.value);
+  const inspectValue = Object.prototype.hasOwnProperty.call(Object(row), "inspectValue") ? row.inspectValue : row.value;
   const title = [contextLabel, row.name].filter(Boolean).join(": ") || "Value";
   return `
     <div class="wm-pipeline-flow-row">
@@ -195,7 +196,7 @@ function renderFieldRow(row, contextLabel = "") {
           class="wm-pipeline-value-preview"
           data-action="inspect-pipeline-value"
           data-value-title="${escapeAttribute(title)}"
-          data-value="${escapeAttribute(serializeInspectionValue(row.value))}"
+          data-value="${escapeAttribute(serializeInspectionValue(inspectValue))}"
           aria-label="Inspect ${escapeAttribute(title)} value"
           data-testid="pipeline-value-preview"
         >&ldquo;${escapeHtml(preview)}&rdquo;</button>

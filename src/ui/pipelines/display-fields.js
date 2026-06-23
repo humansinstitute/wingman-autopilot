@@ -102,6 +102,7 @@ function buildDisplayRow(step, direction, spec, options) {
   return {
     name: spec.label,
     value: formatDisplayValue(value, spec, options),
+    inspectValue: formatInspectionValue(value, spec, options),
   };
 }
 
@@ -159,6 +160,15 @@ function formatDisplayValue(value, spec, options = {}) {
   return value;
 }
 
+function formatInspectionValue(value, spec, options = {}) {
+  const format = typeof spec.format === "string" ? spec.format : "auto";
+  if (format === "count") return value;
+  if (format === "agentText") return cleanAgentOutputText(extractText(value) ?? String(value));
+  if (format === "text") return extractText(value) ?? String(value);
+  if (options.cleanAgentText && typeof value === "string") return cleanAgentOutputText(value);
+  return value;
+}
+
 function summariseMessages(value, limit) {
   const messages = extractArray(value);
   if (!messages.length) return "0 messages";
@@ -191,6 +201,7 @@ function buildPromotedFallbackRows(prefix, key, value) {
     rows.push({
       name: "Chat Message",
       value: compactText(messageText),
+      inspectValue: messageText,
     });
   }
 
@@ -201,6 +212,7 @@ function buildPromotedFallbackRows(prefix, key, value) {
       rows.push({
         name: "Thread",
         value: threadSummary,
+        inspectValue: threadValue,
       });
     }
   }
