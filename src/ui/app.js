@@ -446,6 +446,7 @@ let extractAttachmentFiles = () => [];
 let handleImageUploads = async () => {};
 let handleAttachmentUploads = async () => {};
 let cleanupOrphanedMarkers = () => {};
+let prepareImagePreviewsForComposer = () => {};
 let openVoiceNoteRecorder = async () => {};
 let cleanupVoiceNoteDraftState = () => {};
 let prepareVoiceNoteDraftForSend = async (_sessionId, draft) => draft;
@@ -1914,6 +1915,7 @@ extractAttachmentFiles = imageAttachmentsModule.extractAttachmentFiles;
 handleImageUploads = imageAttachmentsModule.handleImageUploads;
 handleAttachmentUploads = imageAttachmentsModule.handleAttachmentUploads;
 cleanupOrphanedMarkers = imageAttachmentsModule.cleanupOrphanedMarkers;
+prepareImagePreviewsForComposer = imageAttachmentsModule.prepareImagePreviewsForComposer;
 
 const voiceNotesModule = initVoiceNotes({
   state,
@@ -2230,6 +2232,7 @@ const liveViewModule = initLiveView({
   handleAttachmentUploads,
   cleanupOrphanedMarkers,
   clearImagePreviews,
+  prepareImagePreviewsForComposer,
   openVoiceNoteRecorder,
   openDialog,
   openSessionLaunchPalette: () => commandPaletteController?.openSessionLaunch?.(),

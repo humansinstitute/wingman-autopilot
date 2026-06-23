@@ -114,6 +114,7 @@ export function initLiveView(deps) {
     handleAttachmentUploads,
     cleanupOrphanedMarkers,
     clearImagePreviews,
+    prepareImagePreviewsForComposer = () => {},
     openVoiceNoteRecorder,
     openDialog,
     openSessionLaunchPalette,
@@ -769,11 +770,9 @@ export function initLiveView(deps) {
 
     const imagePreviewContainer = document.createElement("div");
     imagePreviewContainer.className = "wm-image-preview-container";
-    imagePreviewContainer.style.display = "none";
-    imagePreviewContainer.style.marginBottom = "8px";
-    imagePreviewContainer.style.display = "flex";
-    imagePreviewContainer.style.flexWrap = "wrap";
-    imagePreviewContainer.style.gap = "8px";
+    imagePreviewContainer.hidden = true;
+    imagePreviewContainer.setAttribute("aria-label", "Attached images");
+    imagePreviewContainer.dataset.testid = "image-attachment-list";
 
     const composer = document.createElement("form");
     composer.className = "wm-composer";
@@ -927,10 +926,13 @@ export function initLiveView(deps) {
       event.preventDefault();
       const draft = textarea.value;
       state.messageDrafts.set(sessionId, draft);
-      clearImagePreviews(sessionId);
       const result = sendMessage(sessionId, draft);
       if (result?.finally) {
-        result.finally(() => {
+        result.then((sendResult) => {
+          if (sendResult?.sent || sendResult?.queued) {
+            clearImagePreviews(sessionId);
+          }
+        }).finally(() => {
           requestAnimationFrame(() => {
             const newTextarea = document.querySelector('.wm-composer textarea');
             if (newTextarea) {
@@ -1234,6 +1236,7 @@ export function initLiveView(deps) {
     composerShell.append(imagePreviewContainer, composer);
 
     resizeTextarea();
+    prepareImagePreviewsForComposer(sessionId);
 
     requestAnimationFrame(() => {
       if (!document.contains(textarea)) return;
