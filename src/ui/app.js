@@ -32,7 +32,6 @@ import { createSessionDialogController } from "./common/session-dialog.js";
 import { createAutopilotCommandPalette } from "./core/command-palette.js";
 import { createCommandPaletteFileActions } from "./core/command-palette-file-actions.js";
 import { initAppDialogs } from "./apps/dialog.js";
-import { initWorkspaceTree } from "./apps/tree.js";
 import { initAppCards } from "./apps/cards.js";
 import { initAppsRuntime, APP_STATUS_LABELS, APP_ACTION_LABELS } from "./apps/runtime.js";
 import {
@@ -203,7 +202,6 @@ let openDeployDialog = () => {};
 let openCaproverDialog = () => {};
 let refreshAppLogs = async () => {};
 let resetAppDialog = () => {};
-let createWorkspaceTreeSidebar = () => null;
 let renderAppCard = () => document.createElement("section");
 let renderWingmanCard = () => document.createElement("section");
 let commandPaletteController = null;
@@ -2359,21 +2357,12 @@ resetAppDialog = appDialogs.resetAppDialog;
 openDeployDialog = appDialogs.openDeployDialog;
 openCaproverDialog = appDialogs.openCaproverDialog;
 
-const workspaceTree = initWorkspaceTree({
-  state,
-  refreshApps,
-  showToast,
-});
-
-createWorkspaceTreeSidebar = workspaceTree.createSidebar;
-
 const appsViewModule = initAppsView({
   state,
   appsStore,
   getCurrentRoute: () => currentRoute,
   render,
   openAppDialog: (...args) => openAppDialog(...args),
-  createWorkspaceTreeSidebar: (...args) => createWorkspaceTreeSidebar(...args),
   renderAppCard: (...args) => renderAppCard(...args),
   refreshApps: (...args) => refreshApps(...args),
   fetchApps: (...args) => fetchApps(...args),

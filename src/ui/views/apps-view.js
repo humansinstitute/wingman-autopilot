@@ -48,7 +48,6 @@ export function initAppsView({
   getCurrentRoute,
   render,
   openAppDialog,
-  createWorkspaceTreeSidebar,
   renderAppCard,
   refreshApps,
   fetchApps,
@@ -259,16 +258,13 @@ export function initAppsView({
       void refreshApps({ skipRender: false });
     }
 
-    const splitContainer = document.createElement("div");
-    splitContainer.className = "wm-apps-split";
-
-    const sidebar = createWorkspaceTreeSidebar();
-    if (sidebar) {
-      splitContainer.append(sidebar);
-    }
-
     const mainArea = document.createElement("div");
     mainArea.className = "wm-apps-main";
+    const finishMainArea = () => {
+      wrapper.append(mainArea);
+      schedulePendingAppDialog();
+      return wrapper;
+    };
 
     if (appsStore().error) {
       const errorBox = document.createElement("div");
@@ -294,21 +290,15 @@ export function initAppsView({
       loading.className = "wm-apps-empty";
       loading.textContent = "Loading apps…";
       mainArea.append(loading);
-      splitContainer.append(mainArea);
-      wrapper.append(splitContainer);
-      schedulePendingAppDialog();
-      return wrapper;
+      return finishMainArea();
     }
 
     if (apps.length === 0) {
       const empty = document.createElement("p");
       empty.className = "wm-apps-empty";
-      empty.textContent = "No apps registered yet. Import from the sidebar or use 'Add App' to get started.";
+      empty.textContent = "No apps registered yet. Use 'Add App' to get started.";
       mainArea.append(empty);
-      splitContainer.append(mainArea);
-      wrapper.append(splitContainer);
-      schedulePendingAppDialog();
-      return wrapper;
+      return finishMainArea();
     }
 
     const sort = appsStore().sort && typeof appsStore().sort === "object"
@@ -325,10 +315,7 @@ export function initAppsView({
       empty.className = "wm-apps-empty";
       empty.textContent = "No apps match the current filter.";
       mainArea.append(empty);
-      splitContainer.append(mainArea);
-      wrapper.append(splitContainer);
-      schedulePendingAppDialog();
-      return wrapper;
+      return finishMainArea();
     }
 
     const openAppDetails = (app) => {
@@ -348,8 +335,7 @@ export function initAppsView({
     const grid = renderAppsCardGrid(visibleApps);
 
     mainArea.append(table, grid);
-    splitContainer.append(mainArea);
-    wrapper.append(splitContainer);
+    wrapper.append(mainArea);
 
     focusPendingApp(wrapper);
     schedulePendingAppDialog();
