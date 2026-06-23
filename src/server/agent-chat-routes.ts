@@ -372,7 +372,7 @@ function parseJsonObjectField(value: unknown): Record<string, unknown> {
 }
 
 function parseDispatchTriggerKind(value: unknown): DispatchTriggerKind | null {
-  return value === 'chat' || value === 'task' || value === 'flow' || value === 'task_review' || value === 'approval' || value === 'comment'
+  return value === 'chat' || value === 'task' || value === 'document' || value === 'flow' || value === 'task_review' || value === 'approval' || value === 'comment'
     ? value
     : null;
 }

@@ -8,6 +8,7 @@ const BUILT_IN_DISPATCH_PIPELINES = new Set([
   'fd-agent-dispatch-chat',
   'fd-agent-dispatch-task-response',
   'fd-agent-dispatch-comment-response',
+  'fd-document-invocation',
 ]);
 
 const KNOWN_BUILT_IN_DISPATCH_GENERATED_IDS = new Map<string, string>([
@@ -44,6 +45,9 @@ export function stableDispatchPipelineIdForRoute(input: {
   }
   if (input.triggerKind === 'task' && input.capability === 'task_dispatch') {
     return 'fd-agent-dispatch-task-response';
+  }
+  if (input.triggerKind === 'document' && input.capability === 'task_dispatch') {
+    return 'fd-document-invocation';
   }
   if (input.triggerKind === 'comment' && input.capability === 'comment_dispatch') {
     return 'fd-agent-dispatch-comment-response';

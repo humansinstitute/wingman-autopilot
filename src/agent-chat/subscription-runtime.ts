@@ -3152,10 +3152,13 @@ export class WorkspaceSubscriptionManager {
       return this.saveRecord(this.recomputeHealth(record));
     }
 
+    const dispatchTriggerKind: CreateDispatchRouteInput['triggerKind'] = targetType === 'document' ? 'document' : 'task';
+    const dispatchHistoryKind: AgentChatDispatchHistoryEntry['kind'] = targetType === 'document' ? 'document' : 'task';
+
     if (!flightDeckPgInvocationTargetsBot(invocation.recipients, record.botNpub)) {
       return this.appendDispatchHistory(record, {
         at: new Date().toISOString(),
-        kind: 'task',
+        kind: dispatchHistoryKind,
         action: 'invocation_skip_not_targeted',
         agentId: 'dispatch-pipeline',
         sessionId: null,
@@ -3207,7 +3210,7 @@ export class WorkspaceSubscriptionManager {
       return this.appendProfilePolicySuppression({
         record,
         decision: profileDecision!,
-        kind: 'task',
+        kind: dispatchHistoryKind,
         recordId,
         bindingId: targetId,
         bindingType,
@@ -3236,7 +3239,7 @@ export class WorkspaceSubscriptionManager {
       const pipelineResult = await withTimeout(
         this.dispatchPipelineRuntime.dispatch({
           subscription: record,
-          triggerKind: 'task',
+          triggerKind: dispatchTriggerKind,
           capability: 'task_dispatch',
           recordId,
           record: {

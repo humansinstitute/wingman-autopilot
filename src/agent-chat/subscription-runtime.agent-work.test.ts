@@ -989,6 +989,96 @@ describe('WorkspaceSubscriptionManager agent-work routing', () => {
     expect((runInputs[0]?.profileRuntime as any)?.appendedContext[0].contextText).toBe('Workspace chat context');
   });
 
+  test('starts document invocation pipeline with document trigger kind', async () => {
+    const routeStore = new DispatchRouteStore(makeTempDb('profile-document-invocation-routes'));
+    const pipelineStore = new PipelineStore(makeTempDb('profile-document-invocation-runs'));
+    const subscription = makeSubscription();
+    routeStore.save({
+      managedByNpub: subscription.managedByNpub!,
+      subscriptionId: subscription.subscriptionId,
+      workspaceOwnerNpub: subscription.workspaceOwnerNpub,
+      botNpub: subscription.botNpub,
+      sourceAppNpub: subscription.sourceAppNpub,
+      triggerKind: 'task',
+      capability: 'task_dispatch',
+      pipelineDefinitionId: 'fd-agent-dispatch-task-response',
+    });
+    const runInputs: Record<string, unknown>[] = [];
+    const runDefinitionIds: string[] = [];
+    const runtime = new DispatchPipelineRuntime({
+      routeStore,
+      pipelineStore,
+      getSessionApiContext: () => ({} as never),
+      callbackOrigin: 'http://localhost',
+      loadDefinition: async (definitionId) => ({
+        id: definitionId,
+        slug: definitionId,
+        name: definitionId,
+        scope: 'shared',
+        ownerAlias: 'shared',
+        path: `/tmp/${definitionId}.json`,
+        spec: { name: definitionId, input: {}, steps: [] },
+      }),
+      loadFunctions: async () => ({ registry: {}, records: [] }),
+      runPipeline: async (input: any) => {
+        runInputs.push(input.input);
+        runDefinitionIds.push(input.definition.id);
+        return {
+          ...makePipelineRun('profile-document-invocation-run-1', input.input),
+          definitionId: input.definition.id,
+        };
+      },
+    });
+
+    const result = await runtime.dispatch({
+      subscription,
+      triggerKind: 'document',
+      capability: 'task_dispatch',
+      recordId: 'invocation-1',
+      record: {},
+      payload: {
+        invocation_id: 'invocation-1',
+        prompt: 'clean up this document',
+        target_type: 'document',
+        target_id: 'doc-1',
+        title: 'Document title',
+        state: 'invoked',
+      },
+      recordFamily: 'invocation',
+      recordState: 'active',
+      recordVersion: 1,
+      updaterNpub: 'npub1human',
+      bindingType: 'document',
+      bindingId: 'doc-1',
+      scopeId: 'scope-1',
+      channelId: 'channel-1',
+      threadId: null,
+      changedFields: ['invocation'],
+      groupNpubs: ['npub1group'],
+      profileRuntime: {
+        profileWorkspaceId: 'profile-workspace-1',
+        eventType: 'document_invocation',
+        enabled: true,
+        defaultAction: 'work',
+        quietMode: false,
+        pipeline: {
+          pipelineDefinitionId: 'fd-document-invocation',
+          pipelineVersionPolicy: 'latest',
+          source: 'built_in_default',
+        },
+        appendedContext: [],
+      },
+    });
+
+    expect(result.handled).toBe(true);
+    expect(runDefinitionIds).toEqual(['fd-document-invocation']);
+    expect((runInputs[0]?.dispatch as any)?.routeId).toContain('profile-policy');
+    expect((runInputs[0]?.dispatch as any)?.triggerKind).toBe('document');
+    expect((runInputs[0]?.profileRuntime as any)?.eventType).toBe('document_invocation');
+    expect((runInputs[0]?.routing as any)?.bindingType).toBe('document');
+    expect((runInputs[0]?.record as any)?.payload.task_id).toBeUndefined();
+  });
+
   test('adds Flight Deck channel context to chat pipeline input', async () => {
     const routeStore = new DispatchRouteStore(makeTempDb('flightdeck-channel-context-routes'));
     const pipelineStore = new PipelineStore(makeTempDb('flightdeck-channel-context-runs'));

@@ -938,7 +938,12 @@ async function resolveFlightDeckChannelContextFromTower(
 }
 
 function requiresFlightDeckChannelContext(input: DispatchPipelineEventInput): boolean {
-  if (input.triggerKind !== 'chat' && input.triggerKind !== 'comment' && input.triggerKind !== 'task') {
+  if (
+    input.triggerKind !== 'chat'
+    && input.triggerKind !== 'comment'
+    && input.triggerKind !== 'task'
+    && input.triggerKind !== 'document'
+  ) {
     return false;
   }
   return Boolean(getText(input.subscription.workspaceId));
@@ -1313,6 +1318,7 @@ function normaliseStoredTriggerKind(value: string | null): DispatchTriggerKind {
   if (
     value === 'chat'
     || value === 'task'
+    || value === 'document'
     || value === 'flow'
     || value === 'task_review'
     || value === 'approval'
@@ -1339,6 +1345,7 @@ function capabilityForStoredTrigger(triggerKind: DispatchTriggerKind): AgentCapa
   if (triggerKind === 'approval') return 'approval_dispatch';
   if (triggerKind === 'flow') return 'flow_dispatch';
   if (triggerKind === 'task_review') return 'task_review';
+  if (triggerKind === 'document') return 'task_dispatch';
   return 'task_dispatch';
 }
 

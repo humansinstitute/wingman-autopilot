@@ -39,6 +39,7 @@ function normaliseTriggerKind(value: string): DispatchTriggerKind {
   if (
     value === 'chat'
     || value === 'task'
+    || value === 'document'
     || value === 'flow'
     || value === 'task_review'
     || value === 'approval'

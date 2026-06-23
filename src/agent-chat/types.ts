@@ -12,7 +12,7 @@ export type AgentCapability =
   | 'flow_dispatch'
   | 'task_review'
   | 'approval_dispatch';
-export type DispatchTriggerKind = 'chat' | 'task' | 'flow' | 'task_review' | 'approval' | 'comment';
+export type DispatchTriggerKind = 'chat' | 'task' | 'document' | 'flow' | 'task_review' | 'approval' | 'comment';
 export type DispatchActivePolicy = 'skip' | 'queue' | 'start_new';
 export type PipelineVersionPolicy = 'latest';
 export type AgentInterceptDecision = 'respond' | 'ignore' | 'pending' | 'failed';
@@ -73,7 +73,7 @@ export interface BackendConnectionGrantRecord {
 
 export interface AgentChatDispatchHistoryEntry {
   at: string;
-  kind: 'chat' | 'task' | 'flow' | 'review' | 'approval' | 'comment';
+  kind: 'chat' | 'task' | 'document' | 'flow' | 'review' | 'approval' | 'comment';
   action: string;
   agentId: string;
   sessionId: string | null;
