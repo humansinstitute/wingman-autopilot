@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { getHomeRunningApps } from "./running-apps.js";
+import { getHomeRunningApps } from "../views/home-view.js";
 
 describe("home running apps", () => {
   test("lists apps with running status", () => {
