@@ -131,6 +131,24 @@ test("dispatch.prepareShortLookupAnswer answers greetings without an agent", asy
   });
 });
 
+test("dispatch.prepareShortLookupAnswer answers direct Rick greetings without classification", async () => {
+  const result = await builtinPipelineFunctions["dispatch.prepareShortLookupAnswer"]!({
+    chatDispatchInput: {
+      latestThread: [
+        { messageId: "message-1", body: "Hey Rick" },
+      ],
+    },
+  });
+
+  expect(result).toMatchObject({
+    skipAgent: true,
+    intent: "answer_now",
+    dispatchTask: false,
+    chatResponse: { body: "Hey Pete." },
+    shortLookup: { kind: "greeting" },
+  });
+});
+
 test("dispatch.prepareShortLookupAnswer leaves ordinary chat for classification", async () => {
   const result = await builtinPipelineFunctions["dispatch.prepareShortLookupAnswer"]!({
     chatDispatchInput: {

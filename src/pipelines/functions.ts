@@ -1925,7 +1925,7 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const latestText = getText(latestMessage.body ?? latestMessage.text ?? latestMessage.messageText) ?? "";
     const normalized = latestText.toLowerCase().replace(/[^\p{L}\p{N}\s']/gu, " ").replace(/\s+/g, " ").trim();
 
-    if (/^(hey|hi|hello|yo|hiya|gm|good morning|good afternoon|good evening)( pete)?$/.test(normalized)) {
+    if (/^(hey|hi|hello|yo|hiya|gm|good morning|good afternoon|good evening)( (pete|rick|wm21))?$/.test(normalized)) {
       return {
         skipAgent: true,
         intent: "answer_now",
