@@ -742,6 +742,25 @@ describe("memory pipeline functions", () => {
     expect(result.agentResponse).toEqual({ responseDraft: "hello" });
   });
 
+  test("dispatch.setResponseActivity is a dry-run outside dispatch routes", async () => {
+    const result = await builtinPipelineFunctions["dispatch.setResponseActivity"]!({
+      status: "thinking",
+      label: "Thinking",
+      expiresInSeconds: 90,
+    });
+
+    expect(result).toMatchObject({
+      published: false,
+      status: "not_configured",
+      operation: "chat.set-response-activity",
+      activity: {
+        status: "thinking",
+        label: "Thinking",
+        expiresInSeconds: 90,
+      },
+    });
+  });
+
   test("dispatch task state functions are dry-runs outside dispatch routes", async () => {
     await expect(builtinPipelineFunctions["dispatch.markTaskInProgress"]!({ taskId: "task-1" })).resolves.toMatchObject({
       published: false,

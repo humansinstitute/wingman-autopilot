@@ -1701,6 +1701,20 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     };
   },
 
+  async "dispatch.setResponseActivity"(input) {
+    return {
+      published: false,
+      status: "not_configured",
+      operation: "chat.set-response-activity",
+      reason: "This function only updates Flight Deck response activity when the pipeline is launched by a Wingman dispatch route.",
+      activity: {
+        status: input.status ?? null,
+        label: input.label ?? null,
+        expiresInSeconds: input.expiresInSeconds ?? null,
+      },
+    };
+  },
+
   async "dispatch.ensureDiscussionDocument"(input) {
     return {
       ensured: false,
