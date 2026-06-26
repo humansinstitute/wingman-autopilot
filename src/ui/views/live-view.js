@@ -13,6 +13,7 @@ import { AGENT_OUTPUT_FORMATTING_FLAG_KEY } from "../rendering/agent-output-form
 import { renderChatMessageHtml } from "../rendering/chat-message-content.js";
 import {
   fetchSessionHistoryApi,
+  branchConversationApi,
   forkSessionToWorktreeApi,
   removePinnedArtifactApi,
   setPinnedArtifactApi,
@@ -33,6 +34,7 @@ import { fetchSessionArtifacts, createArtifactsPanel, createArtifactsToolbar } f
 import { createAppControlsPanel, createAppControlsToolbar } from "../live/app-controls-panel.js";
 import { createCommandMenuController } from "../live/command-menu-positioning.js";
 import { addGitCommandSubmenus } from "../live/git-command-submenus.js";
+import { promptConversationBranch } from "../live/conversation-branch-menu.js";
 import { createSessionStopFeedback } from "../live/session-stop-feedback.js";
 import {
   addPinnedFileForSession,
@@ -1008,6 +1010,15 @@ export function initLiveView(deps) {
       submenu.append(trigger, panel);
       commandMenu.append(submenu);
     };
+
+    addCommand("Branch Conversation...", () => promptConversationBranch({
+      sessionId,
+      sessionsStore,
+      openTextPromptDialog,
+      showToast,
+      branchConversationApi,
+    }));
+    addCommandDivider();
 
     addGitCommandSubmenus({
       addSubmenu,

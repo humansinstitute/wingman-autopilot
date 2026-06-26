@@ -362,3 +362,31 @@ export async function forkSessionToWorktreeApi(sessionId, branch, messageCount =
 
   return data;
 }
+
+/**
+ * Branches a session conversation into a fresh session in the same directory.
+ * The returned initialPrompt should be sent to the new session to seed context.
+ * @param {string} sessionId - The source session ID
+ * @param {{name?: string, mode?: "full"|"recent", messageCount?: number}} [options]
+ * @returns {Promise<{session: Object, contextMessages: Array, sourceSessionId: string, initialPrompt: string}>}
+ * @throws {Error} If the request fails
+ */
+export async function branchConversationApi(sessionId, options = {}) {
+  const response = await fetch(`/api/sessions/${sessionId}/branch-conversation`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      name: options.name,
+      mode: options.mode ?? "full",
+      messageCount: options.messageCount,
+    }),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(data.error ?? response.statusText ?? "Failed to branch conversation");
+  }
+
+  return data;
+}

@@ -3,6 +3,9 @@ export interface SessionMetadata {
   billingMode: "subscription" | "credits";
   nativeAgentSession?: NativeAgentSessionMetadata;
   resumedFromWingmanSessionId?: string;
+  branchedFromWingmanSessionId?: string;
+  branchConversationMode?: "full" | "recent";
+  branchConversationMessageCount?: number;
   role?: string;
   project?: string;
   goal?: string;
@@ -103,6 +106,20 @@ export const normaliseSessionMetadata = (
     typeof metadata?.resumedFromWingmanSessionId === "string"
       ? metadata.resumedFromWingmanSessionId.trim()
       : "";
+  const branchedFromWingmanSessionId =
+    typeof metadata?.branchedFromWingmanSessionId === "string"
+      ? metadata.branchedFromWingmanSessionId.trim()
+      : "";
+  const branchConversationMode =
+    metadata?.branchConversationMode === "recent" || metadata?.branchConversationMode === "full"
+      ? metadata.branchConversationMode
+      : undefined;
+  const branchConversationMessageCount =
+    typeof metadata?.branchConversationMessageCount === "number" &&
+    Number.isFinite(metadata.branchConversationMessageCount) &&
+    metadata.branchConversationMessageCount > 0
+      ? Math.floor(metadata.branchConversationMessageCount)
+      : undefined;
   const role = typeof metadata?.role === "string" ? metadata.role.trim() : "";
   const project = typeof metadata?.project === "string" ? metadata.project.trim() : "";
   const goal = typeof metadata?.goal === "string" ? metadata.goal.trim() : "";
@@ -154,6 +171,9 @@ export const normaliseSessionMetadata = (
     billingMode: metadata?.billingMode === "credits" ? "credits" : "subscription",
     nativeAgentSession,
     resumedFromWingmanSessionId: resumedFromWingmanSessionId || undefined,
+    branchedFromWingmanSessionId: branchedFromWingmanSessionId || undefined,
+    branchConversationMode,
+    branchConversationMessageCount,
     role: role || undefined,
     project: project || undefined,
     goal: goal || undefined,

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, test } from "bun:test";
 
-import { fetchSessionMessagesApi } from "./sessions.js";
+import { branchConversationApi, fetchSessionMessagesApi } from "./sessions.js";
 
 const source = readFileSync(new URL("./sessions.js", import.meta.url), "utf8");
 
@@ -41,5 +41,35 @@ describe("sessions service source contract", () => {
       "/api/sessions/session-1/messages",
       "/api/sessions/session-1/messages?refresh=true",
     ]);
+  });
+
+  test("branches a conversation through the dedicated endpoint", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests = [];
+    globalThis.fetch = async (url, init) => {
+      requests.push({ url: String(url), init });
+      return new Response(JSON.stringify({ session: { id: "branch-1" }, initialPrompt: "context" }), {
+        status: 201,
+        headers: { "content-type": "application/json" },
+      });
+    };
+
+    try {
+      const result = await branchConversationApi("session-1", {
+        name: "Questions branch",
+        mode: "full",
+      });
+      expect(result.session.id).toBe("branch-1");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0].url).toBe("/api/sessions/session-1/branch-conversation");
+    expect(requests[0].init.method).toBe("POST");
+    expect(JSON.parse(requests[0].init.body)).toEqual({
+      name: "Questions branch",
+      mode: "full",
+    });
   });
 });

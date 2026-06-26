@@ -22,6 +22,12 @@ import type {
   sessionArchiveStore as SessionArchiveStoreInstance,
 } from "../storage/session-archive-store";
 import type { ForkToWorktreeInput } from "../sessions/fork-to-worktree";
+import {
+  formatBranchConversationPrompt,
+  normalizeBranchConversationMessages,
+  selectBranchConversationMessages,
+  validateBranchConversationInput,
+} from "../sessions/branch-conversation";
 import { resolveSessionOwnerNpub } from "../sessions/session-ownership";
 import { deliverSessionAgentMessage } from "./session-agent-message";
 import { normalizeBusySessionMessageFailure } from "./session-message-failures";
@@ -1962,6 +1968,11 @@ export async function handleSessionApi(
       return handleQueueRoutes(request, method, parts, resolvedId, liveOwnedSession, authContext, ctx);
     }
 
+    if (method === "POST" && parts[4] === "branch-conversation") {
+      if (!liveOwnedSession) return Response.json({ error: "Not found" }, { status: 404 });
+      return handleBranchConversation(request, resolvedId, liveOwnedSession, authContext, ctx);
+    }
+
     // Fork session to a new git worktree
     if (method === "POST" && parts[4] === "fork-to-worktree") {
       if (!liveOwnedSession) return Response.json({ error: "Not found" }, { status: 404 });
@@ -2545,6 +2556,93 @@ async function handleQueueNext(
   } finally {
     ctx.queueDispatchInFlight.delete(id);
   }
+}
+
+async function handleBranchConversation(
+  request: Request,
+  id: string,
+  ownedSession: SessionSnapshot,
+  authContext: RequestAuthContext,
+  ctx: SessionApiContext,
+): Promise<Response> {
+  const sourceDirectory = ownedSession.workingDirectory;
+  if (!sourceDirectory) {
+    return Response.json({ error: "Source session has no working directory" }, { status: 400 });
+  }
+
+  let payload: unknown;
+  try {
+    payload = await request.json();
+  } catch {
+    return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+  }
+
+  let branchInput: ReturnType<typeof validateBranchConversationInput>;
+  try {
+    branchInput = validateBranchConversationInput(payload);
+    branchInput.sourceSessionId = id;
+  } catch (error) {
+    return Response.json({ error: (error as Error).message }, { status: 400 });
+  }
+
+  const refreshedMessages = await ctx.syncSessionMessages(id, true).catch(() => null);
+  const rawMessages = Array.isArray(refreshedMessages) && refreshedMessages.length > 0
+    ? refreshedMessages
+    : ctx.messageStore.listSessionMessages(id);
+  const sourceMessages = normalizeBranchConversationMessages(rawMessages);
+  const contextMessages = selectBranchConversationMessages(sourceMessages, branchInput);
+  if (contextMessages.length === 0) {
+    return Response.json({ error: "Source session has no conversation messages to branch" }, { status: 409 });
+  }
+
+  const sourceName = typeof ownedSession.name === "string" && ownedSession.name.trim()
+    ? ownedSession.name.trim()
+    : id;
+  const sessionName = branchInput.name || `${sourceName} (branch)`;
+  const sourceMetadata = normaliseSessionMetadata(ownedSession.metadata);
+  const ownerNpub = resolveSessionOwnerNpub(ownedSession.npub ?? null, sourceMetadata)
+    ?? resolveSelfSpaceViewerNpub(authContext, ctx);
+
+  let newSession: SessionSnapshot;
+  try {
+    newSession = await ctx.manager.createSession(
+      ownedSession.agent,
+      sourceDirectory,
+      sessionName,
+      { type: "conversation-branch", id, label: `Conversation branch from ${sourceName}` },
+      ownedSession.targetFile,
+      ownerNpub ?? undefined,
+      {
+        AGENT: false,
+        billingMode: sourceMetadata.billingMode,
+        branchedFromWingmanSessionId: id,
+        branchConversationMode: branchInput.mode,
+        branchConversationMessageCount: contextMessages.length,
+        ownerNpub: ownerNpub ?? undefined,
+        createdByNpub: authContext.subjectNpub ?? authContext.npub ?? sourceMetadata.createdByNpub,
+        lastManagedByNpub: authContext.subjectNpub ?? authContext.npub ?? undefined,
+        chargeToNpub: resolveSessionChargeNpub(sourceMetadata, ownedSession.npub ?? null) ?? ownerNpub ?? undefined,
+      },
+      ownedSession.model,
+    );
+    await recordLiveSession(ctx, newSession);
+  } catch (error) {
+    return Response.json({ error: (error as Error).message }, { status: 500 });
+  }
+
+  const initialPrompt = formatBranchConversationPrompt({
+    sourceSessionId: id,
+    sourceName,
+    messages: contextMessages,
+    mode: branchInput.mode,
+  });
+
+  return Response.json({
+    session: ctx.serializeSession(newSession),
+    contextMessages,
+    sourceSessionId: id,
+    initialPrompt,
+  }, { status: 201 });
 }
 
 async function handleForkToWorktree(

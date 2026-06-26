@@ -242,6 +242,102 @@ describe("handleSessionApi", () => {
     });
   });
 
+  test("POST /api/sessions/:id/branch-conversation creates an independent session with branch metadata", async () => {
+    let createdMetadata: Record<string, unknown> | null = null;
+    let createdDirectory: string | null = null;
+    let createdName: string | null = null;
+    const branchedSession = {
+      ...baseSession,
+      id: "branch-session-1",
+      name: "test session (branch)",
+      metadata: { AGENT: false, billingMode: "subscription" as const },
+      origin: { type: "conversation-branch", id: "session-1" },
+    };
+    const ctx = buildCtx({
+      manager: {
+        createSession: async (
+          agent: string,
+          workingDirectory: string,
+          name?: string,
+          origin?: unknown,
+          targetFile?: string,
+          npub?: string,
+          metadata?: unknown,
+        ) => {
+          createdDirectory = workingDirectory;
+          createdName = name ?? null;
+          createdMetadata = metadata as Record<string, unknown>;
+          return {
+            ...branchedSession,
+            agent,
+            workingDirectory,
+            name: name ?? branchedSession.name,
+            origin: origin as any,
+            targetFile,
+            npub: npub ?? null,
+            metadata: metadata as any,
+          };
+        },
+        getSession: (id: string) => (id === baseSession.id ? baseSession : undefined),
+        listSessions: () => [baseSession],
+      } as any,
+      messageStore: {
+        recordSession: () => {},
+        getSession: () => null,
+        listSessions: () => [],
+        listSessionMessages: () => [
+          {
+            id: "message-1",
+            sessionId: "session-1",
+            role: "user",
+            content: "Please implement the feature",
+            createdAt: "2026-06-26T01:00:00.000Z",
+          },
+        ],
+      } as any,
+      syncSessionMessages: async () => [
+        {
+          role: "user",
+          content: "Please implement the feature",
+          createdAt: "2026-06-26T01:00:00.000Z",
+        },
+        {
+          role: "assistant",
+          content: "I added the route.",
+          createdAt: "2026-06-26T01:01:00.000Z",
+        },
+      ],
+      serializeSession: (session) => ({
+        id: session.id,
+        name: session.name,
+        workingDirectory: session.workingDirectory,
+        metadata: session.metadata,
+        origin: session.origin,
+      }),
+    });
+
+    const url = new URL("http://localhost:3021/api/sessions/session-1/branch-conversation");
+    const request = new Request(url.toString(), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Questions branch", mode: "full" }),
+    });
+
+    const response = await handleSessionApi(request, url, "POST", makeAuth(), ctx);
+    expect(response).not.toBeNull();
+    expect(response!.status).toBe(201);
+    expect(createdDirectory).toBe("/tmp/project");
+    expect(createdName).toBe("Questions branch");
+    expect(createdMetadata?.branchedFromWingmanSessionId).toBe("session-1");
+    expect(createdMetadata?.nativeAgentSession).toBeUndefined();
+    expect(createdMetadata?.resumedFromWingmanSessionId).toBeUndefined();
+    const body = await response!.json();
+    expect(body.session.id).toBe("branch-session-1");
+    expect(body.initialPrompt).toContain("new, independent Codex session");
+    expect(body.initialPrompt).toContain("Please implement the feature");
+    expect(body.initialPrompt).toContain("I added the route.");
+  });
+
   test("GET /api/sessions/:id/messages/:messageId/speech returns an existing attachment", async () => {
     const speech = {
       publicPath: "/uploads/files/owner/codex/speech/response.mp3",
