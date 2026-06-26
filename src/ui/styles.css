@@ -3702,6 +3702,31 @@ body[data-live-header-collapsed="true"]:has(#app[data-route="live"]) .wm-live-dr
   align-self: flex-start;
 }
 
+.wm-message-working-notes {
+  margin: 0;
+}
+
+.wm-message-working-notes summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 0.88rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.wm-message-working-notes summary:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 3px;
+  border-radius: 0.25rem;
+}
+
+.wm-message-working-notes__body {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgba(148, 163, 184, 0.22);
+  color: var(--text-secondary);
+}
+
 .wm-message-speech-summary {
   margin: 0.7rem 3.1rem 0 0;
   padding: 0.65rem 0.75rem;

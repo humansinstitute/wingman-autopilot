@@ -10,7 +10,7 @@ import { openTextPromptDialog } from "../common/dialog-prompts.js";
 import { attachCopyButton, copyConversationToClipboard } from "../utils/clipboard.js";
 import { showToast } from "../utils/toast.js";
 import { AGENT_OUTPUT_FORMATTING_FLAG_KEY } from "../rendering/agent-output-format.js";
-import { renderChatMessageHtml } from "../rendering/chat-message-content.js";
+import { renderChatMessageHtml, renderWorkingNotesHtml } from "../rendering/chat-message-content.js";
 import {
   fetchSessionHistoryApi,
   branchConversationApi,
@@ -152,6 +152,16 @@ export function initLiveView(deps) {
   const shouldFormatAgentMessage = (message) => {
     const role = String(message?.role ?? message?.type ?? "").toLowerCase();
     return role === "assistant" || role === "agent";
+  };
+
+  const isWorkingNotesMessage = (message) => {
+    const role = String(message?.role ?? message?.type ?? "").toLowerCase();
+    return role === "agent-working";
+  };
+
+  const getMessageStyleRole = (message) => {
+    const role = String(message?.type ?? message?.role ?? "assistant").toLowerCase();
+    return role === "agent-working" ? "assistant" : role;
   };
 
   function updateSessionPinnedFile(sessionId, filePath) {
@@ -624,12 +634,17 @@ export function initLiveView(deps) {
     } else {
       messages.forEach((message) => {
         const bubble = document.createElement("article");
-        bubble.className = `wm-message ${message.type ?? message.role ?? "assistant"}`;
+        bubble.className = `wm-message ${getMessageStyleRole(message)}`;
+        bubble.dataset.role = String(message.type ?? message.role ?? "assistant").toLowerCase();
         const body = document.createElement("div");
         body.className = "wm-message-body";
-        body.innerHTML = renderChatMessageHtml(message.content ?? message.message ?? "", {
-          cleanAgentText: Boolean(agentOutputFormattingEnabled() && shouldFormatAgentMessage(message)),
-        });
+        body.innerHTML = isWorkingNotesMessage(message)
+          ? renderWorkingNotesHtml(message.content ?? message.message ?? "", {
+              cleanAgentText: Boolean(agentOutputFormattingEnabled()),
+            })
+          : renderChatMessageHtml(message.content ?? message.message ?? "", {
+              cleanAgentText: Boolean(agentOutputFormattingEnabled() && shouldFormatAgentMessage(message)),
+            });
         bubble.append(body);
         attachCopyButton(bubble);
         wrapper.append(bubble);

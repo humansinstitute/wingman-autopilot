@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { renderChatMessageHtml } from "./chat-message-content.js";
+import { renderChatMessageHtml, renderWorkingNotesHtml } from "./chat-message-content.js";
 
 describe("chat message content rendering", () => {
   test("keeps captured session text raw by default", () => {
@@ -30,5 +30,15 @@ describe("chat message content rendering", () => {
     expect(html).toContain("wm-inline-image");
     expect(html).toContain('data-testid="inline-image-preview-link"');
     expect(html).toContain('aria-label="Open upload preview"');
+  });
+
+  test("renders working notes as a collapsible details block", () => {
+    const html = renderWorkingNotesHtml("Checking files.\n\nRunning tests.");
+
+    expect(html).toContain('class="wm-message-working-notes"');
+    expect(html).toContain('data-testid="message-working-notes"');
+    expect(html).toContain("<summary>Working notes</summary>");
+    expect(html).toContain("Checking files.");
+    expect(html).toContain("Running tests.");
   });
 });

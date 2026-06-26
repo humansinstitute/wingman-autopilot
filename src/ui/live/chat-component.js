@@ -8,7 +8,7 @@ import Dexie from "/vendor/dexie/dexie.mjs";
 import { sseManager } from "./sse-manager.js";
 import { MessageStore, SessionStore } from "./db.js";
 import { show as scrollPillShow, isNearBottom as scrollPillIsNearBottom } from "./scroll-pill.js";
-import { renderChatMessageHtml } from "../rendering/chat-message-content.js";
+import { renderChatMessageHtml, renderWorkingNotesHtml } from "../rendering/chat-message-content.js";
 import { AGENT_OUTPUT_FORMATTING_FLAG_KEY } from "../rendering/agent-output-format.js";
 import { normalizeRuntimeStatus } from "./session-status-cache.js";
 import { fetchSessionMessagesApi } from "../services/sessions.js";
@@ -45,6 +45,11 @@ function isAgentOutputFormattingEnabled() {
 function shouldFormatAgentMessage(message) {
   const role = String(message?.role ?? message?.type ?? "").toLowerCase();
   return role === "assistant" || role === "agent";
+}
+
+function isWorkingNotesMessage(message) {
+  const role = String(message?.role ?? message?.type ?? "").toLowerCase();
+  return role === "agent-working";
 }
 
 function isReadableAgentMessage(message) {
@@ -305,9 +310,21 @@ export function registerChatComponent() {
     },
 
     renderMessageContent(message) {
+      if (isWorkingNotesMessage(message)) {
+        return renderWorkingNotesHtml(message?.content ?? "", {
+          cleanAgentText: Boolean(isAgentOutputFormattingEnabled()),
+        });
+      }
       return renderChatMessageHtml(message?.content ?? "", {
         cleanAgentText: Boolean(isAgentOutputFormattingEnabled() && shouldFormatAgentMessage(message)),
       });
+    },
+
+    getMessageClass(message) {
+      const role = String(message?.role ?? message?.type ?? "assistant").toLowerCase();
+      if (role === "user") return "user";
+      if (role === "assistant" || role === "agent" || role === "agent-working") return "assistant";
+      return "system";
     },
 
     getSpeechSummary(message) {
@@ -540,7 +557,7 @@ export function getChatTemplate(sessionId) {
     <template x-for="message in $store.chat.visibleMessages" :key="message.id">
       <article class="wm-message"
                :data-role="(message.role || message.type || 'assistant').toLowerCase()"
-               :class="message.role === 'user' ? 'user' : (message.role === 'assistant' || message.role === 'agent' ? 'assistant' : 'system')">
+               :class="$store.chat.getMessageClass(message)">
         <div class="wm-message-body" x-html="$store.chat.renderMessageContent(message)"></div>
         <template x-if="$store.chat.getSpeechSummary(message)">
           <p class="wm-message-speech-summary"

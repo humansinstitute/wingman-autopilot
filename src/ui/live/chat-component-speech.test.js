@@ -48,4 +48,11 @@ describe("Alpine chat speech controls", () => {
     expect(source).toContain("void this._syncMessagesFromServer(sessionId)");
     expect(source).toContain("MessageStore.syncFromServerIfChanged(sessionId, payload.messages)");
   });
+
+  test("renders Codex working notes as collapsible assistant-side messages", () => {
+    expect(source).toContain("renderWorkingNotesHtml");
+    expect(source).toContain('role === "agent-working"');
+    expect(source).toContain('if (role === "assistant" || role === "agent" || role === "agent-working") return "assistant";');
+    expect(source).toContain(':class="$store.chat.getMessageClass(message)"');
+  });
 });

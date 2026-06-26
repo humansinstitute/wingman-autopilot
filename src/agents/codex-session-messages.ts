@@ -38,18 +38,91 @@ export async function readCodexSessionMessagesFromFile(
     return [];
   }
 
-  const messages: ReplaceMessageInput[] = [];
+  const importer = new CodexMessageImporter();
   for (const line of content.split("\n")) {
     const record = parseJsonLine(line);
-    const message = record ? extractMessage(record) : null;
-    if (message) {
-      messages.push(message);
+    if (record) {
+      importer.addRecord(record);
     }
   }
-  return messages;
+  return importer.finish();
 }
 
-function extractMessage(record: Record<string, unknown>): ReplaceMessageInput | null {
+interface CodexAgentMessage {
+  phase: string;
+  content: string;
+  createdAt: string;
+}
+
+class CodexMessageImporter {
+  private readonly messages: ReplaceMessageInput[] = [];
+  private commentary: CodexAgentMessage[] = [];
+  private finalAnswers: CodexAgentMessage[] = [];
+
+  addRecord(record: Record<string, unknown>): void {
+    const event = extractEventMessage(record);
+    if (!event) {
+      return;
+    }
+
+    if (event.type === "user_message") {
+      this.flushAgentTurn();
+      this.messages.push({ role: "user", content: event.content, createdAt: event.createdAt });
+      return;
+    }
+
+    if (event.type === "agent_message") {
+      const target = event.phase === "final_answer" ? this.finalAnswers : this.commentary;
+      target.push({
+        phase: event.phase,
+        content: event.content,
+        createdAt: event.createdAt,
+      });
+    }
+  }
+
+  finish(): ReplaceMessageInput[] {
+    this.flushAgentTurn();
+    return this.messages;
+  }
+
+  private flushAgentTurn(): void {
+    if (this.finalAnswers.length > 0) {
+      if (this.commentary.length > 0) {
+        this.messages.push({
+          role: "agent-working",
+          content: joinMessageParts(this.commentary),
+          createdAt: this.commentary[0]!.createdAt,
+        });
+      }
+      this.messages.push({
+        role: "agent",
+        content: joinMessageParts(this.finalAnswers),
+        createdAt: this.finalAnswers[0]!.createdAt,
+      });
+    } else if (this.commentary.length > 0) {
+      this.messages.push({
+        role: "agent",
+        content: joinMessageParts(this.commentary),
+        createdAt: this.commentary[0]!.createdAt,
+      });
+    }
+
+    this.commentary = [];
+    this.finalAnswers = [];
+  }
+}
+
+function joinMessageParts(messages: CodexAgentMessage[]): string {
+  return messages.map((message) => message.content).join("\n\n");
+}
+
+function extractEventMessage(record: Record<string, unknown>): {
+  type: "user_message" | "agent_message";
+  phase: string;
+  content: string;
+  createdAt: string;
+} | null {
   if (record.type !== "event_msg") {
     return null;
   }
@@ -66,10 +139,11 @@ function extractMessage(record: Record<string, unknown>): ReplaceMessageInput | 
 
   const createdAt = normaliseTimestamp(record.timestamp);
   if (data.type === "user_message") {
-    return { role: "user", content, createdAt };
+    return { type: "user_message", phase: "", content, createdAt };
   }
   if (data.type === "agent_message") {
-    return { role: "agent", content, createdAt };
+    const phase = typeof data.phase === "string" ? data.phase.trim() : "";
+    return { type: "agent_message", phase, content, createdAt };
   }
   return null;
 }

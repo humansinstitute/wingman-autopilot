@@ -1,5 +1,5 @@
 import { attachCopyButton } from "../utils/clipboard.js";
-import { renderChatMessageHtml } from "../rendering/chat-message-content.js";
+import { renderChatMessageHtml, renderWorkingNotesHtml } from "../rendering/chat-message-content.js";
 import { attachMessageSpeechButton } from "./message-speech.js";
 
 export const LIVE_MESSAGE_WINDOW_DEFAULT = 80;
@@ -121,6 +121,11 @@ function shouldFormatAgentMessage(message) {
   return role === "assistant" || role === "agent";
 }
 
+function isWorkingNotesMessage(message) {
+  const role = String(message?.role ?? message?.type ?? "").toLowerCase();
+  return role === "agent-working";
+}
+
 function getSpeechSummary(message) {
   const summary = typeof message?.speech?.summary === "string" ? message.speech.summary.trim() : "";
   return summary;
@@ -137,13 +142,18 @@ function createSpeechSummaryElement(summary) {
 function createMessageBubble(message, options = {}) {
   const role = String(message?.role ?? message?.type ?? "assistant").toLowerCase();
   const bubble = document.createElement("article");
-  bubble.className = `wm-message ${role}`;
+  const styleRole = role === "agent-working" ? "assistant" : role;
+  bubble.className = `wm-message ${styleRole}`;
   bubble.dataset.role = role;
   const body = document.createElement("div");
   body.className = "wm-message-body";
-  body.innerHTML = renderChatMessageHtml(message.content ?? message.message ?? "", {
-    cleanAgentText: Boolean(options.agentOutputFormattingEnabled && shouldFormatAgentMessage(message)),
-  });
+  body.innerHTML = isWorkingNotesMessage(message)
+    ? renderWorkingNotesHtml(message.content ?? message.message ?? "", {
+        cleanAgentText: Boolean(options.agentOutputFormattingEnabled),
+      })
+    : renderChatMessageHtml(message.content ?? message.message ?? "", {
+        cleanAgentText: Boolean(options.agentOutputFormattingEnabled && shouldFormatAgentMessage(message)),
+      });
   bubble.append(body);
   const speechSummary = getSpeechSummary(message);
   if (speechSummary) {

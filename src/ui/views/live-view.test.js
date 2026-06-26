@@ -87,6 +87,12 @@ describe("live-view composition", () => {
     expect(source).toContain("if (isSessionReadyForSpeech(session))");
   });
 
+  test("renders Codex working notes in archived conversations", () => {
+    expect(source).toContain("renderWorkingNotesHtml");
+    expect(source).toContain('return role === "agent-working" ? "assistant" : role;');
+    expect(source).toContain("isWorkingNotesMessage(message)");
+  });
+
   test("unpinned artifacts preserve the remaining ordered page list", () => {
     expect(source).toContain("const remainingPinnedFiles = pinnedFilesBeforeRemoval.filter");
     expect(source).toContain("const nextActiveFile = nextActiveIndex >= 0 ? remainingPinnedFiles[nextActiveIndex] : null");
