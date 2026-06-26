@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { describe, expect, test } from "bun:test";
 
@@ -94,6 +94,86 @@ describe("syncLiveSessionMessages", () => {
         process.env.CODEX_HOME = previousCodexHome;
       }
       await rm(codexHome, { recursive: true, force: true });
+    }
+  });
+
+  test("uses Claude JSONL history when native transcript is richer than live adapter messages", async () => {
+    const root = await mkdtemp(join(tmpdir(), "live-claude-sync-test-"));
+    const claudeHome = join(root, ".claude");
+    const sessionFile = join(claudeHome, "projects", "-repo", "claude-native-1.jsonl");
+    const originalClaudeConfigDir = Bun.env.CLAUDE_CONFIG_DIR;
+    try {
+      await mkdir(dirname(sessionFile), { recursive: true });
+      await writeFile(sessionFile, [
+        JSON.stringify({
+          type: "user",
+          timestamp: "2026-06-26T00:00:01.000Z",
+          sessionId: "claude-native-1",
+          cwd: "/repo",
+          promptSource: "typed",
+          message: { role: "user", content: "Hello Claude" },
+        }),
+        JSON.stringify({
+          type: "assistant",
+          timestamp: "2026-06-26T00:00:02.000Z",
+          sessionId: "claude-native-1",
+          cwd: "/repo",
+          message: { role: "assistant", content: [{ type: "thinking", thinking: "", signature: "sig" }] },
+        }),
+        JSON.stringify({
+          type: "assistant",
+          timestamp: "2026-06-26T00:00:03.000Z",
+          sessionId: "claude-native-1",
+          cwd: "/repo",
+          message: { role: "assistant", content: [{ type: "text", text: "Hello back." }] },
+        }),
+      ].join("\n"));
+      Bun.env.CLAUDE_CONFIG_DIR = claudeHome;
+
+      const replaced: unknown[] = [];
+      const session = {
+        id: "session-1",
+        agent: "claude",
+        status: "running",
+        port: 4707,
+        metadata: {
+          nativeAgentSession: {
+            agent: "claude",
+            sessionId: "claude-native-1",
+            workingDirectory: "/repo",
+          },
+        },
+      };
+      const result = await syncLiveSessionMessages({
+        sessionId: "session-1",
+        agentHost: "127.0.0.1",
+        manager: {
+          getSession: () => session,
+          getAdapter: () => ({
+            fetchMessages: async () => [{ role: "agent", content: "terminal transcript", createdAt: "2026-06-26T00:00:03.000Z" }],
+          }),
+        } as never,
+        messageStore: {
+          hasMessages: () => false,
+          listSessionMessages: () => replaced,
+          replaceMessages: (_sessionId: string, messages: unknown[]) => {
+            replaced.splice(0, replaced.length, ...messages);
+          },
+        } as never,
+      });
+
+      expect(result).toEqual([
+        { role: "user", content: "Hello Claude", createdAt: "2026-06-26T00:00:01.000Z" },
+        { role: "agent-working", content: "Thinking...", createdAt: "2026-06-26T00:00:02.000Z" },
+        { role: "agent", content: "Hello back.", createdAt: "2026-06-26T00:00:03.000Z" },
+      ]);
+    } finally {
+      if (originalClaudeConfigDir === undefined) {
+        delete Bun.env.CLAUDE_CONFIG_DIR;
+      } else {
+        Bun.env.CLAUDE_CONFIG_DIR = originalClaudeConfigDir;
+      }
+      await rm(root, { recursive: true, force: true });
     }
   });
 });
