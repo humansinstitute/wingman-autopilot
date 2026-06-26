@@ -56,6 +56,17 @@ export function attachWorkingNotesToggle(root = document) {
     return;
   }
   attached = true;
+  root.addEventListener('click', (event) => {
+    if (event.defaultPrevented || shouldIgnoreTarget(event.target)) {
+      return;
+    }
+    const panel = findWorkingNotesPanel(event.target);
+    if (!(panel instanceof HTMLDetailsElement) || panel.open) {
+      return;
+    }
+    panel.open = true;
+    event.preventDefault();
+  });
   root.addEventListener('dblclick', (event) => {
     if (event.defaultPrevented || shouldIgnoreTarget(event.target)) {
       return;

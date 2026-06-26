@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { renderChatMessageHtml, renderWorkingNotesHtml } from "./chat-message-content.js";
+import { countWorkingNoteRows, renderChatMessageHtml, renderWorkingNotesHtml } from "./chat-message-content.js";
 
 describe("chat message content rendering", () => {
   test("keeps captured session text raw by default", () => {
@@ -40,8 +40,22 @@ describe("chat message content rendering", () => {
     expect(html).toContain("data-working-notes-panel");
     expect(html).toContain('data-testid="message-working-notes-summary"');
     expect(html).toContain('aria-label="Toggle working notes"');
-    expect(html).toContain(">Working notes</summary>");
+    expect(html).toContain("Show thinking 2 thinking messages are collapsed");
+    expect(html).toContain("Hide thinking 2 thinking messages");
     expect(html).toContain("Checking files.");
     expect(html).toContain("Running tests.");
+  });
+
+  test("counts collapsed working note rows from commentary blocks", () => {
+    expect(countWorkingNoteRows("One update.\n\nSecond update.\n\nThird update.")).toBe(3);
+    expect(countWorkingNoteRows("One update.\nSecond line.")).toBe(2);
+    expect(countWorkingNoteRows("")).toBe(0);
+  });
+
+  test("uses singular collapsed working note labels", () => {
+    const html = renderWorkingNotesHtml("Only one update.");
+
+    expect(html).toContain("Show thinking 1 thinking message is collapsed");
+    expect(html).toContain("Hide thinking 1 thinking message");
   });
 });

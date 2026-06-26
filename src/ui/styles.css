@@ -3728,6 +3728,18 @@ body[data-live-header-collapsed="true"]:has(#app[data-route="live"]) .wm-live-dr
   color: var(--text-tertiary);
 }
 
+.wm-message-working-notes__summary-expanded {
+  display: none;
+}
+
+.wm-message-working-notes[open] .wm-message-working-notes__summary-collapsed {
+  display: none;
+}
+
+.wm-message-working-notes[open] .wm-message-working-notes__summary-expanded {
+  display: inline;
+}
+
 .wm-message-working-notes summary:focus-visible {
   outline: 2px solid var(--accent-primary);
   outline-offset: 3px;

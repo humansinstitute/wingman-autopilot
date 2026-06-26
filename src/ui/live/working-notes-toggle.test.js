@@ -10,7 +10,9 @@ describe("working notes toggle integration", () => {
     expect(indexSource).toContain('export { attachWorkingNotesToggle } from "./working-notes-toggle.js";');
     expect(appSource).toContain("attachWorkingNotesToggle,");
     expect(appSource).toContain("attachWorkingNotesToggle();");
+    expect(toggleSource).toContain("root.addEventListener('click'");
     expect(toggleSource).toContain("root.addEventListener('dblclick'");
+    expect(toggleSource).toContain("panel.open = true;");
     expect(toggleSource).toContain('.wm-message[data-role="agent-working"]');
   });
 });
