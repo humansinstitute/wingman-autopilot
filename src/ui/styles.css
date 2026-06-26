@@ -3706,12 +3706,26 @@ body[data-live-header-collapsed="true"]:has(#app[data-route="live"]) .wm-live-dr
   margin: 0;
 }
 
+.wm-message[data-role="agent-working"] {
+  cursor: default;
+}
+
+.wm-message[data-role="agent-working"]:has(.wm-message-working-notes:not([open])) {
+  cursor: pointer;
+}
+
 .wm-message-working-notes summary {
   cursor: pointer;
+  display: block;
   color: var(--text-secondary);
   font-size: 0.88rem;
   font-weight: 600;
   line-height: 1.4;
+  user-select: none;
+}
+
+.wm-message-working-notes summary::-webkit-details-marker {
+  color: var(--text-tertiary);
 }
 
 .wm-message-working-notes summary:focus-visible {

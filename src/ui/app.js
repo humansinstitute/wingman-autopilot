@@ -10,6 +10,7 @@ import {
   MessageStore,
   isAlpineChatEnabled,
   initAlpineChat,
+  attachWorkingNotesToggle,
 } from "./live/index.js";
 import { createLiveRefreshController } from "./live/refresh-controller.js";
 import { syncLiveRouteTransport } from "./live/route-transport.js";
@@ -2735,6 +2736,7 @@ dialog.addEventListener("cancel", (event) => {
   initRawTerminalOutputVisible();
   setupConversationSelectionLock();
   initLiveMobileRuntime();
+  attachWorkingNotesToggle();
   // Initialize live module (Dexie database for SSE updates)
   initLiveModule().catch((err) => console.warn("[app] Live module init failed:", err));
 

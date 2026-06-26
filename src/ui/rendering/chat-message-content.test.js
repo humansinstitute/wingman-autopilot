@@ -37,7 +37,10 @@ describe("chat message content rendering", () => {
 
     expect(html).toContain('class="wm-message-working-notes"');
     expect(html).toContain('data-testid="message-working-notes"');
-    expect(html).toContain("<summary>Working notes</summary>");
+    expect(html).toContain("data-working-notes-panel");
+    expect(html).toContain('data-testid="message-working-notes-summary"');
+    expect(html).toContain('aria-label="Toggle working notes"');
+    expect(html).toContain(">Working notes</summary>");
     expect(html).toContain("Checking files.");
     expect(html).toContain("Running tests.");
   });

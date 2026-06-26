@@ -100,8 +100,8 @@ export function renderChatMessageHtml(content, options = {}) {
 export function renderWorkingNotesHtml(content, options = {}) {
   const body = renderChatMessageHtml(content, options);
   return [
-    '<details class="wm-message-working-notes" data-testid="message-working-notes">',
-    '<summary>Working notes</summary>',
+    '<details class="wm-message-working-notes" data-testid="message-working-notes" data-working-notes-panel>',
+    '<summary aria-label="Toggle working notes" data-testid="message-working-notes-summary">Working notes</summary>',
     `<div class="wm-message-working-notes__body">${body}</div>`,
     '</details>',
   ].join("");
