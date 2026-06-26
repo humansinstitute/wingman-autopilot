@@ -48,7 +48,11 @@ describe("sessions service source contract", () => {
     const requests = [];
     globalThis.fetch = async (url, init) => {
       requests.push({ url: String(url), init });
-      return new Response(JSON.stringify({ session: { id: "branch-1" }, initialPrompt: "context" }), {
+      return new Response(JSON.stringify({
+        session: { id: "branch-1" },
+        nativeAgentSession: { sessionId: "native-fork" },
+        forkedCodexSession: { forkedSessionId: "native-fork" },
+      }), {
         status: 201,
         headers: { "content-type": "application/json" },
       });
@@ -57,7 +61,6 @@ describe("sessions service source contract", () => {
     try {
       const result = await branchConversationApi("session-1", {
         name: "Questions branch",
-        mode: "full",
       });
       expect(result.session.id).toBe("branch-1");
     } finally {
@@ -69,7 +72,6 @@ describe("sessions service source contract", () => {
     expect(requests[0].init.method).toBe("POST");
     expect(JSON.parse(requests[0].init.body)).toEqual({
       name: "Questions branch",
-      mode: "full",
     });
   });
 });

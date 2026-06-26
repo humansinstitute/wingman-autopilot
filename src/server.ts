@@ -227,6 +227,7 @@ import {
   getRecentMessages,
   formatMessagesAsContext,
 } from "./sessions/fork-to-worktree";
+import { forkCodexSessionFile } from "./agents/codex-session-fork";
 import {
   type CommandResult,
   type GitRepositorySummary,
@@ -2246,6 +2247,7 @@ const sessionApiContext: SessionApiContext = {
   getRecentMessages,
   formatMessagesAsContext,
   createGitWorktree,
+  forkCodexSession: forkCodexSessionFile,
   workspaceDelegationStore,
   AccessActions,
 };

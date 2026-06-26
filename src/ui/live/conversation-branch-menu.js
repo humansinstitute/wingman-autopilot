@@ -35,18 +35,9 @@ export async function promptConversationBranch({
   try {
     const result = await branchConversationApi(sessionId, {
       name: branchName,
-      mode: 'full',
     });
     if (!result.session?.id) {
       throw new Error('Branch did not return a new session.');
-    }
-    if (result.initialPrompt) {
-      try {
-        localStorage.setItem(`session-draft-${result.session.id}`, result.initialPrompt);
-        localStorage.setItem(`session-autosubmit-${result.session.id}`, 'true');
-      } catch {
-        // Ignore localStorage errors.
-      }
     }
     window.open(`/live/${result.session.id}`, '_blank', 'noopener');
     showToast('Conversation branch created', { type: 'success', duration: 5000 });

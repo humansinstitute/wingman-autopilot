@@ -365,10 +365,10 @@ export async function forkSessionToWorktreeApi(sessionId, branch, messageCount =
 
 /**
  * Branches a session conversation into a fresh session in the same directory.
- * The returned initialPrompt should be sent to the new session to seed context.
+ * Codex sessions are forked at the native transcript level before launch.
  * @param {string} sessionId - The source session ID
- * @param {{name?: string, mode?: "full"|"recent", messageCount?: number}} [options]
- * @returns {Promise<{session: Object, contextMessages: Array, sourceSessionId: string, initialPrompt: string}>}
+ * @param {{name?: string}} [options]
+ * @returns {Promise<{session: Object, sourceSessionId: string, nativeAgentSession: Object, forkedCodexSession: Object}>}
  * @throws {Error} If the request fails
  */
 export async function branchConversationApi(sessionId, options = {}) {
@@ -377,8 +377,6 @@ export async function branchConversationApi(sessionId, options = {}) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       name: options.name,
-      mode: options.mode ?? "full",
-      messageCount: options.messageCount,
     }),
   });
 

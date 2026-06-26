@@ -22,12 +22,6 @@ import type {
   sessionArchiveStore as SessionArchiveStoreInstance,
 } from "../storage/session-archive-store";
 import type { ForkToWorktreeInput } from "../sessions/fork-to-worktree";
-import {
-  formatBranchConversationPrompt,
-  normalizeBranchConversationMessages,
-  selectBranchConversationMessages,
-  validateBranchConversationInput,
-} from "../sessions/branch-conversation";
 import { resolveSessionOwnerNpub } from "../sessions/session-ownership";
 import { deliverSessionAgentMessage } from "./session-agent-message";
 import { normalizeBusySessionMessageFailure } from "./session-message-failures";
@@ -35,12 +29,16 @@ import { generateSpeechAudio, normalizeSpeechText as normalizeSharedSpeechText, 
 import { generateSpeechSummary } from "./speech-summary";
 import type { PromptReadiness } from "../agents/agent-adapter";
 import {
+  createNativeAgentSessionMetadata,
+  supportsNativeSessionResume,
+} from "../agents/native-session";
+import type { CodexSessionForkInput, CodexSessionForkResult } from "../agents/codex-session-fork";
+import {
   isAgentManagedByMetadataOrOrigin,
   normaliseSessionMetadata,
   resolveSessionChargeNpub,
   type SessionMetadata,
 } from "../sessions/session-metadata";
-import { supportsNativeSessionResume } from "../agents/native-session";
 import {
   buildDelegatedWorkspaceScope,
   createOwnerScopedAuthContext,
@@ -170,6 +168,7 @@ export interface SessionApiContext {
   getRecentMessages: (messageStore: typeof MessageStoreInstance, sessionId: string, count?: number) => StoredMessage[];
   formatMessagesAsContext: (messages: StoredMessage[]) => string;
   createGitWorktree: (options: { directory: string; branch: string; startPoint: string | null }) => Promise<{ path: string }>;
+  forkCodexSession: (input: CodexSessionForkInput) => Promise<CodexSessionForkResult>;
   workspaceDelegationStore: WorkspaceDelegationStore;
 
   // Access action
@@ -2577,29 +2576,37 @@ async function handleBranchConversation(
     return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
   }
 
-  let branchInput: ReturnType<typeof validateBranchConversationInput>;
-  try {
-    branchInput = validateBranchConversationInput(payload);
-    branchInput.sourceSessionId = id;
-  } catch (error) {
-    return Response.json({ error: (error as Error).message }, { status: 400 });
+  const record = payload && typeof payload === "object" && !Array.isArray(payload)
+    ? payload as Record<string, unknown>
+    : {};
+  const requestedName = typeof record.name === "string" ? record.name.trim() : "";
+
+  if (ownedSession.agent !== "codex") {
+    return Response.json({ error: "Conversation branching currently requires a Codex session" }, { status: 400 });
+  }
+  const sourceMetadata = normaliseSessionMetadata(ownedSession.metadata);
+  const nativeSession = sourceMetadata.nativeAgentSession;
+  if (!nativeSession?.sessionId || nativeSession.agent !== "codex") {
+    return Response.json({ error: "Source session does not have a native Codex session id to fork" }, { status: 409 });
+  }
+  if (nativeSession.workingDirectory && nativeSession.workingDirectory !== sourceDirectory) {
+    return Response.json({ error: "Source native Codex session working directory does not match the Wingman session" }, { status: 409 });
   }
 
-  const refreshedMessages = await ctx.syncSessionMessages(id, true).catch(() => null);
-  const rawMessages = Array.isArray(refreshedMessages) && refreshedMessages.length > 0
-    ? refreshedMessages
-    : ctx.messageStore.listSessionMessages(id);
-  const sourceMessages = normalizeBranchConversationMessages(rawMessages);
-  const contextMessages = selectBranchConversationMessages(sourceMessages, branchInput);
-  if (contextMessages.length === 0) {
-    return Response.json({ error: "Source session has no conversation messages to branch" }, { status: 409 });
+  let forkedCodexSession: CodexSessionForkResult;
+  try {
+    forkedCodexSession = await ctx.forkCodexSession({
+      sourceSessionId: nativeSession.sessionId,
+      workingDirectory: sourceDirectory,
+    });
+  } catch (error) {
+    return Response.json({ error: (error as Error).message }, { status: 409 });
   }
 
   const sourceName = typeof ownedSession.name === "string" && ownedSession.name.trim()
     ? ownedSession.name.trim()
     : id;
-  const sessionName = branchInput.name || `${sourceName} (branch)`;
-  const sourceMetadata = normaliseSessionMetadata(ownedSession.metadata);
+  const sessionName = requestedName ? requestedName.slice(0, 120) : `${sourceName} (branch)`;
   const ownerNpub = resolveSessionOwnerNpub(ownedSession.npub ?? null, sourceMetadata)
     ?? resolveSelfSpaceViewerNpub(authContext, ctx);
 
@@ -2615,9 +2622,14 @@ async function handleBranchConversation(
       {
         AGENT: false,
         billingMode: sourceMetadata.billingMode,
+        nativeAgentSession: createNativeAgentSessionMetadata(
+          "codex",
+          forkedCodexSession.forkedSessionId,
+          sourceDirectory,
+          "manual",
+        ),
         branchedFromWingmanSessionId: id,
-        branchConversationMode: branchInput.mode,
-        branchConversationMessageCount: contextMessages.length,
+        branchConversationMode: "full",
         ownerNpub: ownerNpub ?? undefined,
         createdByNpub: authContext.subjectNpub ?? authContext.npub ?? sourceMetadata.createdByNpub,
         lastManagedByNpub: authContext.subjectNpub ?? authContext.npub ?? undefined,
@@ -2630,18 +2642,23 @@ async function handleBranchConversation(
     return Response.json({ error: (error as Error).message }, { status: 500 });
   }
 
-  const initialPrompt = formatBranchConversationPrompt({
-    sourceSessionId: id,
-    sourceName,
-    messages: contextMessages,
-    mode: branchInput.mode,
-  });
+  const sourceMessages = ctx.messageStore.listSessionMessages(id);
+  if (sourceMessages.length > 0) {
+    ctx.messageStore.replaceMessages(
+      newSession.id,
+      sourceMessages.map((message) => ({
+        role: message.role,
+        content: message.content,
+        createdAt: message.createdAt,
+      })),
+    );
+  }
 
   return Response.json({
     session: ctx.serializeSession(newSession),
-    contextMessages,
     sourceSessionId: id,
-    initialPrompt,
+    nativeAgentSession: newSession.metadata?.nativeAgentSession ?? null,
+    forkedCodexSession,
   }, { status: 201 });
 }
 

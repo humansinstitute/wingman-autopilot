@@ -77,6 +77,7 @@ const buildCtx = (overrides?: Partial<SessionApiContext>): SessionApiContext => 
     getSession: () => null,
     listSessions: () => [],
     listSessionMessages: () => [],
+    replaceMessages: () => {},
   } as any,
   sessionArchiveStore: {
     getArchivedSession: () => null,
@@ -125,6 +126,12 @@ const buildCtx = (overrides?: Partial<SessionApiContext>): SessionApiContext => 
   getRecentMessages: (() => []) as any,
   formatMessagesAsContext: (() => "") as any,
   createGitWorktree: (async () => ({ path: "/tmp/project/.worktrees/test" })) as any,
+  forkCodexSession: (async () => ({
+    sourceSessionId: "native-source",
+    forkedSessionId: "native-fork",
+    sourceFilePath: "/tmp/source.jsonl",
+    forkedFilePath: "/tmp/fork.jsonl",
+  })) as any,
   workspaceDelegationStore: {
     findActiveDelegation: () => null,
   } as any,
@@ -246,6 +253,20 @@ describe("handleSessionApi", () => {
     let createdMetadata: Record<string, unknown> | null = null;
     let createdDirectory: string | null = null;
     let createdName: string | null = null;
+    let forkInput: Record<string, unknown> | null = null;
+    const sourceSession = {
+      ...baseSession,
+      metadata: {
+        ...baseSession.metadata,
+        nativeAgentSession: {
+          agent: "codex",
+          sessionId: "native-source",
+          workingDirectory: "/tmp/project",
+          capturedAt: "2026-06-26T01:00:00.000Z",
+          source: "adapter",
+        },
+      },
+    };
     const branchedSession = {
       ...baseSession,
       id: "branch-session-1",
@@ -278,8 +299,8 @@ describe("handleSessionApi", () => {
             metadata: metadata as any,
           };
         },
-        getSession: (id: string) => (id === baseSession.id ? baseSession : undefined),
-        listSessions: () => [baseSession],
+        getSession: (id: string) => (id === sourceSession.id ? sourceSession : undefined),
+        listSessions: () => [sourceSession],
       } as any,
       messageStore: {
         recordSession: () => {},
@@ -294,19 +315,17 @@ describe("handleSessionApi", () => {
             createdAt: "2026-06-26T01:00:00.000Z",
           },
         ],
+        replaceMessages: () => {},
       } as any,
-      syncSessionMessages: async () => [
-        {
-          role: "user",
-          content: "Please implement the feature",
-          createdAt: "2026-06-26T01:00:00.000Z",
-        },
-        {
-          role: "assistant",
-          content: "I added the route.",
-          createdAt: "2026-06-26T01:01:00.000Z",
-        },
-      ],
+      forkCodexSession: async (input) => {
+        forkInput = input as unknown as Record<string, unknown>;
+        return {
+          sourceSessionId: "native-source",
+          forkedSessionId: "native-fork",
+          sourceFilePath: "/tmp/source.jsonl",
+          forkedFilePath: "/tmp/fork.jsonl",
+        };
+      },
       serializeSession: (session) => ({
         id: session.id,
         name: session.name,
@@ -328,14 +347,23 @@ describe("handleSessionApi", () => {
     expect(response!.status).toBe(201);
     expect(createdDirectory).toBe("/tmp/project");
     expect(createdName).toBe("Questions branch");
+    expect(forkInput).toMatchObject({
+      sourceSessionId: "native-source",
+      workingDirectory: "/tmp/project",
+    });
     expect(createdMetadata?.branchedFromWingmanSessionId).toBe("session-1");
-    expect(createdMetadata?.nativeAgentSession).toBeUndefined();
+    expect(createdMetadata?.nativeAgentSession).toMatchObject({
+      agent: "codex",
+      sessionId: "native-fork",
+      workingDirectory: "/tmp/project",
+    });
     expect(createdMetadata?.resumedFromWingmanSessionId).toBeUndefined();
     const body = await response!.json();
     expect(body.session.id).toBe("branch-session-1");
-    expect(body.initialPrompt).toContain("new, independent Codex session");
-    expect(body.initialPrompt).toContain("Please implement the feature");
-    expect(body.initialPrompt).toContain("I added the route.");
+    expect(body.forkedCodexSession).toMatchObject({
+      sourceSessionId: "native-source",
+      forkedSessionId: "native-fork",
+    });
   });
 
   test("GET /api/sessions/:id/messages/:messageId/speech returns an existing attachment", async () => {
