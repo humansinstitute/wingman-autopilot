@@ -85,7 +85,7 @@ export async function forkCodexSessionFile(input: CodexSessionForkInput): Promis
   };
 }
 
-async function findCodexSessionFile(options: {
+export async function findCodexSessionFile(options: {
   codexHome: string;
   sessionId: string;
   workingDirectory: string;

@@ -33,6 +33,7 @@ import {
   supportsNativeSessionResume,
 } from "../agents/native-session";
 import type { CodexSessionForkInput, CodexSessionForkResult } from "../agents/codex-session-fork";
+import { readCodexSessionMessagesFromFile } from "../agents/codex-session-messages";
 import {
   isAgentManagedByMetadataOrOrigin,
   normaliseSessionMetadata,
@@ -2642,7 +2643,10 @@ async function handleBranchConversation(
     return Response.json({ error: (error as Error).message }, { status: 500 });
   }
 
-  const sourceMessages = ctx.messageStore.listSessionMessages(id);
+  const forkedMessages = await readCodexSessionMessagesFromFile(forkedCodexSession.forkedFilePath).catch(() => []);
+  const sourceMessages = forkedMessages.length > 0
+    ? forkedMessages
+    : await ctx.syncSessionMessages(id, true);
   if (sourceMessages.length > 0) {
     ctx.messageStore.replaceMessages(
       newSession.id,
