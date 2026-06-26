@@ -33,6 +33,53 @@ describe("Codex session message importer", () => {
           payload: { type: "agent_message", phase: "commentary", message: "Checking files." },
         }),
         JSON.stringify({
+          type: "response_item",
+          timestamp: "2026-06-26T00:00:03.250Z",
+          payload: {
+            type: "function_call",
+            name: "exec_command",
+            call_id: "call-1",
+            arguments: JSON.stringify({ cmd: "bun test src/agents/codex-session-messages.test.ts" }),
+          },
+        }),
+        JSON.stringify({
+          type: "response_item",
+          timestamp: "2026-06-26T00:00:03.500Z",
+          payload: {
+            type: "function_call_output",
+            call_id: "call-1",
+            output: "Chunk ID: abc\nProcess exited with code 0\nOutput:\npass",
+          },
+        }),
+        JSON.stringify({
+          type: "response_item",
+          timestamp: "2026-06-26T00:00:03.750Z",
+          payload: {
+            type: "custom_tool_call",
+            name: "apply_patch",
+            call_id: "call-2",
+            input: [
+              "*** Begin Patch",
+              "*** Update File: src/agents/codex-session-messages.ts",
+              "@@",
+              "+changed",
+              "*** End Patch",
+            ].join("\n"),
+          },
+        }),
+        JSON.stringify({
+          type: "event_msg",
+          timestamp: "2026-06-26T00:00:03.900Z",
+          payload: {
+            type: "patch_apply_end",
+            call_id: "call-2",
+            success: true,
+            changes: {
+              "/repo/src/agents/codex-session-messages.ts": { type: "update" },
+            },
+          },
+        }),
+        JSON.stringify({
           type: "event_msg",
           timestamp: "2026-06-26T00:00:04.000Z",
           payload: { type: "agent_message", phase: "commentary", message: "Running tests." },
@@ -44,15 +91,19 @@ describe("Codex session message importer", () => {
         }),
       ].join("\n"));
 
-      await expect(readCodexSessionMessagesFromFile(filePath)).resolves.toEqual([
-        { role: "user", content: "What next?", createdAt: "2026-06-26T00:00:01.000Z" },
-        {
-          role: "agent-working",
-          content: "Checking files.\n\nRunning tests.",
-          createdAt: "2026-06-26T00:00:03.000Z",
-        },
-        { role: "agent", content: "Ship the small fix.", createdAt: "2026-06-26T00:00:05.000Z" },
-      ]);
+      const messages = await readCodexSessionMessagesFromFile(filePath);
+
+      expect(messages).toHaveLength(3);
+      expect(messages[0]).toEqual({ role: "user", content: "What next?", createdAt: "2026-06-26T00:00:01.000Z" });
+      expect(messages[1]?.role).toBe("agent-working");
+      expect(messages[1]?.createdAt).toBe("2026-06-26T00:00:03.000Z");
+      expect(messages[1]?.content).toContain("Checking files.");
+      expect(messages[1]?.content).toContain("Tool call: exec_command `bun test src/agents/codex-session-messages.test.ts`");
+      expect(messages[1]?.content).toContain("Tool result: exec_command exit 0");
+      expect(messages[1]?.content).toContain("Tool call: apply_patch src/agents/codex-session-messages.ts");
+      expect(messages[1]?.content).toContain("Patch applied: /repo/src/agents/codex-session-messages.ts");
+      expect(messages[1]?.content).toContain("Running tests.");
+      expect(messages[2]).toEqual({ role: "agent", content: "Ship the small fix.", createdAt: "2026-06-26T00:00:05.000Z" });
     } finally {
       await rm(root, { recursive: true, force: true });
     }
