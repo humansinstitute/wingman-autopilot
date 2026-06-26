@@ -70,7 +70,7 @@ export function buildNativeAgentCommand(
     return command;
   }
 
-  if (metadata.resumedFromWingmanSessionId) {
+  if (hasNativeResumeOrigin(metadata)) {
     return buildNativeResumeCommand(command, agent, nativeSession.sessionId);
   }
 
@@ -105,6 +105,13 @@ function buildNativeResumeCommand(command: string[], agent: AgentType, sessionId
     return insertCliArgs(command, ["resume", sessionId]);
   }
   return command;
+}
+
+function hasNativeResumeOrigin(metadata: SessionMetadata): boolean {
+  return Boolean(
+    metadata.resumedFromWingmanSessionId ||
+    metadata.branchedFromWingmanSessionId,
+  );
 }
 
 function insertCliArgs(command: string[], args: string[]): string[] {

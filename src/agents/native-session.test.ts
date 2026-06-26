@@ -62,6 +62,35 @@ describe("native agent session helpers", () => {
     ]);
   });
 
+  test("builds Codex native resume commands for conversation branches", () => {
+    const metadata = normaliseSessionMetadata({
+      AGENT: false,
+      branchedFromWingmanSessionId: "wingman-source",
+      branchConversationMode: "full",
+      nativeAgentSession: {
+        agent: "codex",
+        sessionId: "codex-fork-session",
+        workingDirectory: "/repo",
+        capturedAt: "2026-06-26T00:00:00.000Z",
+        source: "manual",
+      },
+    });
+
+    expect(buildNativeAgentCommand(
+      ["agentapi", "server", "--", "codex", "--yolo"],
+      "codex",
+      metadata,
+    )).toEqual([
+      "agentapi",
+      "server",
+      "--",
+      "codex",
+      "resume",
+      "codex-fork-session",
+      "--yolo",
+    ]);
+  });
+
   test("builds Claude native resume commands when metadata references a prior Wingman session", () => {
     const metadata = normaliseSessionMetadata({
       AGENT: false,
