@@ -20,12 +20,6 @@ const RESERVED_APP_ENV_KEYS = new Set([
   "PORT",
   "USER_ALIAS",
   "WINGMAN_PROCESS_KIND",
-  "WAPP_ID",
-  "WAPP_APP_NSEC",
-  "WAPP_ALLOWED_NPUBS_JSON",
-  "WAPP_DB_PATH",
-  "WAPP_OWNER_NPUB",
-  "WAPP_WORKSPACE_OWNER_NPUB",
 ]);
 
 export function normaliseAppEnvKey(input: unknown): string {

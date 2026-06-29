@@ -44,4 +44,10 @@ describe("app env helpers", () => {
       "managed by Wingman",
     );
   });
+
+  test("allows WApp-facing runtime keys to support local app setup", () => {
+    expect(parseAppEnvInput([{ key: "WAPP_OWNER_NPUB", value: "npub1owner" }])).toEqual({
+      WAPP_OWNER_NPUB: "npub1owner",
+    });
+  });
 });
