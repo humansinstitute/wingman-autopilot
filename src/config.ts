@@ -85,7 +85,7 @@ const DEFAULT_PORT = 3600;
 const DEFAULT_AGENT_PORTS = 3700;
 const DEFAULT_AGENT_MAX = 10;
 const DEFAULT_DIRECTORY = "~/code";
-const DEFAULT_HOST_URL_BASE = "https://host.otherstuff.ai/<port>";
+const DEFAULT_HOST_URL_BASE = "";
 const DEFAULT_CONNECT_RELAYS = [
   "wss://relay.damus.io",
   "wss://relay.primal.net",

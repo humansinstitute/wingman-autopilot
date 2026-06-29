@@ -20,7 +20,7 @@ export const APP_LOG_PREVIEW_LINES = 5;
 
 // URL configuration
 export const WEB_APP_PORT_PLACEHOLDER = "<port>";
-export const DEFAULT_WEB_APP_BASE_URL = "https://host.otherstuff.ai/<port>";
+export const DEFAULT_WEB_APP_BASE_URL = "";
 
 // Toast configuration
 export const TOAST_DEFAULT_DURATION_MS = 2600;
@@ -301,7 +301,7 @@ export function initFilesPreferences() {
 }
 
 /**
- * Resolves the web app base URL from config or uses default.
+ * Resolves the optional port-proxy web app base URL from config.
  */
 export function resolveWebAppBase() {
   const candidate = state.config?.hostUrlBase;
@@ -322,6 +322,7 @@ export function formatWebAppUrl(port) {
   const normalized = Math.trunc(port);
   if (normalized <= 0) return null;
   const base = resolveWebAppBase();
+  if (!base) return null;
   if (base.includes(WEB_APP_PORT_PLACEHOLDER)) {
     return base.replaceAll(WEB_APP_PORT_PLACEHOLDER, String(normalized));
   }

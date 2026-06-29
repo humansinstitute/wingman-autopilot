@@ -540,7 +540,7 @@ const AGENT_DISPATCH_TASK_DEFINITION = {
           channelContext: "$.flightDeckContext.channel",
         },
       },
-      prompt: "You are stage 1 of a Wingman task intake delegator. Do an initial investigation from the selected task fields and channelContext.contextPrompt, then choose the origin-agnostic child work pipeline. Treat channelContext.contextPrompt as channel-specific instructions for how this task should be handled. Choose workStyle as software_implementation for repo/code/build/test/deployment work, research_and_report for durable research that should produce a cited report or document, or do_and_review for generic operational, planning, writing, or artifact work. Do not choose dispatch, chat, comment, intake, or document-discussion pipelines. Return JSON fields: accepted boolean, workStyle string, taskSummary string, initialFindings array, executionPlan array, managerChecklist array, taskUpdatePlan array, risks array, confidence number from 0 to 1. The executionPlan must explicitly say when the child worker and manager should update the Flight Deck task.",
+      prompt: "You are stage 1 of a Wingman task intake delegator. Do an initial investigation from the selected task fields and channelContext.contextPrompt, then choose the origin-agnostic child work pipeline. Treat channelContext.contextPrompt as channel-specific instructions for how this task should be handled. Choose workStyle as software_implementation for repo/code/build/test/deployment work, research_and_report for durable research that should produce a cited report or document, or do_and_review for generic operational, planning, writing, or artifact work. Do not choose dispatch, chat, comment, intake, or document-discussion pipelines. For software_implementation, return a concrete workdir and targetSurface; use the repo named explicitly in channelContext.contextPrompt when present, and if no real repo/surface can be identified, leave workdir or targetSurface empty so the deterministic normalizer blocks launch instead of guessing. Return JSON fields: accepted boolean, workStyle string, taskSummary string, workdir string|null, targetSurface object|null, initialFindings array, executionPlan array, managerChecklist array, taskUpdatePlan array, risks array, confidence number from 0 to 1. The executionPlan must explicitly say when the child worker and manager should update the Flight Deck task.",
       assign: "$.agentResponse",
       display: {
         in: [
@@ -591,6 +591,7 @@ const AGENT_DISPATCH_TASK_DEFINITION = {
       name: "start-follow-up-pipeline",
       type: "code",
       function: "dispatch.startChildPipeline",
+      when: { path: "$.workPlan.launchable", equals: true },
       input: {
         pick: {
           pipelineDefinitionId: "$.workPlan.childPipelineDefinitionId",

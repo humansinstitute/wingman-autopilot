@@ -318,8 +318,9 @@ export function initAppCards(deps) {
         const code = document.createElement("code");
         code.textContent = String(app.webAppPort);
         portValue.append(code);
-        const href =
-          typeof app.webAppUrl === "string" && app.webAppUrl.length > 0
+        const href = app.subdomainUrl
+          ? null
+          : typeof app.webAppUrl === "string" && app.webAppUrl.length > 0
             ? app.webAppUrl
             : formatWebAppUrl(app.webAppPort);
         if (href) {

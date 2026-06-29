@@ -257,7 +257,7 @@ Options:
 | `PORT` | Primary Wingman UI/API port | `3600` |
 | `AGENT_PORTS` | Starting port assigned to agent subprocesses | `3700` |
 | `AGENT_MAX` | Total number of concurrent agent ports available | `10` |
-| `HOST_URL_BASE` | Template for app links; `<port>` is replaced with the app's assigned port | `https://host.otherstuff.ai/<port>` |
+| `HOST_URL_BASE` | Optional template for legacy port-proxy app links; `<port>` is replaced with the app's assigned port. Subdomain app routing should normally leave this unset. | unset |
 | `DIRECTORY_DEF` | Working directory used when launching agent subprocesses | `~/code` |
 | `AGENT_DISPATCH_DIRECTORY` | Working directory used by default Flight Deck dispatch agents | `DIRECTORY_DEF` |
 | `FOLDERACCESS` | Comma-separated directories exposed to file browsers and pickers | `DIRECTORY_DEF` |

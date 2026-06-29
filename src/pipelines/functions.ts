@@ -2543,7 +2543,6 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const allowedFiles = getStringArray(targetSurface.allowedFiles);
     const forbidden = getStringArray(targetSurface.forbidden ?? targetSurface.forbiddenSurfaces);
     const contractWarnings = [
-      targetSurfaceKeys.length === 0 ? "targetSurface was not supplied; worker must derive the exact files/routes from the instructions and repo." : "",
       targetSurfaceKeys.length > 0 && !route && !surface && existingFiles.length === 0 && allowedFiles.length === 0
         ? "targetSurface did not contain canonical route/surface/files fields; worker must treat it as loose context and inspect the repo before editing."
         : "",
@@ -2553,7 +2552,8 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     ].filter(Boolean);
     const missing = [
       !workdir ? "workdir" : "",
-      workdir === "/Users/mini/code/wingmen" ? "non-placeholder workdir" : "",
+      isPlaceholderSoftwareWorkdir(workdir) ? "non-placeholder workdir" : "",
+      targetSurfaceKeys.length === 0 ? "targetSurface" : "",
       !instructions ? "instructions" : "",
     ].filter(Boolean);
     if (missing.length > 0) {
@@ -2627,10 +2627,40 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const designReference = childPipelineDefinitionId === "software-implementation-review-loop"
       ? resolveDesignDocumentReference(input, response, record, payload, payloadData)
       : null;
+    const targetSurface = objectValue(response.targetSurface);
+    const explicitWorkdir = getText(response.workdir ?? response.workingDirectory);
+    const inferredWorkdir = workStyle === "software_implementation"
+      ? resolveRepoWorkdirFromHighSignalText(
+        getText(channelContext.contextPrompt),
+        getText(response.relevantContext),
+        getText(response.taskSummary),
+        getText(response.summary),
+        getText(response.instructions),
+      )
+      : null;
+    const selectedWorkdir = workStyle === "software_implementation"
+      ? explicitWorkdir ?? inferredWorkdir
+      : explicitWorkdir ?? getText(agent.workingDirectory);
+    const workdir = workStyle === "software_implementation" && isPlaceholderSoftwareWorkdir(selectedWorkdir)
+      ? null
+      : selectedWorkdir;
+    const missing = workStyle === "software_implementation"
+      ? [
+        !workdir ? "non-placeholder workdir" : "",
+        Object.keys(targetSurface).length === 0 ? "targetSurface" : "",
+      ].filter(Boolean)
+      : [];
+    const launchable = response.accepted !== false && missing.length === 0 && Boolean(childPipelineDefinitionId);
     return {
       accepted: response.accepted !== false,
       workStyle,
-      childPipelineDefinitionId,
+      childPipelineDefinitionId: launchable ? childPipelineDefinitionId : null,
+      pipelineDefinitionId: launchable ? childPipelineDefinitionId : null,
+      launchable,
+      missing,
+      launchBlockedReason: missing.length > 0
+        ? `Software implementation dispatch requires ${missing.join(", ")} before launching a worker.`
+        : null,
       taskSummary: typeof response.taskSummary === "string"
         ? response.taskSummary
         : typeof response.summary === "string"
@@ -2654,7 +2684,8 @@ export const builtinPipelineFunctions: FunctionRegistry = {
         "Comment after worker completion with evidence.",
         "Move the task to review or done only after manager review.",
       ],
-      workdir: getText(response.workdir ?? response.workingDirectory ?? agent.workingDirectory),
+      workdir,
+      ...(Object.keys(targetSurface).length > 0 ? { targetSurface } : {}),
       channelContext,
       ...(designReference ? {
         designDocumentUrl: designReference.designDocumentUrl,

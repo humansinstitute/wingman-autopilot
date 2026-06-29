@@ -824,7 +824,7 @@ describe("memory pipeline functions", () => {
     })).rejects.toThrow(/non-placeholder workdir/);
   });
 
-  test("dispatch.validateImplementationContract treats missing target surface and design doc as warnings", async () => {
+  test("dispatch.validateImplementationContract rejects missing target surface", async () => {
     await expect(builtinPipelineFunctions["dispatch.validateImplementationContract"]!({
       createdTask: {
         taskId: "task-loose",
@@ -833,15 +833,7 @@ describe("memory pipeline functions", () => {
           instructions: "Implement the requested feature from the source context.",
         },
       },
-    })).resolves.toMatchObject({
-      ok: true,
-      taskId: "task-loose",
-      workdir: "/repo/project",
-      contractWarnings: [
-        "targetSurface was not supplied; worker must derive the exact files/routes from the instructions and repo.",
-        "designDocumentUrl was not supplied; worker must treat implementationPrompt/instructions and origin context as the source of truth.",
-      ],
-    });
+    })).rejects.toThrow(/targetSurface/);
   });
 
   test("dispatch.validateImplementationContract accepts plural target surface aliases", async () => {
@@ -1158,6 +1150,12 @@ describe("memory pipeline functions", () => {
         accepted: true,
         workStyle: "software_implementation",
         taskSummary: "Fix the rendered task links.",
+        workdir: "/repo/app",
+        targetSurface: {
+          route: "/tasks",
+          surface: "rendered task links",
+          files: ["src/tasks.ts"],
+        },
         confidence: 0.9,
       },
       record: {
@@ -1172,6 +1170,71 @@ describe("memory pipeline functions", () => {
 
     expect(result.workStyle).toBe("software_implementation");
     expect(result.childPipelineDefinitionId).toBe("software-implementation-review-loop");
+    expect(result.launchable).toBe(true);
+  });
+
+  test("dispatch.normaliseTaskWorkPlan blocks software launch without a real repo and target surface", async () => {
+    const result = await builtinPipelineFunctions["dispatch.normaliseTaskWorkPlan"]!({
+      agentResponse: {
+        accepted: true,
+        workStyle: "software_implementation",
+        taskSummary: "Fix the workspace avatar bug.",
+        confidence: 0.9,
+      },
+      agent: { workingDirectory: "/Users/mini/wingmen/wingman21" },
+      record: {
+        recordId: "task-avatar",
+        payload: {
+          title: "The Workspace Avatar icon doesn't always load",
+          description: "Review the task comments and implement the fix.",
+        },
+      },
+    });
+
+    expect(result.workStyle).toBe("software_implementation");
+    expect(result.childPipelineDefinitionId).toBeNull();
+    expect(result.launchable).toBe(false);
+    expect(result.workdir).toBeNull();
+    expect(result.missing).toEqual(["non-placeholder workdir", "targetSurface"]);
+    expect(String(result.launchBlockedReason)).toContain("non-placeholder workdir, targetSurface");
+  });
+
+  test("dispatch.normaliseTaskWorkPlan infers explicit channel repo but still requires target surface", async () => {
+    const result = await builtinPipelineFunctions["dispatch.normaliseTaskWorkPlan"]!({
+      agentResponse: {
+        accepted: true,
+        workStyle: "software_implementation",
+        taskSummary: "Fix the workspace avatar bug.",
+        targetSurface: {
+          route: "workspace profile / workspace avatar",
+          surface: "workspace avatar storage visibility",
+          files: ["src/workspace-manager.js"],
+        },
+        confidence: 0.9,
+      },
+      agent: { workingDirectory: "/Users/mini/wingmen/wingman21" },
+      flightDeckContext: {
+        channel: {
+          id: "bugs",
+          scopeId: "scope-1",
+          name: "Bugs",
+          contextPrompt: "This is the bugs channel of the Flight Deck project (~/code/wingmanbefree/wm-fd-2).",
+          hasSpecificContext: true,
+        },
+      },
+      record: {
+        recordId: "task-avatar",
+        payload: {
+          title: "The Workspace Avatar icon doesn't always load",
+          description: "Review the task comments and implement the fix.",
+        },
+      },
+    });
+
+    expect(result.childPipelineDefinitionId).toBe("software-implementation-review-loop");
+    expect(result.launchable).toBe(true);
+    expect(result.workdir).toBe("/Users/mini/code/wingmanbefree/wm-fd-2");
+    expect(result.missing).toEqual([]);
   });
 
   test("dispatch.normaliseTaskWorkPlan routes explicit research to research-and-report", async () => {
@@ -1212,7 +1275,9 @@ describe("memory pipeline functions", () => {
       },
     });
 
-    expect(result.childPipelineDefinitionId).toBe("software-implementation-review-loop");
+    expect(result.childPipelineDefinitionId).toBeNull();
+    expect(result.launchable).toBe(false);
+    expect(result.missing).toEqual(["non-placeholder workdir", "targetSurface"]);
     expect(result.designDocumentUrl).toBe(ticketPath);
     expect(result.designDocumentSource).toBe("task_description");
     expect(result.designDocumentUnavailableReason).toBeUndefined();
@@ -1245,6 +1310,12 @@ describe("memory pipeline functions", () => {
         accepted: true,
         workStyle: "software_implementation",
         taskSummary: "Fix the API bug.",
+        workdir: "/repo/app",
+        targetSurface: {
+          route: "/api",
+          surface: "API bug",
+          files: ["src/api.ts"],
+        },
       },
       record: {
         recordId: "task-without-design",
@@ -1268,6 +1339,11 @@ describe("memory pipeline functions", () => {
         accepted: true,
         workStyle: "software_implementation",
         taskSummary: "Implement PH1 typed API fixtures.",
+        workdir: "/Users/mini/code/wingmanbefree/flightdeck-pg",
+        targetSurface: {
+          surface: "PH1 typed API fixtures",
+          files: [ticketPath],
+        },
         confidence: 0.9,
       },
       taskId: "task-ph1-2",
@@ -1280,6 +1356,28 @@ describe("memory pipeline functions", () => {
     expect(childPipeline.pipelineDefinitionId).toBe("software-implementation-review-loop");
     expect(workPlan.designDocumentUrl).toBe(ticketPath);
     expect(childInputWorkPlan.designDocumentUrl).toBe(ticketPath);
+  });
+
+  test("task intake skips child pipeline launch when software contract is incomplete", async () => {
+    const result = await runTaskDispatchSpec({
+      taskDescription: "Fix the workspace avatar bug.",
+      agentResponse: {
+        accepted: true,
+        workStyle: "software_implementation",
+        taskSummary: "Fix the workspace avatar bug.",
+        confidence: 0.9,
+      },
+      taskId: "task-avatar",
+    });
+    const normaliseStep = taskAfterStep(result, "normalise-work-plan");
+    const startStep = result.steps.find((step) => step.name === "start-follow-up-pipeline");
+
+    expect(normaliseStep.workPlan).toMatchObject({
+      launchable: false,
+      childPipelineDefinitionId: null,
+      missing: ["non-placeholder workdir", "targetSurface"],
+    });
+    expect(startStep?.status).toBe("skipped");
   });
 
   test("dispatch.prepareChatIntentInput compacts chat context for intent analysis", async () => {

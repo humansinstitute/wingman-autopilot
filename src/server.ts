@@ -1936,10 +1936,10 @@ const buildAppResponse = (app: AppRecord, status: AppProcessStatus, options: Bui
   const webAppPort =
     typeof app.webAppPort === "number" && Number.isFinite(app.webAppPort) ? Math.trunc(app.webAppPort) : null;
   const webAppAlias = options.ownerAlias ?? null;
-  const webAppUrl = app.webApp && webAppPort !== null ? buildHostedWebAppUrl(webAppPort) : null;
   const subdomainAlias = options.subdomainAlias ?? null;
   // Use routing-mode-aware URL builder (path or subdomain based on APP_ROUTING)
   const subdomainUrl = app.webApp ? buildAppHostUrl(subdomainAlias) : null;
+  const webAppUrl = app.webApp && webAppPort !== null && !subdomainUrl ? buildHostedWebAppUrl(webAppPort) : null;
   return {
     id: app.id,
     label: app.label,
