@@ -3,6 +3,7 @@
 import { access } from "node:fs/promises";
 import { join } from "node:path";
 
+import { appRegistry } from "./app-registry";
 import { readEnvFile } from "../utils/env-file";
 import { getWappRuntimeEnvForWapp } from "../wapps/runtime-env";
 import { wappStore, type WappStore } from "../wapps/wapp-store";
@@ -21,6 +22,7 @@ export interface UserAppRunnerDeps {
   store?: WappStore;
   hostEnv?: Record<string, string | undefined>;
   envFileReader?: (directory: string) => Promise<Record<string, string>>;
+  appEnvReader?: (appId: string) => Promise<Record<string, string>>;
   redshiftDetector?: (directory: string) => Promise<boolean>;
   spawn?: typeof Bun.spawn;
 }
@@ -79,17 +81,29 @@ async function hasRedshiftConfig(directory: string): Promise<boolean> {
   }
 }
 
+async function readManagedAppEnv(appId: string): Promise<Record<string, string>> {
+  const app = await appRegistry.getApp(appId);
+  if (!app) {
+    throw new Error(`Unable to load managed environment for unknown app: ${appId}`);
+  }
+  return app.env ?? {};
+}
+
 export async function buildUserAppSpawnPlan(
   input: UserAppRunnerInput,
   deps: UserAppRunnerDeps = {},
 ): Promise<UserAppSpawnPlan> {
   const hostEnv = deps.hostEnv ?? process.env;
   const envFile = await (deps.envFileReader ?? readEnvFile)(input.appRoot);
+  const managedEnv = await (deps.appEnvReader ?? readManagedAppEnv)(input.appId);
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(hostEnv)) {
     appendEnv(env, key, value);
   }
   for (const [key, value] of Object.entries(envFile)) {
+    appendEnv(env, key, value);
+  }
+  for (const [key, value] of Object.entries(managedEnv)) {
     appendEnv(env, key, value);
   }
 

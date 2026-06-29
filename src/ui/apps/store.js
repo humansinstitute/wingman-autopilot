@@ -207,12 +207,17 @@ export function initAppsStore({
           ? Math.trunc(item.webAppPort)
           : null;
       const autoStart = Boolean(item?.autoStart ?? item?.auto_start);
+      const env = Array.isArray(item?.env)
+        ? item.env
+            .filter((entry) => entry && typeof entry.key === "string" && entry.key.trim().length > 0)
+            .map((entry) => ({ key: entry.key.trim(), hasValue: Boolean(entry.hasValue) }))
+        : [];
       let webAppUrl =
         typeof item?.webAppUrl === "string" && item.webAppUrl.length > 0 ? item.webAppUrl : null;
       if (!webAppUrl && webApp && webAppPort !== null && formatWebAppUrl) {
         webAppUrl = formatWebAppUrl(webAppPort);
       }
-      return { ...item, autoStart, auto_start: autoStart, webApp, webAppPort, webAppUrl, logs, availableScripts };
+      return { ...item, autoStart, auto_start: autoStart, env, webApp, webAppPort, webAppUrl, logs, availableScripts };
     },
 
     /** Process filter options from API response. */

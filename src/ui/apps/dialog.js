@@ -32,6 +32,8 @@ export const initAppDialogs = ({
   const appWebAppToggle = document.getElementById("app-web-app");
   const appWebAppPortNote = document.getElementById("app-web-app-port");
   const appAutoStartToggle = document.getElementById("app-auto-start");
+  const appEnvList = document.getElementById("app-env-list");
+  const appEnvAddButton = document.getElementById("app-env-add");
   const appScriptInputs = {
     start: document.getElementById("app-script-start"),
     stop: document.getElementById("app-script-stop"),
@@ -295,6 +297,91 @@ export const initAppDialogs = ({
     appWebAppPortNote.textContent = "A reserved port will be attached to this app after you save.";
   };
 
+  const clearAppEnvRows = () => {
+    if (!appEnvList) return;
+    while (appEnvList.firstChild) {
+      appEnvList.firstChild.remove();
+    }
+  };
+
+  const createAppEnvRow = ({ key = "", existing = false } = {}) => {
+    if (!appEnvList) return null;
+
+    const row = document.createElement("div");
+    row.className = "app-env-row";
+    row.dataset.existing = existing ? "true" : "false";
+    if (existing) {
+      row.dataset.key = key;
+    }
+
+    const keyInput = document.createElement("input");
+    keyInput.type = "text";
+    keyInput.autocomplete = "off";
+    keyInput.placeholder = "OPENAI_API_KEY";
+    keyInput.value = key;
+    keyInput.readOnly = existing;
+    keyInput.setAttribute("aria-label", "Environment variable name");
+    keyInput.dataset.role = "env-key";
+    keyInput.dataset.testid = "app-env-key";
+
+    const valueInput = document.createElement("input");
+    valueInput.type = "password";
+    valueInput.autocomplete = "off";
+    valueInput.placeholder = existing ? "Saved value unchanged" : "Value";
+    valueInput.setAttribute("aria-label", `Environment variable value${key ? ` for ${key}` : ""}`);
+    valueInput.dataset.role = "env-value";
+    valueInput.dataset.testid = "app-env-value";
+
+    const removeButton = document.createElement("button");
+    removeButton.type = "button";
+    removeButton.className = "wm-button secondary";
+    removeButton.textContent = "Remove";
+    removeButton.setAttribute("aria-label", key ? `Remove environment variable ${key}` : "Remove environment variable row");
+    removeButton.dataset.testid = "app-env-remove";
+    removeButton.addEventListener("click", () => {
+      row.remove();
+    });
+
+    row.append(keyInput, valueInput, removeButton);
+    appEnvList.append(row);
+    return row;
+  };
+
+  const getAppEnvRows = () => {
+    if (!appEnvList) return [];
+    return Array.from(appEnvList.querySelectorAll(".app-env-row"));
+  };
+
+  const populateAppEnvRows = (entries) => {
+    clearAppEnvRows();
+    const rows = Array.isArray(entries) ? entries : [];
+    rows.forEach((entry) => {
+      if (!entry || typeof entry.key !== "string" || entry.key.trim().length === 0) return;
+      createAppEnvRow({ key: entry.key.trim(), existing: Boolean(entry.hasValue) });
+    });
+  };
+
+  const collectAppEnvValues = () => {
+    const env = [];
+    for (const row of getAppEnvRows()) {
+      const keyInput = row.querySelector('[data-role="env-key"]');
+      const valueInput = row.querySelector('[data-role="env-value"]');
+      const key = keyInput instanceof HTMLInputElement ? keyInput.value.trim() : "";
+      const value = valueInput instanceof HTMLInputElement ? valueInput.value : "";
+      const existing = row.dataset.existing === "true";
+      if (!key && !value) continue;
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+        throw new Error(`Invalid environment variable key: ${key || "(blank)"}`);
+      }
+      if (existing && value.length === 0) {
+        env.push({ key, retain: true });
+      } else {
+        env.push({ key, value });
+      }
+    }
+    return env;
+  };
+
   const resetAppDialog = () => {
     if (appForm) {
       appForm.reset();
@@ -329,6 +416,7 @@ export const initAppDialogs = ({
     if (appAutoStartToggle) {
       appAutoStartToggle.checked = false;
     }
+    clearAppEnvRows();
     appDialogState.webAppEnabled = false;
     appDialogState.webAppPort = null;
     appDialogState.projectContext = null;
@@ -374,6 +462,7 @@ export const initAppDialogs = ({
     if (appAutoStartToggle) {
       appAutoStartToggle.checked = Boolean(app.autoStart ?? app.auto_start);
     }
+    populateAppEnvRows(app.env);
     syncAppWebAppPortNote({ enabled: webAppEnabled, port: appDialogState.webAppPort });
     if (appAdvancedSection && !appAdvancedSection.hidden) {
       const hasScript = Object.values(app.scripts ?? {}).some(
@@ -381,7 +470,8 @@ export const initAppDialogs = ({
       );
       const inferredWindow = deriveAppWindowName(app.label ?? "", app.root ?? "");
       const hasCustomWindow = Boolean(app.tmuxWindow && app.tmuxWindow !== inferredWindow);
-      appAdvancedSection.open = hasScript || hasCustomWindow;
+      const hasManagedEnv = Array.isArray(app.env) && app.env.length > 0;
+      appAdvancedSection.open = hasScript || hasCustomWindow || hasManagedEnv;
     }
     syncAppAdvancedVisibility();
     syncTmuxVisibility();
@@ -403,12 +493,20 @@ export const initAppDialogs = ({
     const discoverScripts = appDiscoverToggle ? appDiscoverToggle.checked : true;
     const webApp = appWebAppToggle ? appWebAppToggle.checked : false;
     const autoStart = appAutoStartToggle ? appAutoStartToggle.checked : false;
-    return { label, root, notesRaw, notesTrimmed, scripts, discoverScripts, webApp, autoStart };
+    const env = collectAppEnvValues();
+    return { label, root, notesRaw, notesTrimmed, scripts, discoverScripts, webApp, autoStart, env };
   };
 
   const handleAppFormSubmit = async (event) => {
     event.preventDefault();
-    const values = collectAppFormValues();
+    let values;
+    try {
+      values = collectAppFormValues();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Invalid app form values";
+      showToast(message, { type: "warning" });
+      return;
+    }
     if (!values.root) {
       showToast("Provide a root directory for the app.", { type: "warning" });
       appRootInput?.focus();
@@ -441,6 +539,7 @@ export const initAppDialogs = ({
         webApp: values.webApp,
         autoStart: values.autoStart,
         auto_start: values.autoStart,
+        env: values.env,
       };
     } else {
       url = "/api/apps";
@@ -454,6 +553,7 @@ export const initAppDialogs = ({
         webApp: values.webApp,
         autoStart: values.autoStart,
         auto_start: values.autoStart,
+        env: values.env,
       };
     }
 
@@ -1055,6 +1155,15 @@ export const initAppDialogs = ({
   appForm?.addEventListener("submit", handleAppFormSubmit);
 
   appDiscoverButton?.addEventListener("click", handleAppDiscover);
+
+  appEnvAddButton?.addEventListener("click", (event) => {
+    event.preventDefault();
+    const row = createAppEnvRow();
+    const keyInput = row?.querySelector('[data-role="env-key"]');
+    if (keyInput instanceof HTMLInputElement) {
+      keyInput.focus();
+    }
+  });
 
   appCancelButton?.addEventListener("click", (event) => {
     event.preventDefault();

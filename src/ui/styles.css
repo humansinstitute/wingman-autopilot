@@ -2426,6 +2426,34 @@ body[data-live-header-collapsed="true"]:has(#app[data-route="live"]) #app[data-r
   font-style: italic;
 }
 
+.app-env-editor {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.app-env-editor__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.app-env-list {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.app-env-row {
+  display: grid;
+  grid-template-columns: minmax(8rem, 0.9fr) minmax(10rem, 1.1fr) auto;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.app-env-row input[readonly] {
+  color: var(--text-secondary);
+}
+
 .wm-app-status-info {
   display: grid;
   gap: 0.35rem;
@@ -6153,6 +6181,16 @@ dialog form {
 @media (max-width: 600px) {
   #app-dialog form {
     padding-bottom: calc(5rem + env(safe-area-inset-bottom, 0));
+  }
+
+  .app-env-editor__header,
+  .app-env-row {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .app-env-editor__header {
+    align-items: stretch;
   }
 }
 

@@ -29,6 +29,7 @@ import {
   type AppLifecycleScripts,
   type AppRecord,
 } from "./apps/app-registry";
+import { redactAppEnv } from "./apps/app-env";
 import { appAliasRegistry } from "./apps/app-alias-registry";
 import {
   appProcessManager,
@@ -1947,6 +1948,7 @@ const buildAppResponse = (app: AppRecord, status: AppProcessStatus, options: Bui
     pm2Name: app.pm2Name ?? null,
     logsDir: app.logsDir ?? null,
     notes: app.notes ?? null,
+    env: redactAppEnv(app.env),
     ownerNpub: app.ownerNpub,
     autoStart: Boolean(app.autoStart),
     auto_start: Boolean(app.autoStart),

@@ -7,6 +7,7 @@ import type { WorkspaceScope } from '../workspaces/workspace-scope';
 import type { TreeNode } from '../apps/app-detector';
 import type { AppLifecycleAction, AppLifecycleScripts, AppRecord } from '../apps/app-registry';
 import type { AppProcessStatus } from '../apps/app-process-manager';
+import { parseAppEnvInput, type AppEnvironmentVariables } from '../apps/app-env';
 import { AppActionInProgressError, AppScriptMissingError } from '../apps/app-process-manager';
 import type { CaproverAppDefinition, CaproverRepoInfo, CaproverStore, CaproverTargetClient } from '../caprover';
 import type { WappRecord } from '../wapps/types';
@@ -124,6 +125,7 @@ export interface AppsApiContext {
       notes?: string;
       ownerNpub?: string | null;
       autoStart?: boolean;
+      env?: AppEnvironmentVariables;
       webApp?: boolean;
       webAppPort?: number | null;
     }) => Promise<AppRecord>;
@@ -136,6 +138,7 @@ export interface AppsApiContext {
         tmuxSession?: string;
         notes?: string | null;
         autoStart?: boolean;
+        env?: AppEnvironmentVariables;
         webApp?: boolean;
         webAppPort?: number | null;
       },
@@ -624,6 +627,12 @@ export async function handleAppsApi(
     const autoStartInput =
       record.autoStart !== undefined ? ctx.parseBooleanInput(record.autoStart) : ctx.parseBooleanInput(record.auto_start);
     const requestedPort = ctx.parsePortInput(record.webAppPort);
+    let appEnv: AppEnvironmentVariables | undefined;
+    try {
+      appEnv = parseAppEnvInput(record.env);
+    } catch (error) {
+      return Response.json({ error: (error as Error).message }, { status: 400 });
+    }
     const ownerNpub = ctx.viewerNpub ?? (ctx.workspaceScope.isAdmin ? ctx.adminNpub : null);
     if (!ownerNpub) {
       return Response.json({ error: 'Unable to resolve app owner' }, { status: 403 });
@@ -657,6 +666,7 @@ export async function handleAppsApi(
         notes: notes ?? undefined,
         ownerNpub,
         autoStart: autoStartInput ?? false,
+        env: appEnv,
         webApp: requestedWebApp,
         webAppPort: requestedPort ?? undefined,
       });
@@ -781,6 +791,12 @@ export async function handleAppsApi(
       const autoStartRaw = record.autoStart ?? record.auto_start;
       const autoStartInput = ctx.parseBooleanInput(autoStartRaw);
       const webAppPortInput = ctx.parsePortInput(record.webAppPort);
+      let appEnv: AppEnvironmentVariables | undefined;
+      try {
+        appEnv = parseAppEnvInput(record.env, current.env ?? {});
+      } catch (error) {
+        return Response.json({ error: (error as Error).message }, { status: 400 });
+      }
       const shouldDiscover =
         typeof record.discoverScripts === 'boolean'
           ? (record.discoverScripts as boolean)
@@ -831,6 +847,7 @@ export async function handleAppsApi(
           notes?: string | null;
           scripts?: AppLifecycleScripts;
           autoStart?: boolean;
+          env?: AppEnvironmentVariables;
           webApp?: boolean;
           webAppPort?: number;
         } = {
@@ -845,6 +862,9 @@ export async function handleAppsApi(
         }
         if (autoStartInput !== undefined) {
           updatePayload.autoStart = autoStartInput;
+        }
+        if (appEnv !== undefined) {
+          updatePayload.env = appEnv;
         }
         if (webAppPortInput !== null) {
           updatePayload.webAppPort = webAppPortInput;

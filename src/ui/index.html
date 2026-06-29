@@ -452,6 +452,21 @@
 
             <label for="app-tmux-window" id="app-tmux-window-label">tmux Window</label>
             <input id="app-tmux-window" type="text" readonly placeholder="Auto-generated from the app name" />
+
+            <div class="app-env-editor" data-testid="app-env-editor">
+              <div class="app-env-editor__header">
+                <label id="app-env-label">Managed Environment</label>
+                <button
+                  type="button"
+                  class="wm-button secondary"
+                  id="app-env-add"
+                  aria-label="Add managed environment variable"
+                  data-testid="app-env-add"
+                >Add Variable</button>
+              </div>
+              <div id="app-env-list" class="app-env-list" aria-labelledby="app-env-label"></div>
+              <p class="wm-field-note">Values are injected when Wingman starts the app. Saved values stay hidden.</p>
+            </div>
           </div>
         </details>
 

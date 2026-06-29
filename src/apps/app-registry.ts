@@ -7,6 +7,12 @@ import { normaliseNpub } from "../identity/npub-utils";
 import { identityUserStore } from "../storage/identity-user-store";
 import { isPortAvailable } from "../utils/port-utils";
 import { appAliasRegistry } from "./app-alias-registry";
+import {
+  hydrateAppEnv,
+  normaliseAppEnvRecord,
+  serialiseAppEnvForStorage,
+  type AppEnvironmentVariables,
+} from "./app-env";
 
 const registryFilePath = new URL("../../data/apps.json", import.meta.url).pathname;
 
@@ -28,6 +34,7 @@ export interface AppRecord {
   notes?: string;
   ownerNpub: string | null;
   autoStart?: boolean;
+  env?: AppEnvironmentVariables;
   createdAt: string;
   updatedAt: string;
   webApp: boolean;
@@ -46,6 +53,7 @@ export interface RegisterAppInput {
   notes?: string;
   ownerNpub?: string | null;
   autoStart?: boolean;
+  env?: AppEnvironmentVariables;
   webApp?: boolean;
   webAppPort?: number | null;
 }
@@ -61,6 +69,7 @@ export interface UpdateAppInput {
   notes?: string | null;
   ownerNpub?: string | null;
   autoStart?: boolean;
+  env?: AppEnvironmentVariables;
   webApp?: boolean;
   webAppPort?: number | null;
 }
@@ -184,6 +193,7 @@ export class AppRegistry {
       notes: input.notes?.trim() || undefined,
       ownerNpub,
       autoStart: Boolean(input.autoStart),
+      env: normaliseAppEnvRecord(input.env),
       createdAt: now,
       updatedAt: now,
       webApp: webAppEnabled,
@@ -252,6 +262,7 @@ export class AppRegistry {
       notes: nextNotes,
       ownerNpub: nextOwnerNpub,
       autoStart: input.autoStart !== undefined ? Boolean(input.autoStart) : existing.autoStart,
+      env: input.env !== undefined ? normaliseAppEnvRecord(input.env) : existing.env,
       updatedAt: new Date().toISOString(),
       webApp: nextWebApp,
       webAppPort: nextWebAppPort,
@@ -386,7 +397,7 @@ export class AppRegistry {
 
   private async persist() {
     const payload: AppRegistryState = {
-      apps: Array.from(this.apps.values()),
+      apps: Array.from(this.apps.values()).map((app) => this.serialiseRecord(app)),
     };
     const writeOperation = async () => {
       await mkdir(dirname(this.filePath), { recursive: true });
@@ -468,6 +479,7 @@ export class AppRegistry {
     const scripts = this.normaliseScripts(input.scripts);
     const notes = input.notes?.trim() || undefined;
     const autoStart = Boolean(input.autoStart);
+    const env = hydrateAppEnv(input.env);
     const webApp = Boolean(input.webApp);
     const storedPort =
       typeof input.webAppPort === "number" && Number.isFinite(input.webAppPort)
@@ -485,10 +497,23 @@ export class AppRegistry {
       notes,
       ownerNpub,
       autoStart,
+      env,
       createdAt,
       updatedAt,
       webApp,
       webAppPort,
+    };
+  }
+
+  private serialiseRecord(app: AppRecord): AppRecord {
+    const storedEnv = serialiseAppEnvForStorage(app.env);
+    if (!storedEnv) {
+      const { env: _env, ...withoutEnv } = app;
+      return withoutEnv;
+    }
+    return {
+      ...app,
+      env: storedEnv,
     };
   }
 }

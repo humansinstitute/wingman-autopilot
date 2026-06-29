@@ -292,6 +292,20 @@ export function initAppCards(deps) {
     autoStartRow.append(autoStartLabel, autoStartValue);
     meta.append(autoStartRow);
 
+    const envCount = Array.isArray(app.env) ? app.env.length : 0;
+    if (envCount > 0) {
+      const envRow = document.createElement("div");
+      envRow.className = "wm-app-meta-row";
+      const envLabel = document.createElement("span");
+      envLabel.className = "wm-app-meta-label";
+      envLabel.textContent = "Env";
+      const envValue = document.createElement("span");
+      envValue.className = "wm-app-meta-value";
+      envValue.textContent = `${envCount} managed variable${envCount === 1 ? "" : "s"}`;
+      envRow.append(envLabel, envValue);
+      meta.append(envRow);
+    }
+
     if (isWebApp) {
       const portRow = document.createElement("div");
       portRow.className = "wm-app-meta-row";

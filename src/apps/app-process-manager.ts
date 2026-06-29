@@ -592,6 +592,7 @@ export class AppProcessManager {
       stderr: "pipe",
       env: {
         ...process.env,
+        ...(app.env ?? {}),
         ...(app.webAppPort ? { PORT: String(app.webAppPort) } : {}),
       },
     });
