@@ -125,8 +125,13 @@ function formatWorkingNotesCount(count) {
 export function renderWorkingNotesHtml(content, options = {}) {
   const body = renderChatMessageHtml(content, options);
   const labels = formatWorkingNotesCount(countWorkingNoteRows(content));
+  const panelKey =
+    typeof options.workingNotesKey === "string" && options.workingNotesKey.length > 0
+      ? ` data-working-notes-key="${escapeHtml(options.workingNotesKey)}"`
+      : "";
+  const openAttribute = options.workingNotesOpen === true ? " open" : "";
   return [
-    '<details class="wm-message-working-notes" data-testid="message-working-notes" data-working-notes-panel>',
+    `<details class="wm-message-working-notes" data-testid="message-working-notes" data-working-notes-panel${panelKey}${openAttribute}>`,
     '<summary aria-label="Toggle working notes" data-testid="message-working-notes-summary">',
     `<span class="wm-message-working-notes__summary-collapsed">${escapeHtml(labels.collapsed)}</span>`,
     `<span class="wm-message-working-notes__summary-expanded">${escapeHtml(labels.expanded)}</span>`,

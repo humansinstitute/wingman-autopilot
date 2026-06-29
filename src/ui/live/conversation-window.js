@@ -1,6 +1,7 @@
 import { attachCopyButton } from "../utils/clipboard.js";
 import { renderChatMessageHtml, renderWorkingNotesHtml } from "../rendering/chat-message-content.js";
 import { attachMessageSpeechButton } from "./message-speech.js";
+import { getWorkingNotesPanelKey, getWorkingNotesPanelState } from "./working-notes-toggle.js";
 
 export const LIVE_MESSAGE_WINDOW_DEFAULT = 80;
 export const LIVE_MESSAGE_PAGE_SIZE = 80;
@@ -147,9 +148,14 @@ function createMessageBubble(message, options = {}) {
   bubble.dataset.role = role;
   const body = document.createElement("div");
   body.className = "wm-message-body";
+  const workingNotesKey = isWorkingNotesMessage(message)
+    ? getWorkingNotesPanelKey(options.sessionId, message)
+    : null;
   body.innerHTML = isWorkingNotesMessage(message)
     ? renderWorkingNotesHtml(message.content ?? message.message ?? "", {
         cleanAgentText: Boolean(options.agentOutputFormattingEnabled),
+        workingNotesKey,
+        workingNotesOpen: getWorkingNotesPanelState(workingNotesKey) === true,
       })
     : renderChatMessageHtml(message.content ?? message.message ?? "", {
         cleanAgentText: Boolean(options.agentOutputFormattingEnabled && shouldFormatAgentMessage(message)),

@@ -58,4 +58,15 @@ describe("chat message content rendering", () => {
     expect(html).toContain("Show thinking 1 thinking message is collapsed");
     expect(html).toContain("Hide thinking 1 thinking message");
   });
+
+  test("renders remembered working note open state", () => {
+    const html = renderWorkingNotesHtml("Reviewing files.", {
+      workingNotesKey: "session-1:message-1",
+      workingNotesOpen: true,
+    });
+
+    expect(html).toContain('data-working-notes-key="session-1:message-1"');
+    expect(html).toContain("data-working-notes-panel");
+    expect(html).toContain(" open>");
+  });
 });

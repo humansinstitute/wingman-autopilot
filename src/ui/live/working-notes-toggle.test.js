@@ -12,6 +12,8 @@ describe("working notes toggle integration", () => {
     expect(appSource).toContain("attachWorkingNotesToggle();");
     expect(toggleSource).toContain("root.addEventListener('click'");
     expect(toggleSource).toContain("root.addEventListener('dblclick'");
+    expect(toggleSource).toContain("root.addEventListener('toggle'");
+    expect(toggleSource).toContain("panelOpenState.set(key, panel.open)");
     expect(toggleSource).toContain("panel.open = true;");
     expect(toggleSource).toContain('.wm-message[data-role="agent-working"]');
   });

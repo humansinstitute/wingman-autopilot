@@ -11,6 +11,7 @@ const INTERACTIVE_SELECTOR = [
 ].join(',');
 
 let attached = false;
+const panelOpenState = new Map();
 
 function getElementTarget(target) {
   if (target instanceof Element) {
@@ -51,6 +52,37 @@ function togglePanel(panel) {
   return true;
 }
 
+function getPanelKey(panel) {
+  return typeof panel?.dataset?.workingNotesKey === 'string' && panel.dataset.workingNotesKey.length > 0
+    ? panel.dataset.workingNotesKey
+    : null;
+}
+
+function rememberPanelState(panel) {
+  if (!(panel instanceof HTMLDetailsElement)) {
+    return;
+  }
+  const key = getPanelKey(panel);
+  if (!key) {
+    return;
+  }
+  panelOpenState.set(key, panel.open);
+}
+
+export function getWorkingNotesPanelKey(sessionId, message) {
+  const sid = typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : 'session';
+  const messageKey =
+    message?.id ??
+    message?.messageId ??
+    message?.createdAt ??
+    `${message?.role ?? message?.type ?? 'agent-working'}:${String(message?.content ?? message?.message ?? '').slice(0, 64)}`;
+  return `${sid}:${messageKey}`;
+}
+
+export function getWorkingNotesPanelState(key) {
+  return panelOpenState.get(key);
+}
+
 export function attachWorkingNotesToggle(root = document) {
   if (attached || !root?.addEventListener) {
     return;
@@ -65,6 +97,7 @@ export function attachWorkingNotesToggle(root = document) {
       return;
     }
     panel.open = true;
+    rememberPanelState(panel);
     event.preventDefault();
   });
   root.addEventListener('dblclick', (event) => {
@@ -75,6 +108,12 @@ export function attachWorkingNotesToggle(root = document) {
     if (!panel || !togglePanel(panel)) {
       return;
     }
+    rememberPanelState(panel);
     event.preventDefault();
   });
+  root.addEventListener('toggle', (event) => {
+    if (event.target instanceof HTMLDetailsElement && event.target.matches('[data-working-notes-panel]')) {
+      rememberPanelState(event.target);
+    }
+  }, true);
 }

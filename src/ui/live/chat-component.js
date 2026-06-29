@@ -9,6 +9,7 @@ import { sseManager } from "./sse-manager.js";
 import { MessageStore, SessionStore } from "./db.js";
 import { show as scrollPillShow, isNearBottom as scrollPillIsNearBottom } from "./scroll-pill.js";
 import { renderChatMessageHtml, renderWorkingNotesHtml } from "../rendering/chat-message-content.js";
+import { getWorkingNotesPanelKey, getWorkingNotesPanelState } from "./working-notes-toggle.js";
 import { AGENT_OUTPUT_FORMATTING_FLAG_KEY } from "../rendering/agent-output-format.js";
 import { normalizeRuntimeStatus } from "./session-status-cache.js";
 import { fetchSessionMessagesApi } from "../services/sessions.js";
@@ -311,8 +312,11 @@ export function registerChatComponent() {
 
     renderMessageContent(message) {
       if (isWorkingNotesMessage(message)) {
+        const workingNotesKey = getWorkingNotesPanelKey(this.sessionId, message);
         return renderWorkingNotesHtml(message?.content ?? "", {
           cleanAgentText: Boolean(isAgentOutputFormattingEnabled()),
+          workingNotesKey,
+          workingNotesOpen: getWorkingNotesPanelState(workingNotesKey) === true,
         });
       }
       return renderChatMessageHtml(message?.content ?? "", {
