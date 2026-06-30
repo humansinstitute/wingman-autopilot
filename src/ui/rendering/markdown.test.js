@@ -50,7 +50,9 @@ describe("renderMarkdownToHtml", () => {
   test("renders escaped uploaded image markdown", () => {
     const html = renderMarkdownToHtml("\\![uploaded image]\\(file:///tmp/uploads/images/npub1abc/codex/example.png\\)");
 
-    expect(html).toContain('<img src="/uploads/images/npub1abc/codex/example.png"');
+    expect(html).toContain('class="wm-inline-image-link"');
+    expect(html).toContain('href="/uploads/images/npub1abc/codex/example.png"');
+    expect(html).toContain('src="/uploads/images/npub1abc/codex/example.png"');
     expect(html).toContain('alt="uploaded image"');
   });
 });

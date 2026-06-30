@@ -3,21 +3,29 @@ import { describe, expect, test } from "bun:test";
 import { countWorkingNoteRows, renderChatMessageHtml, renderWorkingNotesHtml } from "./chat-message-content.js";
 
 describe("chat message content rendering", () => {
-  test("keeps captured session text raw by default", () => {
-    const html = renderChatMessageHtml("Cleartext should be\n  only relay-safe classification.");
+  test("renders markdown blocks for chat messages", () => {
+    const html = renderChatMessageHtml([
+      "## Plan",
+      "",
+      "- **Render** user messages",
+      "- Render `agent` messages",
+    ].join("\n"));
 
-    expect(html).toContain("Cleartext should be\n  only relay-safe classification.");
+    expect(html).toContain("<h2>Plan</h2>");
+    expect(html).toContain("<ul>");
+    expect(html).toContain("<strong>Render</strong> user messages");
+    expect(html).toContain("<code>agent</code>");
   });
 
-  test("cleans agent session text when requested", () => {
+  test("cleans agent session text before rendering markdown when requested", () => {
     const html = renderChatMessageHtml("Cleartext should be\n  only relay-safe classification.", {
       cleanAgentText: true,
     });
 
-    expect(html).toContain("Cleartext should be only relay-safe classification.");
+    expect(html).toContain("<p>Cleartext should be only relay-safe classification.</p>");
   });
 
-  test("preserves image markdown while cleaning text blocks", () => {
+  test("renders image markdown while cleaning text blocks", () => {
     const html = renderChatMessageHtml([
       "Here is the thing",
       "  you asked for.",
@@ -30,6 +38,14 @@ describe("chat message content rendering", () => {
     expect(html).toContain("wm-inline-image");
     expect(html).toContain('data-testid="inline-image-preview-link"');
     expect(html).toContain('aria-label="Open upload preview"');
+  });
+
+  test("escapes unsafe html and blocks unsafe markdown links", () => {
+    const html = renderChatMessageHtml('<img src=x onerror=alert(1)> [bad](javascript:alert(1))');
+
+    expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
+    expect(html).toContain('<a href="#" target="_blank" rel="noopener noreferrer">bad</a>');
+    expect(html).not.toContain("javascript:alert");
   });
 
   test("renders working notes as a collapsible details block", () => {

@@ -39,6 +39,17 @@ function renderMermaidBlock(source) {
   return `<div class="wm-mermaid" data-testid="markdown-mermaid-diagram"><pre class="wm-mermaid__source"><code>${escapeHtml(source)}</code></pre></div>`;
 }
 
+function renderImageHtml(alt, url) {
+  const safeUrl = sanitizeImageSrc(url);
+  const safeAlt = escapeHtml(alt || "uploaded image").replace(/"/g, "&quot;");
+  const safeLabel = `Open ${safeAlt} preview`;
+  return [
+    `<a class="wm-inline-image-link" href="${safeUrl}" target="_blank" rel="noopener noreferrer" aria-label="${safeLabel}" data-testid="inline-image-preview-link">`,
+    `<img class="wm-inline-image" src="${safeUrl}" alt="${safeAlt}" loading="lazy" />`,
+    "</a>",
+  ].join("");
+}
+
 export const renderInlineMarkdown = (text) => {
   if (!text) return "";
   let working = String(text);
@@ -54,9 +65,7 @@ export const renderInlineMarkdown = (text) => {
   );
 
   working = working.replace(/\\?!\[([^\]]*)\]\\?\(([^)\\\s]+)\\?\)/g, (_, alt, url) => {
-    const safeUrl = sanitizeImageSrc(url);
-    const safeAlt = escapeHtml(alt).replace(/"/g, "&quot;");
-    return createPlaceholder(`<img src="${safeUrl}" alt="${safeAlt}" loading="lazy" />`);
+    return createPlaceholder(renderImageHtml(alt, url));
   });
 
   working = working.replace(/\[([^\]]+)\]\\?\(([^)\\\s]+)\\?\)/g, (_, label, url) => {

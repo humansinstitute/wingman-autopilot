@@ -3702,6 +3702,111 @@ body[data-live-header-collapsed="true"]:has(#app[data-route="live"]) .wm-live-dr
   gap: 0.75rem;
 }
 
+.wm-message-body > *,
+.wm-chat-message-content > *,
+.wm-archive-dialog-message-content > * {
+  margin: 0;
+}
+
+.wm-message-body p,
+.wm-chat-message-content p,
+.wm-archive-dialog-message-content p {
+  line-height: 1.55;
+}
+
+.wm-message-body h1,
+.wm-message-body h2,
+.wm-message-body h3,
+.wm-message-body h4,
+.wm-message-body h5,
+.wm-message-body h6,
+.wm-chat-message-content h1,
+.wm-chat-message-content h2,
+.wm-chat-message-content h3,
+.wm-chat-message-content h4,
+.wm-chat-message-content h5,
+.wm-chat-message-content h6,
+.wm-archive-dialog-message-content h1,
+.wm-archive-dialog-message-content h2,
+.wm-archive-dialog-message-content h3,
+.wm-archive-dialog-message-content h4,
+.wm-archive-dialog-message-content h5,
+.wm-archive-dialog-message-content h6 {
+  font-size: 1rem;
+  line-height: 1.35;
+}
+
+.wm-message-body ul,
+.wm-message-body ol,
+.wm-chat-message-content ul,
+.wm-chat-message-content ol,
+.wm-archive-dialog-message-content ul,
+.wm-archive-dialog-message-content ol {
+  padding-left: 1.2rem;
+}
+
+.wm-message-body li,
+.wm-chat-message-content li,
+.wm-archive-dialog-message-content li {
+  margin: 0.2rem 0;
+}
+
+.wm-message-body blockquote,
+.wm-chat-message-content blockquote,
+.wm-archive-dialog-message-content blockquote {
+  border-left: 3px solid rgba(16, 185, 129, 0.45);
+  color: var(--text-secondary);
+  padding-left: 0.75rem;
+}
+
+.wm-message-body code,
+.wm-chat-message-content code,
+.wm-archive-dialog-message-content code {
+  background: rgba(15, 23, 42, 0.12);
+  border-radius: 0.3rem;
+  font-size: 0.92em;
+  padding: 0.08rem 0.25rem;
+}
+
+.wm-message-body pre code,
+.wm-chat-message-content pre code,
+.wm-archive-dialog-message-content pre code {
+  background: transparent;
+  border-radius: 0;
+  display: block;
+  overflow-x: auto;
+  padding: 0;
+}
+
+.wm-message-body table,
+.wm-chat-message-content table,
+.wm-archive-dialog-message-content table {
+  border-collapse: collapse;
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.wm-message-body th,
+.wm-message-body td,
+.wm-chat-message-content th,
+.wm-chat-message-content td,
+.wm-archive-dialog-message-content th,
+.wm-archive-dialog-message-content td {
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  padding: 0.35rem 0.5rem;
+  text-align: left;
+}
+
+.wm-message-body a,
+.wm-chat-message-content a,
+.wm-archive-dialog-message-content a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-thickness: 0.08em;
+  text-underline-offset: 0.15em;
+}
+
 .wm-inline-image-link {
   display: inline-block;
   max-width: 100%;

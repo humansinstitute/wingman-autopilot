@@ -62,7 +62,7 @@ export function attachCopyButton(bubble) {
   button.addEventListener("click", async (event) => {
     event.preventDefault();
     event.stopPropagation();
-    const body = bubble.querySelector("pre");
+    const body = bubble.querySelector(".wm-message-body") ?? bubble.querySelector("pre");
     const text = body?.textContent ?? "";
     const copied = await copyTextToClipboard(text);
     if (copied) {
@@ -92,7 +92,7 @@ export async function copyConversationToClipboard(sessionId) {
   if (textBlocks.length === 0) {
     const container = state.conversationContainers.get(sessionId);
     if (container) {
-      const domMessages = container.querySelectorAll(".wm-message pre");
+      const domMessages = container.querySelectorAll(".wm-message-body, .wm-message > pre");
       textBlocks = Array.from(domMessages).map((node) => ({
         role: null,
         content: node.textContent ?? "",
