@@ -436,7 +436,7 @@ export function createArchiveComponent({
 /**
  * Creates a dialog to view an archived session's conversation.
  */
-export function createArchiveViewDialog() {
+export function createArchiveViewDialog({ getConfig } = {}) {
   const overlay = document.createElement("div");
   overlay.className = "wm-dialog-overlay wm-archive-dialog-overlay";
   overlay.hidden = true;
@@ -525,7 +525,9 @@ export function createArchiveViewDialog() {
 
       const contentEl = document.createElement("div");
       contentEl.className = "wm-archive-dialog-message-content";
-      contentEl.innerHTML = renderChatMessageHtml(msg.content);
+      contentEl.innerHTML = renderChatMessageHtml(msg.content, {
+        config: typeof getConfig === "function" ? getConfig() : null,
+      });
 
       const timeEl = document.createElement("div");
       timeEl.className = "wm-archive-dialog-message-time";

@@ -193,7 +193,7 @@ export function initPrivateChat(deps) {
 
     const contentEl = document.createElement("div");
     contentEl.className = "wm-chat-message-content";
-    contentEl.innerHTML = renderChatMessageHtml(message.content);
+    contentEl.innerHTML = renderChatMessageHtml(message.content, { config: state.config });
 
     container.append(roleLabel, contentEl);
     return container;

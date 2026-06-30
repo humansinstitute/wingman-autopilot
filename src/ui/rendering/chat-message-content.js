@@ -2,11 +2,25 @@ import { escapeHtml } from "../core/icons.js";
 import { cleanAgentOutputText } from "./agent-output-format.js";
 import { renderMarkdownToHtml } from "./markdown.js";
 
+function getWorkspaceLinksConfig(options = {}) {
+  const defaultDirectory =
+    typeof options.config?.defaultDirectory === "string" && options.config.defaultDirectory.length > 0
+      ? options.config.defaultDirectory
+      : null;
+  if (!defaultDirectory) return null;
+  return {
+    defaultDirectory,
+    baseUrl: globalThis.window?.location?.origin,
+  };
+}
+
 export function renderChatMessageHtml(content, options = {}) {
   const text = options.cleanAgentText
     ? cleanAgentOutputText(content)
     : String(content ?? "").replace(/\r\n?/g, "\n");
-  return renderMarkdownToHtml(text);
+  return renderMarkdownToHtml(text, {
+    workspaceLinks: getWorkspaceLinksConfig(options),
+  });
 }
 
 export function countWorkingNoteRows(content) {

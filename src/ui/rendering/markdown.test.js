@@ -55,4 +55,46 @@ describe("renderMarkdownToHtml", () => {
     expect(html).toContain('src="/uploads/images/npub1abc/codex/example.png"');
     expect(html).toContain('alt="uploaded image"');
   });
+
+  test("maps same-origin workspace markdown links to the files browser", () => {
+    const html = renderMarkdownToHtml(
+      "[styles](https://rick.runwingman.com/Users/mini/code/wingmanbefree/autopilot/src/ui/styles.css)",
+      {
+        workspaceLinks: {
+          baseUrl: "https://rick.runwingman.com",
+          defaultDirectory: "/Users/mini",
+        },
+      },
+    );
+
+    expect(html).toContain('href="/files/code/wingmanbefree/autopilot/src/ui/styles.css"');
+    expect(html).toContain(">styles</a>");
+  });
+
+  test("maps same-origin bare workspace URLs to the files browser", () => {
+    const html = renderMarkdownToHtml(
+      "Open https://rick.runwingman.com/Users/mini/code/wingmanbefree/autopilot/src/ui/styles.css",
+      {
+        workspaceLinks: {
+          baseUrl: "https://rick.runwingman.com",
+          defaultDirectory: "/Users/mini",
+        },
+      },
+    );
+
+    expect(html).toContain('href="/files/code/wingmanbefree/autopilot/src/ui/styles.css"');
+    expect(html).toContain(">https://rick.runwingman.com/Users/mini/code/wingmanbefree/autopilot/src/ui/styles.css</a>");
+  });
+
+  test("does not autolink URLs inside inline code", () => {
+    const html = renderMarkdownToHtml("`https://rick.runwingman.com/Users/mini/code/app.ts`", {
+      workspaceLinks: {
+        baseUrl: "https://rick.runwingman.com",
+        defaultDirectory: "/Users/mini",
+      },
+    });
+
+    expect(html).toContain("<code>https://rick.runwingman.com/Users/mini/code/app.ts</code>");
+    expect(html).not.toContain("<a ");
+  });
 });

@@ -156,9 +156,11 @@ function createMessageBubble(message, options = {}) {
         cleanAgentText: Boolean(options.agentOutputFormattingEnabled),
         workingNotesKey,
         workingNotesOpen: getWorkingNotesPanelState(workingNotesKey) === true,
+        config: options.config,
       })
     : renderChatMessageHtml(message.content ?? message.message ?? "", {
         cleanAgentText: Boolean(options.agentOutputFormattingEnabled && shouldFormatAgentMessage(message)),
+        config: options.config,
       });
   bubble.append(body);
   const speechSummary = getSpeechSummary(message);
@@ -226,7 +228,12 @@ export function createConversationElement(options) {
   }
 
   snapshot.visibleMessages.forEach((message) => {
-    wrapper.append(createMessageBubble(message, { agentOutputFormattingEnabled, sessionId, showToast }));
+    wrapper.append(createMessageBubble(message, {
+      agentOutputFormattingEnabled,
+      config: options.config,
+      sessionId,
+      showToast,
+    }));
   });
 
   return wrapper;

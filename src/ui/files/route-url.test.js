@@ -2,9 +2,11 @@ import { describe, expect, test } from "bun:test";
 
 import {
   DOCS_ROUTE_PREFIX,
+  buildFilesRouteForWorkspacePath,
   buildFilesPreviewRoutePath,
   getFilesRoutePrefixForPath,
   getFilesSurfaceFromPath,
+  rewriteWorkspaceUrlToFilesRoute,
 } from "./route-url.js";
 
 describe("buildFilesPreviewRoutePath", () => {
@@ -34,5 +36,42 @@ describe("files route surface helpers", () => {
     expect(getFilesSurfaceFromPath("/files")).toBe("files");
     expect(getFilesSurfaceFromPath("/files/readme.md")).toBe("files");
     expect(getFilesRoutePrefixForPath("/files/readme.md")).toBe("/files");
+  });
+});
+
+describe("workspace file route mapping", () => {
+  test("maps absolute workspace paths to slash-preserving Files routes", () => {
+    expect(buildFilesRouteForWorkspacePath("/Users/mini/code/app/src/ui/styles.css", {
+      defaultDirectory: "/Users/mini",
+    })).toBe("/files/code/app/src/ui/styles.css");
+  });
+
+  test("encodes path segments without encoding route separators", () => {
+    expect(buildFilesRouteForWorkspacePath("/workspace/My Project/notes & tasks.md", {
+      defaultDirectory: "/workspace",
+    })).toBe("/files/My%20Project/notes%20%26%20tasks.md");
+  });
+
+  test("does not map paths outside the default workspace directory", () => {
+    expect(buildFilesRouteForWorkspacePath("/var/log/system.log", {
+      defaultDirectory: "/Users/mini",
+    })).toBeNull();
+  });
+
+  test("rewrites same-origin absolute workspace URLs to Files routes", () => {
+    expect(rewriteWorkspaceUrlToFilesRoute(
+      "https://rick.runwingman.com/Users/mini/code/wingmanbefree/autopilot/src/ui/styles.css",
+      {
+        baseUrl: "https://rick.runwingman.com",
+        defaultDirectory: "/Users/mini",
+      },
+    )).toBe("/files/code/wingmanbefree/autopilot/src/ui/styles.css");
+  });
+
+  test("leaves external URLs unmapped", () => {
+    expect(rewriteWorkspaceUrlToFilesRoute("https://example.com/Users/mini/code/app.ts", {
+      baseUrl: "https://rick.runwingman.com",
+      defaultDirectory: "/Users/mini",
+    })).toBeNull();
   });
 });

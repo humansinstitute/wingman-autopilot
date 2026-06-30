@@ -5,6 +5,7 @@
  */
 
 import { escapeHtml, escapeAttribute, sanitizeLanguageClass } from "../core/icons.js";
+import { rewriteWorkspaceUrlToFilesRoute } from "../files/route-url.js";
 
 export function rewriteUploadedAssetUrl(value) {
   if (value === null || value === undefined) return "";
@@ -50,7 +51,15 @@ function renderImageHtml(alt, url) {
   ].join("");
 }
 
-export const renderInlineMarkdown = (text) => {
+function resolveMarkdownLinkHref(url, options = {}) {
+  const workspaceRoute = rewriteWorkspaceUrlToFilesRoute(url, {
+    defaultDirectory: options.workspaceLinks?.defaultDirectory,
+    baseUrl: options.workspaceLinks?.baseUrl,
+  });
+  return workspaceRoute ?? url;
+}
+
+export const renderInlineMarkdown = (text, options = {}) => {
   if (!text) return "";
   let working = String(text);
   const placeholders = [];
@@ -69,23 +78,31 @@ export const renderInlineMarkdown = (text) => {
   });
 
   working = working.replace(/\[([^\]]+)\]\\?\(([^)\\\s]+)\\?\)/g, (_, label, url) => {
-    const safeUrl = escapeAttribute(url);
+    const safeUrl = escapeAttribute(resolveMarkdownLinkHref(url, options));
     const safeLabel = escapeHtml(label);
     return createPlaceholder(
       `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${safeLabel}</a>`,
     );
   });
 
+  working = working.replace(/\bhttps?:\/\/[^\s<>()]+/g, (url) => {
+    const safeUrl = escapeAttribute(resolveMarkdownLinkHref(url, options));
+    const safeLabel = escapeHtml(url);
+    return createPlaceholder(
+      `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${safeLabel}</a>`,
+    );
+  });
+
   working = working.replace(/(\*\*|__)(?=\S)(.+?)(?<=\S)\1/g, (_, __, content) =>
-    createPlaceholder(`<strong>${renderInlineMarkdown(content)}</strong>`),
+    createPlaceholder(`<strong>${renderInlineMarkdown(content, options)}</strong>`),
   );
 
   working = working.replace(/(\*|_)(?=\S)(.+?)(?<=\S)\1/g, (_, __, content) =>
-    createPlaceholder(`<em>${renderInlineMarkdown(content)}</em>`),
+    createPlaceholder(`<em>${renderInlineMarkdown(content, options)}</em>`),
   );
 
   working = working.replace(/~~(?=\S)(.+?)(?<=\S)~~/g, (_, content) =>
-    createPlaceholder(`<del>${renderInlineMarkdown(content)}</del>`),
+    createPlaceholder(`<del>${renderInlineMarkdown(content, options)}</del>`),
   );
 
   const escaped = escapeHtml(working);
@@ -114,7 +131,7 @@ function parseTableAlignments(sepLine) {
   });
 }
 
-export const renderMarkdownToHtml = (markdown) => {
+export const renderMarkdownToHtml = (markdown, options = {}) => {
   if (!markdown) return "";
   const lines = String(markdown).replace(/\r\n?/g, "\n").split("\n");
   let html = "";
@@ -272,7 +289,7 @@ export const renderMarkdownToHtml = (markdown) => {
         html += "<blockquote>";
       }
       const quote = trimmed.replace(/^>\s?/, "");
-      html += `<p>${renderInlineMarkdown(quote)}</p>`;
+      html += `<p>${renderInlineMarkdown(quote, options)}</p>`;
       continue;
     }
 
@@ -286,7 +303,7 @@ export const renderMarkdownToHtml = (markdown) => {
       closeList();
       const level = headingMatch[1].length;
       const text = headingMatch[2];
-      html += `<h${level}>${renderInlineMarkdown(text)}</h${level}>`;
+      html += `<h${level}>${renderInlineMarkdown(text, options)}</h${level}>`;
       continue;
     }
 
@@ -317,7 +334,7 @@ export const renderMarkdownToHtml = (markdown) => {
 
       let tableHtml = "<table><thead><tr>";
       headerCells.forEach((cell, i) => {
-        tableHtml += `<th${alignAttr(i)}>${renderInlineMarkdown(cell)}</th>`;
+        tableHtml += `<th${alignAttr(i)}>${renderInlineMarkdown(cell, options)}</th>`;
       });
       tableHtml += "</tr></thead><tbody>";
 
@@ -330,7 +347,7 @@ export const renderMarkdownToHtml = (markdown) => {
         tableHtml += "<tr>";
         headerCells.forEach((_, i) => {
           const cellContent = i < bodyCells.length ? bodyCells[i] : "";
-          tableHtml += `<td${alignAttr(i)}>${renderInlineMarkdown(cellContent)}</td>`;
+          tableHtml += `<td${alignAttr(i)}>${renderInlineMarkdown(cellContent, options)}</td>`;
         });
         tableHtml += "</tr>";
       }
@@ -343,7 +360,7 @@ export const renderMarkdownToHtml = (markdown) => {
     const orderedMatch = line.match(/^\s*(\d+)[.)]\s+(.*)$/);
     if (orderedMatch) {
       closeParagraph();
-      const content = renderInlineMarkdown(orderedMatch[2]);
+      const content = renderInlineMarkdown(orderedMatch[2], options);
       addListItem("ol", rawLine, content);
       continue;
     }
@@ -351,16 +368,16 @@ export const renderMarkdownToHtml = (markdown) => {
     const unorderedMatch = line.match(/^\s*[-*+]\s+(.*)$/);
     if (unorderedMatch) {
       closeParagraph();
-      const content = renderInlineMarkdown(unorderedMatch[1]);
+      const content = renderInlineMarkdown(unorderedMatch[1], options);
       addListItem("ul", rawLine, content);
       continue;
     }
 
     closeList();
     if (paragraph) {
-      paragraph += ` ${renderInlineMarkdown(trimmed)}`;
+      paragraph += ` ${renderInlineMarkdown(trimmed, options)}`;
     } else {
-      paragraph = renderInlineMarkdown(trimmed);
+      paragraph = renderInlineMarkdown(trimmed, options);
     }
   }
 

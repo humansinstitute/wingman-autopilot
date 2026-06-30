@@ -48,6 +48,15 @@ describe("chat message content rendering", () => {
     expect(html).not.toContain("javascript:alert");
   });
 
+  test("maps same-origin workspace links from chat config", () => {
+    const html = renderChatMessageHtml(
+      "[styles](http://localhost/Users/mini/code/wingmanbefree/autopilot/src/ui/styles.css)",
+      { config: { defaultDirectory: "/Users/mini" } },
+    );
+
+    expect(html).toContain('href="/files/code/wingmanbefree/autopilot/src/ui/styles.css"');
+  });
+
   test("renders working notes as a collapsible details block", () => {
     const html = renderWorkingNotesHtml("Checking files.\n\nRunning tests.");
 

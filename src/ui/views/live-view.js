@@ -641,9 +641,11 @@ export function initLiveView(deps) {
         body.innerHTML = isWorkingNotesMessage(message)
           ? renderWorkingNotesHtml(message.content ?? message.message ?? "", {
               cleanAgentText: Boolean(agentOutputFormattingEnabled()),
+              config: state.config,
             })
           : renderChatMessageHtml(message.content ?? message.message ?? "", {
               cleanAgentText: Boolean(agentOutputFormattingEnabled() && shouldFormatAgentMessage(message)),
+              config: state.config,
             });
         bubble.append(body);
         attachCopyButton(bubble);
@@ -683,6 +685,7 @@ export function initLiveView(deps) {
       conversation,
       windowStore: state.liveMessageWindows,
       agentOutputFormattingEnabled: agentOutputFormattingEnabled(),
+      config: state.config,
       showToast,
       onRevealOlder: (scrollElement) => {
         const snapshot = capturePrependedScrollState(scrollElement);
