@@ -106,6 +106,7 @@ import { collapseNewlines } from "./utils/text.js";
 import {
   copyTextToClipboard,
   attachCopyButton,
+  attachMarkdownCodeBlockCopyHandler,
   copyConversationToClipboard,
 } from "./utils/clipboard.js";
 import {
@@ -2737,6 +2738,7 @@ dialog.addEventListener("cancel", (event) => {
   setupConversationSelectionLock();
   initLiveMobileRuntime();
   attachWorkingNotesToggle();
+  attachMarkdownCodeBlockCopyHandler();
   // Initialize live module (Dexie database for SSE updates)
   initLiveModule().catch((err) => console.warn("[app] Live module init failed:", err));
 

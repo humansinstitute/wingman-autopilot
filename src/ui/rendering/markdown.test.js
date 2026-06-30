@@ -39,6 +39,27 @@ describe("renderMarkdownToHtml", () => {
     expect(html).toContain('data-testid="markdown-mermaid-diagram"');
     expect(html).toContain("graph TD");
     expect(html).not.toContain('class="language-mermaid"');
+    expect(html).not.toContain('data-code-block-copy');
+  });
+
+  test("renders fenced code blocks with independent copy buttons", () => {
+    const html = renderMarkdownToHtml([
+      "```js",
+      'const helloworld = "hello";',
+      "```",
+      "",
+      "```ts",
+      "const count: number = 1;",
+      "```",
+    ].join("\n"));
+
+    expect(html.match(/data-testid="markdown-code-block"/g)?.length).toBe(2);
+    expect(html.match(/data-testid="markdown-code-copy"/g)?.length).toBe(2);
+    expect(html).toContain('aria-label="Copy code block"');
+    expect(html).toContain('class="wm-markdown-code-block__toolbar" data-copy-exclude');
+    expect(html).toContain('class="language-js"');
+    expect(html).toContain('class="language-ts"');
+    expect(html).toContain('const helloworld = &quot;hello&quot;;');
   });
 
   test("rewrites scoped uploaded file image URLs for browser preview", () => {

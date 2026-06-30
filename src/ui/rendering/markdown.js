@@ -7,6 +7,9 @@
 import { escapeHtml, escapeAttribute, sanitizeLanguageClass } from "../core/icons.js";
 import { rewriteWorkspaceUrlToFilesRoute } from "../files/route-url.js";
 
+const CODE_COPY_ICON_SVG =
+  '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24"><path fill="currentColor" d="M15 3H7a2 2 0 0 0-2 2v10h2V5h8V3zm4 4h-8a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2zm0 12h-8V9h8v10z"/></svg>';
+
 export function rewriteUploadedAssetUrl(value) {
   if (value === null || value === undefined) return "";
   const trimmed = String(value).trim();
@@ -38,6 +41,22 @@ export const sanitizeImageSrc = (value) => {
 
 function renderMermaidBlock(source) {
   return `<div class="wm-mermaid" data-testid="markdown-mermaid-diagram"><pre class="wm-mermaid__source"><code>${escapeHtml(source)}</code></pre></div>`;
+}
+
+function renderCodeBlockHtml(source, languageClass) {
+  const classAttr = languageClass ? ` class="language-${languageClass}"` : "";
+  const languageLabel = languageClass
+    ? `<span class="wm-markdown-code-block__language">${escapeHtml(languageClass)}</span>`
+    : "";
+  return [
+    '<div class="wm-markdown-code-block" data-testid="markdown-code-block">',
+    '<div class="wm-markdown-code-block__toolbar" data-copy-exclude>',
+    languageLabel,
+    `<button type="button" class="wm-markdown-code-block__copy" aria-label="Copy code block" title="Copy code block" data-testid="markdown-code-copy" data-code-block-copy>${CODE_COPY_ICON_SVG}</button>`,
+    '</div>',
+    `<pre><code${classAttr}>${escapeHtml(source)}</code></pre>`,
+    '</div>',
+  ].join("");
 }
 
 function renderImageHtml(alt, url) {
@@ -251,8 +270,7 @@ export const renderMarkdownToHtml = (markdown, options = {}) => {
         if (languageClass === "mermaid") {
           html += renderMermaidBlock(code);
         } else {
-          const classAttr = languageClass ? ` class="language-${languageClass}"` : "";
-          html += `<pre><code${classAttr}>${escapeHtml(code)}\n</code></pre>`;
+          html += renderCodeBlockHtml(code, languageClass);
         }
         inCodeBlock = false;
         codeLanguage = "";
@@ -387,8 +405,7 @@ export const renderMarkdownToHtml = (markdown, options = {}) => {
     if (languageClass === "mermaid") {
       html += renderMermaidBlock(code);
     } else {
-      const classAttr = languageClass ? ` class="language-${languageClass}"` : "";
-      html += `<pre><code${classAttr}>${escapeHtml(code)}\n</code></pre>`;
+      html += renderCodeBlockHtml(code, languageClass);
     }
   }
   closeParagraph();

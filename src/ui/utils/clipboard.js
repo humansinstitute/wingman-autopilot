@@ -44,6 +44,13 @@ export async function copyTextToClipboard(text) {
   }
 }
 
+function getCopyableText(node) {
+  if (!node) return "";
+  const clone = node.cloneNode(true);
+  clone.querySelectorAll?.("[data-copy-exclude]").forEach((item) => item.remove());
+  return clone.textContent ?? "";
+}
+
 /**
  * Attaches a copy button to a message bubble element.
  * @param {HTMLElement} bubble - The message bubble element
@@ -63,7 +70,7 @@ export function attachCopyButton(bubble) {
     event.preventDefault();
     event.stopPropagation();
     const body = bubble.querySelector(".wm-message-body") ?? bubble.querySelector("pre");
-    const text = body?.textContent ?? "";
+    const text = getCopyableText(body);
     const copied = await copyTextToClipboard(text);
     if (copied) {
       bubble.dataset.copied = "true";
@@ -81,6 +88,42 @@ export function attachCopyButton(bubble) {
   bubble.dataset.copyAttached = "true";
 }
 
+let markdownCodeCopyAttached = false;
+
+export function attachMarkdownCodeBlockCopyHandler(root = document) {
+  if (markdownCodeCopyAttached || !root?.addEventListener) return;
+  root.addEventListener("click", async (event) => {
+    const button = event.target?.closest?.("[data-code-block-copy]");
+    if (!button) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const block = button.closest(".wm-markdown-code-block");
+    const code = block?.querySelector("pre code");
+    const text = code?.textContent ?? "";
+    const copied = await copyTextToClipboard(text);
+    if (!copied) {
+      button.dataset.state = "error";
+      setTimeout(() => {
+        if (button.isConnected) {
+          delete button.dataset.state;
+        }
+      }, 1600);
+      return;
+    }
+    button.dataset.state = "success";
+    button.setAttribute("aria-label", "Code block copied");
+    button.title = "Copied";
+    setTimeout(() => {
+      if (button.isConnected) {
+        delete button.dataset.state;
+        button.setAttribute("aria-label", "Copy code block");
+        button.title = "Copy code block";
+      }
+    }, 1600);
+  });
+  markdownCodeCopyAttached = true;
+}
+
 /**
  * Copies all messages from a conversation to the clipboard.
  * @param {string} sessionId - The session ID
@@ -95,7 +138,7 @@ export async function copyConversationToClipboard(sessionId) {
       const domMessages = container.querySelectorAll(".wm-message-body, .wm-message > pre");
       textBlocks = Array.from(domMessages).map((node) => ({
         role: null,
-        content: node.textContent ?? "",
+        content: getCopyableText(node),
       }));
     }
   }
