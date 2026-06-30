@@ -3633,6 +3633,7 @@ body[data-live-header-collapsed="true"]:has(#app[data-route="live"]) .wm-live-dr
   display: flex;
   flex-direction: column;
   gap: 1rem;
+  min-width: 0;
 }
 
 .wm-conversation-window-notice {
@@ -3681,6 +3682,9 @@ body[data-live-header-collapsed="true"]:has(#app[data-route="live"]) .wm-live-dr
   border: 1px solid rgba(16, 185, 129, 0.18);
   color: var(--text-primary);
   box-shadow: 0 6px 16px rgba(15, 118, 110, 0.1);
+  box-sizing: border-box;
+  max-width: 100%;
+  min-width: 0;
   position: relative;
 }
 
@@ -3700,6 +3704,8 @@ body[data-live-header-collapsed="true"]:has(#app[data-route="live"]) .wm-live-dr
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .wm-message-body > *,
@@ -3712,6 +3718,9 @@ body[data-live-header-collapsed="true"]:has(#app[data-route="live"]) .wm-live-dr
 .wm-chat-message-content p,
 .wm-archive-dialog-message-content p {
   line-height: 1.55;
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .wm-message-body h1,
@@ -3875,9 +3884,12 @@ body[data-live-header-collapsed="true"]:has(#app[data-route="live"]) .wm-live-dr
 .wm-chat-message-content a,
 .wm-archive-dialog-message-content a {
   color: inherit;
+  max-width: 100%;
+  overflow-wrap: anywhere;
   text-decoration: underline;
   text-decoration-thickness: 0.08em;
   text-underline-offset: 0.15em;
+  word-break: break-word;
 }
 
 .wm-inline-image-link {

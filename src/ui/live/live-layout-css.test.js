@@ -22,4 +22,17 @@ describe("live layout CSS", () => {
     expect(rule?.groups?.body).toContain("top: auto;");
     expect(rule?.groups?.body).toContain("flex: 0 0 auto;");
   });
+
+  test("wraps long markdown links inside message bubbles", () => {
+    const messageRule = styles.match(/\.wm-message\s*\{(?<body>[^}]+)\}/);
+    const bodyRule = styles.match(/\.wm-message-body,[\s\S]+?\.wm-archive-dialog-message-content\s*\{(?<body>[^}]+)\}/);
+    const paragraphRule = styles.match(/\.wm-message-body p,[\s\S]+?\.wm-archive-dialog-message-content p\s*\{(?<body>[^}]+)\}/);
+    const linkRule = styles.match(/\.wm-message-body a,[\s\S]+?\.wm-archive-dialog-message-content a\s*\{(?<body>[^}]+)\}/);
+
+    expect(messageRule?.groups?.body).toContain("min-width: 0;");
+    expect(bodyRule?.groups?.body).toContain("min-width: 0;");
+    expect(paragraphRule?.groups?.body).toContain("overflow-wrap: anywhere;");
+    expect(linkRule?.groups?.body).toContain("overflow-wrap: anywhere;");
+    expect(linkRule?.groups?.body).toContain("word-break: break-word;");
+  });
 });
