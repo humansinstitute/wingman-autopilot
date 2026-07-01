@@ -10,7 +10,11 @@ import { openTextPromptDialog } from "../common/dialog-prompts.js";
 import { attachCopyButton, copyConversationToClipboard } from "../utils/clipboard.js";
 import { showToast } from "../utils/toast.js";
 import { AGENT_OUTPUT_FORMATTING_FLAG_KEY } from "../rendering/agent-output-format.js";
-import { renderChatMessageHtml, renderWorkingNotesHtml } from "../rendering/chat-message-content.js";
+import {
+  getChatMessageHtmlCacheOptions,
+  renderChatMessageHtml,
+  renderWorkingNotesHtml,
+} from "../rendering/chat-message-content.js";
 import {
   fetchSessionHistoryApi,
   branchConversationApi,
@@ -638,14 +642,17 @@ export function initLiveView(deps) {
         bubble.dataset.role = String(message.type ?? message.role ?? "assistant").toLowerCase();
         const body = document.createElement("div");
         body.className = "wm-message-body";
+        const cacheOptions = getChatMessageHtmlCacheOptions(message, { sessionId: state.archivedSession?.sessionId });
         body.innerHTML = isWorkingNotesMessage(message)
           ? renderWorkingNotesHtml(message.content ?? message.message ?? "", {
               cleanAgentText: Boolean(agentOutputFormattingEnabled()),
               config: state.config,
+              ...cacheOptions,
             })
           : renderChatMessageHtml(message.content ?? message.message ?? "", {
               cleanAgentText: Boolean(agentOutputFormattingEnabled() && shouldFormatAgentMessage(message)),
               config: state.config,
+              ...cacheOptions,
             });
         bubble.append(body);
         attachCopyButton(bubble);

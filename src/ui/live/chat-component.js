@@ -8,7 +8,11 @@ import Dexie from "/vendor/dexie/dexie.mjs";
 import { sseManager } from "./sse-manager.js";
 import { MessageStore, SessionStore } from "./db.js";
 import { show as scrollPillShow, isNearBottom as scrollPillIsNearBottom } from "./scroll-pill.js";
-import { renderChatMessageHtml, renderWorkingNotesHtml } from "../rendering/chat-message-content.js";
+import {
+  getChatMessageHtmlCacheOptions,
+  renderChatMessageHtml,
+  renderWorkingNotesHtml,
+} from "../rendering/chat-message-content.js";
 import { state } from "../state/index.js";
 import { getWorkingNotesPanelKey, getWorkingNotesPanelState } from "./working-notes-toggle.js";
 import { AGENT_OUTPUT_FORMATTING_FLAG_KEY } from "../rendering/agent-output-format.js";
@@ -312,6 +316,7 @@ export function registerChatComponent() {
     },
 
     renderMessageContent(message) {
+      const cacheOptions = getChatMessageHtmlCacheOptions(message, { sessionId: this.sessionId });
       if (isWorkingNotesMessage(message)) {
         const workingNotesKey = getWorkingNotesPanelKey(this.sessionId, message);
         return renderWorkingNotesHtml(message?.content ?? "", {
@@ -319,11 +324,13 @@ export function registerChatComponent() {
           workingNotesKey,
           workingNotesOpen: getWorkingNotesPanelState(workingNotesKey) === true,
           config: state.config,
+          ...cacheOptions,
         });
       }
       return renderChatMessageHtml(message?.content ?? "", {
         cleanAgentText: Boolean(isAgentOutputFormattingEnabled() && shouldFormatAgentMessage(message)),
         config: state.config,
+        ...cacheOptions,
       });
     },
 

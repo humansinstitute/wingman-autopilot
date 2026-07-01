@@ -1,5 +1,9 @@
 import { attachCopyButton } from "../utils/clipboard.js";
-import { renderChatMessageHtml, renderWorkingNotesHtml } from "../rendering/chat-message-content.js";
+import {
+  getChatMessageHtmlCacheOptions,
+  renderChatMessageHtml,
+  renderWorkingNotesHtml,
+} from "../rendering/chat-message-content.js";
 import { attachMessageSpeechButton } from "./message-speech.js";
 import { getWorkingNotesPanelKey, getWorkingNotesPanelState } from "./working-notes-toggle.js";
 
@@ -151,16 +155,19 @@ function createMessageBubble(message, options = {}) {
   const workingNotesKey = isWorkingNotesMessage(message)
     ? getWorkingNotesPanelKey(options.sessionId, message)
     : null;
+  const cacheOptions = getChatMessageHtmlCacheOptions(message, { sessionId: options.sessionId });
   body.innerHTML = isWorkingNotesMessage(message)
     ? renderWorkingNotesHtml(message.content ?? message.message ?? "", {
         cleanAgentText: Boolean(options.agentOutputFormattingEnabled),
         workingNotesKey,
         workingNotesOpen: getWorkingNotesPanelState(workingNotesKey) === true,
         config: options.config,
+        ...cacheOptions,
       })
     : renderChatMessageHtml(message.content ?? message.message ?? "", {
         cleanAgentText: Boolean(options.agentOutputFormattingEnabled && shouldFormatAgentMessage(message)),
         config: options.config,
+        ...cacheOptions,
       });
   bubble.append(body);
   const speechSummary = getSpeechSummary(message);

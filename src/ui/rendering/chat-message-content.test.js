@@ -1,8 +1,19 @@
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 
-import { countWorkingNoteRows, renderChatMessageHtml, renderWorkingNotesHtml } from "./chat-message-content.js";
+import {
+  clearChatMessageHtmlCache,
+  countWorkingNoteRows,
+  getChatMessageHtmlCacheOptions,
+  getChatMessageHtmlCacheStats,
+  renderChatMessageHtml,
+  renderWorkingNotesHtml,
+} from "./chat-message-content.js";
 
 describe("chat message content rendering", () => {
+  beforeEach(() => {
+    clearChatMessageHtmlCache();
+  });
+
   test("renders markdown blocks for chat messages", () => {
     const html = renderChatMessageHtml([
       "## Plan",
@@ -55,6 +66,63 @@ describe("chat message content rendering", () => {
     );
 
     expect(html).toContain('href="/files/code/wingmanbefree/autopilot/src/ui/styles.css"');
+  });
+
+  test("caches rendered markdown for stable message metadata", () => {
+    const options = {
+      cacheKey: "session-1:assistant:10",
+      cacheUpdatedAt: "2026-07-01T00:00:00.000Z",
+    };
+    const first = renderChatMessageHtml("## Cached\n\n- one", options);
+    const afterFirst = getChatMessageHtmlCacheStats();
+    const second = renderChatMessageHtml("## Cached\n\n- one", options);
+    const afterSecond = getChatMessageHtmlCacheStats();
+
+    expect(second).toBe(first);
+    expect(afterFirst.size).toBe(1);
+    expect(afterSecond.size).toBe(1);
+  });
+
+  test("invalidates cached markdown when message update timestamp changes", () => {
+    const first = renderChatMessageHtml("**before**", {
+      cacheKey: "session-1:assistant:10",
+      cacheUpdatedAt: "2026-07-01T00:00:00.000Z",
+    });
+    const second = renderChatMessageHtml("**after**", {
+      cacheKey: "session-1:assistant:10",
+      cacheUpdatedAt: "2026-07-01T00:00:01.000Z",
+    });
+
+    expect(first).toContain("<strong>before</strong>");
+    expect(second).toContain("<strong>after</strong>");
+    expect(getChatMessageHtmlCacheStats().size).toBe(2);
+  });
+
+  test("keeps raw and cleaned message rendering in separate cache entries", () => {
+    const options = {
+      cacheKey: "session-1:assistant:10",
+      cacheUpdatedAt: "2026-07-01T00:00:00.000Z",
+    };
+    const raw = renderChatMessageHtml("Cleartext should be\n  only relay-safe classification.", options);
+    const cleaned = renderChatMessageHtml("Cleartext should be\n  only relay-safe classification.", {
+      ...options,
+      cleanAgentText: true,
+    });
+
+    expect(raw).toContain("Cleartext should be only relay-safe classification.");
+    expect(cleaned).toContain("Cleartext should be only relay-safe classification.");
+    expect(getChatMessageHtmlCacheStats().size).toBe(2);
+  });
+
+  test("builds stable cache options from live message rows", () => {
+    expect(getChatMessageHtmlCacheOptions({
+      id: 42,
+      role: "assistant",
+      updatedAt: "2026-07-01T00:00:01.000Z",
+    }, { sessionId: "session-1" })).toEqual({
+      cacheKey: "session-1:assistant:42",
+      cacheUpdatedAt: "2026-07-01T00:00:01.000Z",
+    });
   });
 
   test("renders working notes as a collapsible details block", () => {
