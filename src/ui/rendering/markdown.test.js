@@ -63,6 +63,21 @@ describe("renderMarkdownToHtml", () => {
     expect(html).toContain('count: <span class="token keyword">number</span> = <span class="token number">1</span>;');
   });
 
+  test("keeps loose ordered list items in one list across blank lines", () => {
+    const html = renderMarkdownToHtml([
+      "1. First item",
+      "",
+      "1. Second item",
+      "",
+      "1. Third item",
+    ].join("\n"));
+
+    expect(html.match(/<ol>/g)?.length).toBe(1);
+    expect(html).toContain("<li>First item</li>");
+    expect(html).toContain("<li>Second item</li>");
+    expect(html).toContain("<li>Third item</li>");
+  });
+
   test("rewrites scoped uploaded file image URLs for browser preview", () => {
     const url = "file:///Users/mini/code/wingmanbefree/autopilot/tmp/uploads/images/npub1abc/codex/example.png";
 

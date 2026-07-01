@@ -131,6 +131,8 @@ export const renderInlineMarkdown = (text, options = {}) => {
 
 /** Detect a GFM table separator row: |---|---|  or  |:---:|---:|  etc. */
 const TABLE_SEP_RE = /^\|?[\s:]*-{2,}[\s:]*(\|[\s:]*-{2,}[\s:]*)+\|?\s*$/;
+const ORDERED_LIST_RE = /^\s*(\d+)[.)]\s+(.*)$/;
+const UNORDERED_LIST_RE = /^\s*[-*+]\s+(.*)$/;
 
 /** Split a pipe-table row into cell strings. */
 function splitTableRow(line) {
@@ -211,6 +213,36 @@ export const renderMarkdownToHtml = (markdown, options = {}) => {
   const getListLevel = (rawLine) => {
     // Treat every 3 leading spaces as one nesting level.
     return Math.floor(getIndentWidth(rawLine) / 3) + 1;
+  };
+
+  const isListContinuationAfterBlank = (startIndex) => {
+    if (listStack.length === 0) {
+      return false;
+    }
+
+    for (let nextIndex = startIndex + 1; nextIndex < lines.length; nextIndex++) {
+      const nextLine = lines[nextIndex].replace(/\s+$/, "");
+      const nextTrimmed = nextLine.trim();
+      if (!nextTrimmed) {
+        continue;
+      }
+      if (nextTrimmed.startsWith(">") || nextTrimmed.startsWith("```")) {
+        return false;
+      }
+      const nextType = ORDERED_LIST_RE.test(nextLine)
+        ? "ol"
+        : UNORDERED_LIST_RE.test(nextLine)
+          ? "ul"
+          : null;
+      if (!nextType) {
+        return false;
+      }
+      const nextLevel = Math.min(getListLevel(nextLine), listStack.length + 1);
+      const currentAtLevel = listStack[nextLevel - 1];
+      return Boolean(currentAtLevel && currentAtLevel.type === nextType);
+    }
+
+    return false;
   };
 
   const addListItem = (type, rawLine, content) => {
@@ -295,7 +327,9 @@ export const renderMarkdownToHtml = (markdown, options = {}) => {
     const trimmed = line.trim();
     if (!trimmed) {
       closeParagraph();
-      closeList();
+      if (!isListContinuationAfterBlank(idx)) {
+        closeList();
+      }
       closeBlockquote();
       continue;
     }
@@ -376,7 +410,7 @@ export const renderMarkdownToHtml = (markdown, options = {}) => {
       continue;
     }
 
-    const orderedMatch = line.match(/^\s*(\d+)[.)]\s+(.*)$/);
+    const orderedMatch = line.match(ORDERED_LIST_RE);
     if (orderedMatch) {
       closeParagraph();
       const content = renderInlineMarkdown(orderedMatch[2], options);
@@ -384,7 +418,7 @@ export const renderMarkdownToHtml = (markdown, options = {}) => {
       continue;
     }
 
-    const unorderedMatch = line.match(/^\s*[-*+]\s+(.*)$/);
+    const unorderedMatch = line.match(UNORDERED_LIST_RE);
     if (unorderedMatch) {
       closeParagraph();
       const content = renderInlineMarkdown(unorderedMatch[1], options);
