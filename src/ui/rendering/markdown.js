@@ -48,13 +48,14 @@ function renderCodeBlockHtml(source, languageClass) {
   const languageLabel = languageClass
     ? `<span class="wm-markdown-code-block__language">${escapeHtml(languageClass)}</span>`
     : "";
+  const highlightedCode = renderHighlightedCodeInnerHtml(source, languageClass);
   return [
     '<div class="wm-markdown-code-block" data-testid="markdown-code-block">',
     '<div class="wm-markdown-code-block__toolbar" data-copy-exclude>',
     languageLabel,
     `<button type="button" class="wm-markdown-code-block__copy" aria-label="Copy code block" title="Copy code block" data-testid="markdown-code-copy" data-code-block-copy>${CODE_COPY_ICON_SVG}</button>`,
     '</div>',
-    `<pre><code${classAttr}>${escapeHtml(source)}</code></pre>`,
+    `<pre><code${classAttr}>${highlightedCode}</code></pre>`,
     '</div>',
   ].join("");
 }
@@ -522,8 +523,29 @@ const CODE_KEYWORD_PATTERNS = Object.fromEntries(
   Object.entries(CODE_KEYWORDS).map(([language, keywords]) => [language, buildKeywordPattern(keywords)]),
 );
 
-export const renderCodeToHtml = (content, language = "plaintext") => {
-  const normalizedLanguage = CODE_KEYWORDS[language] ? language : "plaintext";
+const CODE_LANGUAGE_ALIASES = {
+  bash: "shell",
+  cjs: "javascript",
+  htm: "html",
+  js: "javascript",
+  jsx: "javascript",
+  mjs: "javascript",
+  py: "python",
+  rb: "ruby",
+  sh: "shell",
+  ts: "typescript",
+  tsx: "typescript",
+  yml: "yaml",
+};
+
+function normalizeCodeLanguage(language = "plaintext") {
+  const normalized = sanitizeLanguageClass(language) || "plaintext";
+  const aliased = CODE_LANGUAGE_ALIASES[normalized] ?? normalized;
+  return CODE_KEYWORDS[aliased] ? aliased : "plaintext";
+}
+
+export function renderHighlightedCodeInnerHtml(content, language = "plaintext") {
+  const normalizedLanguage = normalizeCodeLanguage(language);
   const escaped = escapeHtml(content ?? "");
   const replacements = [];
   const createToken = (html) => {
@@ -607,5 +629,11 @@ export const renderCodeToHtml = (content, language = "plaintext") => {
     working = working.replaceAll(token, html);
   });
 
-  return `<pre><code class="language-${normalizedLanguage}">${working}</code></pre>`;
+  return working;
+}
+
+export const renderCodeToHtml = (content, language = "plaintext") => {
+  const normalizedLanguage = normalizeCodeLanguage(language);
+  const highlighted = renderHighlightedCodeInnerHtml(content, normalizedLanguage);
+  return `<pre><code class="language-${normalizedLanguage}">${highlighted}</code></pre>`;
 };

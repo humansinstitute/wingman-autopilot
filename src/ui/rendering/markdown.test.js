@@ -59,7 +59,8 @@ describe("renderMarkdownToHtml", () => {
     expect(html).toContain('class="wm-markdown-code-block__toolbar" data-copy-exclude');
     expect(html).toContain('class="language-js"');
     expect(html).toContain('class="language-ts"');
-    expect(html).toContain('const helloworld = &quot;hello&quot;;');
+    expect(html).toContain('<span class="token keyword">const</span> helloworld = <span class="token string">&quot;hello&quot;</span>;');
+    expect(html).toContain('count: <span class="token keyword">number</span> = <span class="token number">1</span>;');
   });
 
   test("rewrites scoped uploaded file image URLs for browser preview", () => {
