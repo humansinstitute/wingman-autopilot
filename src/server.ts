@@ -36,6 +36,7 @@ import {
   type AppProcessStatus,
 } from "./apps/app-process-manager";
 import { scanDirectoryTree } from "./apps/app-detector";
+import { resolveStarterAppDirectory } from "./apps/starter-directory";
 
 /** Tmux session for the Wingman core process (used by warm restart manager). */
 const WINGMAN_CORE_TMUX_SESSION = "wingman-apps";
@@ -2121,7 +2122,7 @@ const createRepositoryFromStarter = async (
   };
 
   const sanitizedDirectory = normaliseDirectoryEntryName(options.directoryName);
-  const targetDirectory = normalize(join(scope.defaultDirectory, sanitizedDirectory));
+  const targetDirectory = resolveStarterAppDirectory(scope, sanitizedDirectory);
   ensureWithinAllowedDirectories(targetDirectory, scope);
 
   try {
