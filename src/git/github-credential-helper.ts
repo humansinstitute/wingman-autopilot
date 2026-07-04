@@ -55,7 +55,7 @@ function normalizeSetting(value: string | null | undefined): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function getUserGitHubCredentials(
+export function getGitHubUserCredentials(
   npub: string,
 ): GitHubUserCredentials | null {
   const token =
@@ -113,7 +113,7 @@ export function getGitHubGitEnvForUser(
   const normalizedNpub = typeof npub === "string" ? npub.trim() : "";
   if (!normalizedNpub) return null;
 
-  const creds = getUserGitHubCredentials(normalizedNpub);
+  const creds = getGitHubUserCredentials(normalizedNpub);
   if (!creds) return null;
 
   const helperPath = ensureGitHubCredentialHelper(dataDir);

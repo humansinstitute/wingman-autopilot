@@ -142,9 +142,9 @@ export function initStarterProjectsPanel({ state, getCurrentRoute, render, showT
     section.className = "wm-card";
 
     const heading = document.createElement("h2");
-    heading.textContent = "Quick Starter Projects";
+    heading.textContent = "Starter Templates";
     const description = document.createElement("p");
-    description.textContent = "Define starter repositories users can launch from the New App dialog.";
+    description.textContent = "Define template repositories users can generate into new GitHub-backed apps.";
     section.append(heading, description);
 
     if (panelState.loading && !panelState.loaded) {
@@ -168,7 +168,7 @@ export function initStarterProjectsPanel({ state, getCurrentRoute, render, showT
     if (items.length === 0) {
       const empty = document.createElement("p");
       empty.className = "wm-settings__port-note";
-      empty.textContent = "No quick starters configured.";
+      empty.textContent = "No starter templates configured.";
       list.append(empty);
     } else {
       items.forEach((item) => {

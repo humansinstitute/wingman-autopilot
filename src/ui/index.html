@@ -364,7 +364,7 @@
         <h2>Start a New App</h2>
         <p class="wm-dialog-help">Choose how you want to create a new app in your workspace.</p>
         <div class="wm-starter-mode-actions">
-          <button type="button" class="wm-button" id="app-new-mode-quick">Quick Starters</button>
+          <button type="button" class="wm-button" id="app-new-mode-quick">Create From Starter</button>
           <button type="button" class="wm-button secondary" id="app-new-mode-manual">Manual</button>
         </div>
         <menu>
@@ -374,15 +374,27 @@
     </dialog>
     <dialog id="app-starter-dialog">
       <form method="dialog">
-        <h2>Quick Starters</h2>
-        <p class="wm-dialog-help">Pick a starter project, enter a name, and Wingman will clone and prepare it automatically.</p>
+        <h2>Create From Starter</h2>
+        <p class="wm-dialog-help">Pick a starter, create a new GitHub repository, then register the generated app in Wingman.</p>
         <div id="app-starter-list" class="wm-starter-grid"></div>
         <label for="app-starter-name">App Name</label>
         <input id="app-starter-name" type="text" autocomplete="off" placeholder="My Starter App" required />
+        <label for="app-starter-github-owner">GitHub Owner or Org</label>
+        <input id="app-starter-github-owner" type="text" autocomplete="off" placeholder="humansinstitute" required />
+        <label for="app-starter-github-repo">GitHub Repo</label>
+        <input id="app-starter-github-repo" type="text" autocomplete="off" placeholder="my-starter-app" required />
+        <label class="wm-checkbox" for="app-starter-private">
+          <input id="app-starter-private" type="checkbox" checked />
+          <span>Private repository</span>
+        </label>
+        <label class="wm-checkbox" for="app-starter-protect">
+          <input id="app-starter-protect" type="checkbox" checked />
+          <span>Protect main and deployed</span>
+        </label>
         <p id="app-starter-notes" class="wm-field-note">Select a starter project to continue.</p>
         <menu>
           <button type="button" id="app-starter-cancel">Cancel</button>
-          <button type="submit" id="app-starter-confirm" disabled>Create App</button>
+          <button type="submit" id="app-starter-confirm" disabled>Create Repo & App</button>
         </menu>
       </form>
     </dialog>

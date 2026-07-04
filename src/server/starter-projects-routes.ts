@@ -23,6 +23,20 @@ interface StarterLaunchResult {
   root: string;
   label: string;
   scripts: Partial<AppLifecycleScripts>;
+  github?: {
+    owner: string;
+    repo: string;
+    cloneUrl: string;
+    htmlUrl: string;
+    defaultBranch: string;
+    deployedBranchCreated: boolean;
+    protection: {
+      requested: boolean;
+      main: "applied" | "skipped" | "failed";
+      deployed: "applied" | "skipped" | "failed";
+      warnings: string[];
+    };
+  };
 }
 
 export interface StarterProjectsApiContext {
@@ -37,7 +51,20 @@ export interface StarterProjectsApiContext {
   ensureApiAccess: (action: AccessAction, request: Request, url: URL, authContext: RequestAuthContext) => Promise<Response | null>;
   normaliseOptionalString: (value: unknown) => string | null;
   normaliseNpub: (npub: string | null | undefined) => string | null;
-  cloneRepositoryIntoWorkspace: (scope: WorkspaceScope, repoUrl: string, directoryName: string) => Promise<StarterLaunchResult>;
+  createRepositoryFromStarter: (
+    scope: WorkspaceScope,
+    options: {
+      starterGitUrl: string;
+      appName: string;
+      directoryName: string;
+      ownerNpub: string;
+      githubOwner: string;
+      githubRepo: string;
+      privateRepo: boolean;
+      protectBranches: boolean;
+      createDeployedBranch: boolean;
+    },
+  ) => Promise<StarterLaunchResult>;
   buildAppResponse: (
     app: AppRecord,
     status: AppProcessStatus,
@@ -242,7 +269,26 @@ export async function handleStarterProjectsApi(
 
     const directoryName = slugifyDirectoryName(appName);
     try {
-      const cloneResult = await ctx.cloneRepositoryIntoWorkspace(ctx.workspaceScope, starter.gitUrl, directoryName);
+      const githubOwner = ctx.normaliseOptionalString(body.githubOwner);
+      const githubRepo = ctx.normaliseOptionalString(body.githubRepo);
+      if (!githubOwner) return Response.json({ error: "GitHub owner is required" }, { status: 400 });
+      if (!githubRepo) return Response.json({ error: "GitHub repo name is required" }, { status: 400 });
+
+      const privateRepo = toBoolean(body.private) ?? true;
+      const protectBranches = toBoolean(body.protectBranches) ?? true;
+      const createDeployedBranch = toBoolean(body.createDeployedBranch) ?? true;
+
+      const cloneResult = await ctx.createRepositoryFromStarter(ctx.workspaceScope, {
+        starterGitUrl: starter.gitUrl,
+        appName,
+        directoryName,
+        ownerNpub,
+        githubOwner,
+        githubRepo,
+        privateRepo,
+        protectBranches,
+        createDeployedBranch,
+      });
       const { app, setupStatus } = await registerLaunchedStarterApp(
         ctx,
         ownerNpub,
@@ -262,6 +308,7 @@ export async function handleStarterProjectsApi(
             attempted: starter.scriptAuto,
             status: setupStatus ?? null,
           },
+          github: cloneResult.github ?? null,
         },
         { status: 201 },
       );

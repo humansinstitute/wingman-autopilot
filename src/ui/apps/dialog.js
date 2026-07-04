@@ -63,6 +63,10 @@ export const initAppDialogs = ({
   const appStarterForm = appStarterDialog?.querySelector("form") ?? null;
   const appStarterList = document.getElementById("app-starter-list");
   const appStarterNameInput = document.getElementById("app-starter-name");
+  const appStarterGitHubOwnerInput = document.getElementById("app-starter-github-owner");
+  const appStarterGitHubRepoInput = document.getElementById("app-starter-github-repo");
+  const appStarterPrivateInput = document.getElementById("app-starter-private");
+  const appStarterProtectInput = document.getElementById("app-starter-protect");
   const appStarterNotes = document.getElementById("app-starter-notes");
   const appStarterCancelButton = document.getElementById("app-starter-cancel");
   const appStarterConfirmButton = document.getElementById("app-starter-confirm");
@@ -128,6 +132,21 @@ export const initAppDialogs = ({
     return spaced.charAt(0).toUpperCase() + spaced.slice(1);
   };
 
+  const slugifyGitHubRepoName = (value) => {
+    const slug = String(value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, "-")
+      .replace(/-{2,}/g, "-")
+      .replace(/^[._-]+|[._-]+$/g, "");
+    return slug || "";
+  };
+
+  const syncStarterRepoName = () => {
+    if (!appStarterGitHubRepoInput || appStarterGitHubRepoInput.dataset.locked === "true") return;
+    appStarterGitHubRepoInput.value = slugifyGitHubRepoName(appStarterNameInput?.value || "");
+  };
+
   const getSelectedStarterProject = () => {
     if (!starterDialogState.selectedId) return null;
     return starterDialogState.projects.find((item) => item?.id === starterDialogState.selectedId) ?? null;
@@ -142,6 +161,10 @@ export const initAppDialogs = ({
     if (appStarterNameInput) {
       appStarterNameInput.disabled = submitting;
     }
+    if (appStarterGitHubOwnerInput) appStarterGitHubOwnerInput.disabled = submitting;
+    if (appStarterGitHubRepoInput) appStarterGitHubRepoInput.disabled = submitting;
+    if (appStarterPrivateInput) appStarterPrivateInput.disabled = submitting;
+    if (appStarterProtectInput) appStarterProtectInput.disabled = submitting;
   };
 
   const renderStarterProjectButtons = () => {
@@ -624,6 +647,9 @@ export const initAppDialogs = ({
     starterDialogState.projects = [];
     starterDialogState.loading = false;
     starterDialogState.launching = false;
+    if (appStarterGitHubRepoInput) {
+      appStarterGitHubRepoInput.dataset.locked = "false";
+    }
     if (appStarterNotes) {
       appStarterNotes.textContent = "Select a starter project to continue.";
     }
@@ -639,6 +665,7 @@ export const initAppDialogs = ({
     if (appStarterNameInput && appLabelInput && appLabelInput.value.trim().length > 0) {
       appStarterNameInput.value = appLabelInput.value.trim();
     }
+    syncStarterRepoName();
     if (appStarterNotes) {
       appStarterNotes.textContent = "Loading starter projects...";
     }
@@ -891,16 +918,34 @@ export const initAppDialogs = ({
       appStarterNameInput?.focus();
       return;
     }
+    const githubOwner = appStarterGitHubOwnerInput?.value?.trim() ?? "";
+    if (!githubOwner) {
+      showToast("Provide a GitHub owner or organization.", { type: "warning" });
+      appStarterGitHubOwnerInput?.focus();
+      return;
+    }
+    const githubRepo = appStarterGitHubRepoInput?.value?.trim() ?? "";
+    if (!githubRepo) {
+      showToast("Provide a GitHub repository name.", { type: "warning" });
+      appStarterGitHubRepoInput?.focus();
+      return;
+    }
     setStarterDialogSubmitting(true);
     try {
       const payload = await launchStarterProjectApi({
         starterId: selected.id,
         name,
+        githubOwner,
+        githubRepo,
+        private: appStarterPrivateInput ? Boolean(appStarterPrivateInput.checked) : true,
+        protectBranches: appStarterProtectInput ? Boolean(appStarterProtectInput.checked) : true,
+        createDeployedBranch: true,
       });
       closeAppStarterDialog();
       await refreshApps({ skipRender: false });
       const setupStatus = payload?.setup?.status;
       const setupAttempted = Boolean(payload?.setup?.attempted);
+      const warnings = Array.isArray(payload?.github?.protection?.warnings) ? payload.github.protection.warnings : [];
       if (setupAttempted) {
         const exitCode = typeof setupStatus?.lastExitCode === "number" ? setupStatus.lastExitCode : null;
         if (exitCode === 0) {
@@ -908,8 +953,10 @@ export const initAppDialogs = ({
         } else {
           showToast("Starter project created, but setup command reported an issue", { type: "error" });
         }
+      } else if (warnings.length > 0) {
+        showToast(`Starter project created, but branch protection needs review: ${warnings[0]}`, { type: "warning", duration: 8000 });
       } else {
-        showToast("Starter project created", { type: "success" });
+        showToast("Starter repo and app created", { type: "success" });
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to launch starter project";
@@ -1113,10 +1160,21 @@ export const initAppDialogs = ({
 
   appStarterDialog?.addEventListener("close", () => {
     appStarterForm?.reset();
+    if (appStarterGitHubRepoInput) {
+      appStarterGitHubRepoInput.dataset.locked = "false";
+    }
   });
 
   appStarterForm?.addEventListener("submit", (event) => {
     void handleStarterSubmit(event);
+  });
+
+  appStarterNameInput?.addEventListener("input", () => {
+    syncStarterRepoName();
+  });
+
+  appStarterGitHubRepoInput?.addEventListener("input", () => {
+    appStarterGitHubRepoInput.dataset.locked = "true";
   });
 
   appCloneButton?.addEventListener("click", (event) => {

@@ -86,6 +86,8 @@ import { createNgitApiHandler } from "./ngit/ngit-api";
 import { createGiteaApiHandler } from "./gitea/gitea-api";
 import { createGitWorkflowApiHandler } from "./gitea/git-workflow-api";
 import { ensureGiteaUser } from "./gitea/gitea-user-manager";
+import { GitHubApiClient, getGitHubCredentialsForNpub } from "./git/github-api";
+import { getGitHubGitEnvForUser } from "./git/github-credential-helper";
 import { createSuperbasedApiHandler } from "./superbased/superbased-api";
 import { BotKeyStore } from "./identity/bot-key-store";
 import { createBotKeyApiHandler } from "./identity/bot-key-api";
@@ -2059,6 +2061,180 @@ const cloneRepositoryIntoWorkspace = async (
   return { root: resolvedRoot, label, scripts };
 };
 
+const runGitOrThrow = async (
+  args: string[],
+  options: { cwd: string; env?: Record<string, string> },
+): Promise<CommandResult> => {
+  const result = await runCommand("git", args, options);
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr || result.stdout || `git ${args.join(" ")} failed`);
+  }
+  return result;
+};
+
+const createRepositoryFromStarter = async (
+  scope: WorkspaceScope,
+  options: {
+    starterGitUrl: string;
+    appName: string;
+    directoryName: string;
+    ownerNpub: string;
+    githubOwner: string;
+    githubRepo: string;
+    privateRepo: boolean;
+    protectBranches: boolean;
+    createDeployedBranch: boolean;
+  },
+): Promise<{
+  root: string;
+  label: string;
+  scripts: Partial<AppLifecycleScripts>;
+  github: {
+    owner: string;
+    repo: string;
+    cloneUrl: string;
+    htmlUrl: string;
+    defaultBranch: string;
+    deployedBranchCreated: boolean;
+    protection: {
+      requested: boolean;
+      main: "applied" | "skipped" | "failed";
+      deployed: "applied" | "skipped" | "failed";
+      warnings: string[];
+    };
+  };
+}> => {
+  const creds = getGitHubCredentialsForNpub(options.ownerNpub);
+  if (!creds?.token) {
+    throw new Error("GitHub token is not configured for this user. Add it in Settings > GitHub first.");
+  }
+
+  const gitEnv = getGitHubGitEnvForUser(options.ownerNpub, new URL("../data", import.meta.url).pathname) ?? {};
+  const github = new GitHubApiClient(creds.token);
+  const actor = await github.getAuthenticatedUser();
+  const authorEnv: Record<string, string> = {
+    ...gitEnv,
+    GIT_AUTHOR_NAME: gitEnv.GIT_AUTHOR_NAME || creds.authorName || actor.login,
+    GIT_AUTHOR_EMAIL: gitEnv.GIT_AUTHOR_EMAIL || creds.authorEmail || `${actor.id}+${actor.login}@users.noreply.github.com`,
+    GIT_COMMITTER_NAME: gitEnv.GIT_COMMITTER_NAME || creds.authorName || actor.login,
+    GIT_COMMITTER_EMAIL: gitEnv.GIT_COMMITTER_EMAIL || creds.authorEmail || `${actor.id}+${actor.login}@users.noreply.github.com`,
+  };
+
+  const sanitizedDirectory = normaliseDirectoryEntryName(options.directoryName);
+  const targetDirectory = normalize(join(scope.defaultDirectory, sanitizedDirectory));
+  ensureWithinAllowedDirectories(targetDirectory, scope);
+
+  try {
+    const stats = await stat(targetDirectory);
+    if (stats.isDirectory()) {
+      throw new Error("Target directory already exists");
+    }
+    throw new Error("A non-directory entry exists at the target location");
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code !== "ENOENT") throw err;
+  }
+
+  await mkdir(dirname(targetDirectory), { recursive: true });
+
+  const cloneResult = await runCommand("git", ["clone", "--depth", "1", options.starterGitUrl, targetDirectory], {
+    env: authorEnv,
+  });
+  if (cloneResult.exitCode !== 0) {
+    await rm(targetDirectory, { recursive: true, force: true }).catch(() => undefined);
+    throw new Error(cloneResult.stderr || cloneResult.stdout || "Failed to clone starter repository");
+  }
+
+  await rm(join(targetDirectory, ".git"), { recursive: true, force: true });
+
+  const repo = await github.createRepository({
+    owner: options.githubOwner,
+    name: options.githubRepo,
+    private: options.privateRepo,
+    description: `Generated from Wingman starter "${options.appName}"`,
+    authenticatedLogin: actor.login,
+  });
+
+  const initResult = await runCommand("git", ["init", "-b", "main"], { cwd: targetDirectory, env: authorEnv });
+  if (initResult.exitCode !== 0) {
+    await runGitOrThrow(["init"], { cwd: targetDirectory, env: authorEnv });
+    await runGitOrThrow(["checkout", "-b", "main"], { cwd: targetDirectory, env: authorEnv });
+  }
+  await runGitOrThrow(["remote", "add", "origin", repo.cloneUrl], { cwd: targetDirectory, env: authorEnv });
+  await runGitOrThrow(["add", "."], { cwd: targetDirectory, env: authorEnv });
+  await runGitOrThrow(["commit", "-m", "Initial starter app"], { cwd: targetDirectory, env: authorEnv });
+  await runGitOrThrow(["push", "-u", "origin", "main"], { cwd: targetDirectory, env: authorEnv });
+
+  let deployedBranchCreated = false;
+  if (options.createDeployedBranch) {
+    await runGitOrThrow(["branch", "deployed"], { cwd: targetDirectory, env: authorEnv });
+    await runGitOrThrow(["push", "-u", "origin", "deployed"], { cwd: targetDirectory, env: authorEnv });
+    deployedBranchCreated = true;
+  }
+
+  const protection: {
+    requested: boolean;
+    main: "applied" | "skipped" | "failed";
+    deployed: "applied" | "skipped" | "failed";
+    warnings: string[];
+  } = {
+    requested: options.protectBranches,
+    main: options.protectBranches ? "failed" : "skipped",
+    deployed: options.protectBranches && deployedBranchCreated ? "failed" : "skipped",
+    warnings: [],
+  };
+
+  if (options.protectBranches) {
+    try {
+      await github.protectBranch({
+        owner: repo.owner,
+        repo: repo.name,
+        branch: "main",
+        actorLogin: actor.login,
+        mode: "main",
+      });
+      protection.main = "applied";
+    } catch (error) {
+      protection.main = "failed";
+      protection.warnings.push(`main protection failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    if (deployedBranchCreated) {
+      try {
+        await github.protectBranch({
+          owner: repo.owner,
+          repo: repo.name,
+          branch: "deployed",
+          actorLogin: actor.login,
+          mode: "deployed",
+        });
+        protection.deployed = "applied";
+      } catch (error) {
+        protection.deployed = "failed";
+        protection.warnings.push(`deployed protection failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  }
+
+  const scripts = await collectBunScriptDefaults(targetDirectory);
+  const label = options.appName || humaniseAppLabel(sanitizedDirectory) || sanitizedDirectory;
+  const resolvedRoot = await realpath(targetDirectory).catch(() => targetDirectory);
+  return {
+    root: resolvedRoot,
+    label,
+    scripts,
+    github: {
+      owner: repo.owner,
+      repo: repo.name,
+      cloneUrl: repo.cloneUrl,
+      htmlUrl: repo.htmlUrl,
+      defaultBranch: "main",
+      deployedBranchCreated,
+      protection,
+    },
+  };
+};
+
 void ensureWingmanCoreRegistration(appRegistry, {
   projectRoot: projectRootPath,
   adminNpub,
@@ -2521,7 +2697,7 @@ const handleApi = createApiRouteHandler({
     ensureApiAccess,
     normaliseOptionalString,
     normaliseNpub,
-    cloneRepositoryIntoWorkspace,
+    createRepositoryFromStarter,
     buildAppResponse,
     appRegistry,
     appProcessManager,

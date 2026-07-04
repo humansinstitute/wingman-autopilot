@@ -18,11 +18,27 @@ export async function fetchStarterProjectsApi() {
   return Array.isArray(payload?.starterProjects) ? payload.starterProjects : [];
 }
 
-export async function launchStarterProjectApi({ starterId, name }) {
+export async function launchStarterProjectApi({
+  starterId,
+  name,
+  githubOwner,
+  githubRepo,
+  private: privateRepo = true,
+  protectBranches = true,
+  createDeployedBranch = true,
+}) {
   const response = await fetch("/api/apps/starter-projects/launch", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ starterId, name }),
+    body: JSON.stringify({
+      starterId,
+      name,
+      githubOwner,
+      githubRepo,
+      private: privateRepo,
+      protectBranches,
+      createDeployedBranch,
+    }),
   });
   const payload = await parseJson(response);
   if (!response.ok) {
