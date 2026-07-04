@@ -99,6 +99,7 @@ export interface AppsApiContext {
     scope: WorkspaceScope,
     repoUrl: string,
     directoryName: string,
+    viewerNpub: string | null,
   ) => Promise<{ root: string; label: string; scripts: Partial<AppLifecycleScripts> }>;
   scanDirectoryTree: (root: string, depth: number, registeredPaths: Set<string>) => Promise<TreeNode[]>;
   buildAppOwnerFilters: (
@@ -466,7 +467,7 @@ export async function handleAppsApi(
       return Response.json({ error: 'Folder name is required' }, { status: 400 });
     }
     try {
-      const result = await ctx.cloneRepositoryIntoWorkspace(ctx.workspaceScope, repoUrl, directoryName);
+      const result = await ctx.cloneRepositoryIntoWorkspace(ctx.workspaceScope, repoUrl, directoryName, ctx.viewerNpub);
       return Response.json(result, { status: 201 });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

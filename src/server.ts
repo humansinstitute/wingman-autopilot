@@ -2025,10 +2025,15 @@ const collectBunScriptDefaults = async (
   }
 };
 
+function resolveAppCloneGitEnv(viewerNpub: string | null | undefined): Record<string, string> | undefined {
+  return getGitHubGitEnvForUser(viewerNpub, new URL("../data", import.meta.url).pathname) ?? undefined;
+}
+
 const cloneRepositoryIntoWorkspace = async (
   scope: WorkspaceScope,
   repositoryUrl: string,
   directoryName: string,
+  viewerNpub: string | null,
 ): Promise<{ root: string; label: string; scripts: Partial<AppLifecycleScripts> }> => {
   const sanitizedDirectory = normaliseDirectoryEntryName(directoryName);
   const targetDirectory = normalize(join(scope.defaultDirectory, sanitizedDirectory));
@@ -2049,7 +2054,9 @@ const cloneRepositoryIntoWorkspace = async (
 
   await mkdir(dirname(targetDirectory), { recursive: true });
 
-  const cloneResult = await runCommand("git", ["clone", "--depth", "1", repositoryUrl, targetDirectory]);
+  const cloneResult = await runCommand("git", ["clone", "--depth", "1", repositoryUrl, targetDirectory], {
+    env: resolveAppCloneGitEnv(viewerNpub),
+  });
   if (cloneResult.exitCode !== 0) {
     await rm(targetDirectory, { recursive: true, force: true }).catch(() => undefined);
     const message = cloneResult.stderr || cloneResult.stdout || "Failed to clone repository";
