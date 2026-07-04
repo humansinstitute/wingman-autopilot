@@ -7,7 +7,7 @@
 
 import { getSessionDisplayName, setIconButton } from "../core/icons.js";
 import { openTextPromptDialog } from "../common/dialog-prompts.js";
-import { attachCopyButton, copyConversationToClipboard } from "../utils/clipboard.js";
+import { attachCopyButton, copyConversationToClipboard, copyTextToClipboard } from "../utils/clipboard.js";
 import { showToast } from "../utils/toast.js";
 import { AGENT_OUTPUT_FORMATTING_FLAG_KEY } from "../rendering/agent-output-format.js";
 import {
@@ -1187,6 +1187,14 @@ export function initLiveView(deps) {
 
     addCommand("Copy chat", () => {
       copyConversationToClipboard(sessionId);
+    });
+
+    addCommand("Copy session ID", () => {
+      void copyTextToClipboard(sessionId).then((copied) => {
+        showToast(copied ? "Session ID copied" : "Unable to copy session ID", {
+          type: copied ? "success" : "error",
+        });
+      });
     });
 
     addCommand("Session Details", () => {

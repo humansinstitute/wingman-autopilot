@@ -45,6 +45,12 @@ describe("live-view composition", () => {
     expect(source).toContain(": false;");
   });
 
+  test("offers session id copying from the live command menu", () => {
+    expect(source).toContain("copyTextToClipboard");
+    expect(source).toContain('addCommand("Copy session ID"');
+    expect(source).toContain('showToast(copied ? "Session ID copied" : "Unable to copy session ID"');
+  });
+
   test("shows session context above the composer", () => {
     expect(source).toContain("wm-composer-context");
     expect(source).toContain("wm-composer-input-column");
