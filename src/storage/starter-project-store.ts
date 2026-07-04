@@ -40,7 +40,7 @@ export interface UpdateStarterProjectInput {
   updatedBy?: string | null;
 }
 
-const DEFAULT_SETUP_COMMAND = "bun run setup";
+const DEFAULT_SETUP_COMMAND = "bun install";
 const DEFAULT_STARTERS: CreateStarterProjectInput[] = [
   {
     id: "wapp-starter-sqlite",

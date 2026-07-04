@@ -26,6 +26,7 @@ describe("StarterProjectStore", () => {
     expect(store.list().map((starter) => starter.name)).toEqual(["WApp Starter with SQLite DB"]);
     expect(store.list()[0]?.gitUrl).toBe("https://github.com/humansinstitute/wapp-starter.git");
     expect(Boolean(store.list()[0]?.webApp)).toBe(true);
+    expect(store.list()[0]?.setupCommand).toBe("bun install");
   });
 
   test("removes legacy Speedrun default starter records on startup", async () => {
