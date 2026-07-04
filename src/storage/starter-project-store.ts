@@ -43,21 +43,19 @@ export interface UpdateStarterProjectInput {
 const DEFAULT_SETUP_COMMAND = "bun run setup";
 const DEFAULT_STARTERS: CreateStarterProjectInput[] = [
   {
-    name: "Speedrun Lite Starter Project",
-    gitUrl: "https://gitea.pages.otherstuff.ai/honest-ivory-thicket/sr-ws-starterpack.git",
+    id: "wapp-starter-sqlite",
+    name: "WApp Starter with SQLite DB",
+    gitUrl: "https://github.com/humansinstitute/wapp-starter.git",
     webApp: true,
     scriptAuto: true,
-    notes: "This is a starter project to build a superbased powerered Todo app for the Speed Run Workshop",
+    notes: "Reference WApp starter with local SQLite, migrations, import/export workflows, and Autopilot pipeline chat wiring.",
     setupCommand: DEFAULT_SETUP_COMMAND,
   },
-  {
-    name: "Speedrun Lite Agent",
-    gitUrl: "https://gitea.pages.otherstuff.ai/honest-ivory-thicket/speedrun-lite-agent-starter.git",
-    webApp: false,
-    scriptAuto: false,
-    notes: "This is a directory based definition of the speedrun lite agent.",
-    setupCommand: null,
-  },
+];
+
+const LEGACY_DEFAULT_STARTERS = [
+  "Speedrun Lite Starter Project",
+  "Speedrun Lite Agent",
 ];
 
 const normaliseOptionalString = (value: unknown): string | null => {
@@ -74,7 +72,7 @@ const normaliseGitUrl = (value: string): string => {
   return normalized;
 };
 
-class StarterProjectStore {
+export class StarterProjectStore {
   private readonly db: Database;
 
   constructor(filePath: string = databaseFile) {
@@ -83,6 +81,7 @@ class StarterProjectStore {
     this.db.exec("PRAGMA journal_mode = WAL");
     this.db.exec("PRAGMA busy_timeout = 5000");
     this.initialise();
+    this.removeLegacyDefaults(LEGACY_DEFAULT_STARTERS);
     this.ensureDefaults(DEFAULT_STARTERS);
   }
 
@@ -243,11 +242,23 @@ class StarterProjectStore {
       const name = normaliseOptionalString(entry.name);
       const gitUrl = normaliseOptionalString(entry.gitUrl);
       if (!name || !gitUrl) return;
-      const existing = this.db.prepare("SELECT id FROM starter_projects WHERE name = ?1").get(name) as { id: string } | null;
+      const id = normaliseOptionalString(entry.id);
+      const existing = (id
+        ? this.db.prepare("SELECT id FROM starter_projects WHERE id = ?1 OR name = ?2").get(id, name)
+        : this.db.prepare("SELECT id FROM starter_projects WHERE name = ?1").get(name)) as { id: string } | null;
       if (existing?.id) {
+        this.update(existing.id, entry);
         return;
       }
       this.create(entry);
+    });
+  }
+
+  removeLegacyDefaults(names: string[]) {
+    names.forEach((name) => {
+      const normalized = normaliseOptionalString(name);
+      if (!normalized) return;
+      this.db.prepare("DELETE FROM starter_projects WHERE name = ?1").run(normalized);
     });
   }
 
