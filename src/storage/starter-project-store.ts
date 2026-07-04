@@ -51,6 +51,15 @@ const DEFAULT_STARTERS: CreateStarterProjectInput[] = [
     notes: "Reference WApp starter with local SQLite, migrations, import/export workflows, and Autopilot pipeline chat wiring.",
     setupCommand: DEFAULT_SETUP_COMMAND,
   },
+  {
+    id: "wapp-starter-tower-pg",
+    name: "WApp Starter with Tower PG Backend",
+    gitUrl: "https://github.com/humansinstitute/wapp-starter-tower.git",
+    webApp: true,
+    scriptAuto: true,
+    notes: "Reference WApp starter with Tower-managed Postgres over the Tower API, APP_NSEC app identity, migrations, and Autopilot pipeline chat wiring.",
+    setupCommand: DEFAULT_SETUP_COMMAND,
+  },
 ];
 
 const LEGACY_DEFAULT_STARTERS = [

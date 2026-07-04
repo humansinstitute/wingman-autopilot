@@ -20,13 +20,19 @@ afterEach(async () => {
 });
 
 describe("StarterProjectStore", () => {
-  test("seeds only the WApp SQLite starter by default", async () => {
+  test("seeds the WApp starter options by default", async () => {
     const { store } = await createStore();
 
-    expect(store.list().map((starter) => starter.name)).toEqual(["WApp Starter with SQLite DB"]);
-    expect(store.list()[0]?.gitUrl).toBe("https://github.com/humansinstitute/wapp-starter.git");
-    expect(Boolean(store.list()[0]?.webApp)).toBe(true);
-    expect(store.list()[0]?.setupCommand).toBe("bun install");
+    expect(store.list().map((starter) => starter.name)).toEqual([
+      "WApp Starter with SQLite DB",
+      "WApp Starter with Tower PG Backend",
+    ]);
+    expect(store.list().map((starter) => starter.gitUrl)).toEqual([
+      "https://github.com/humansinstitute/wapp-starter.git",
+      "https://github.com/humansinstitute/wapp-starter-tower.git",
+    ]);
+    expect(store.list().every((starter) => Boolean(starter.webApp))).toBe(true);
+    expect(store.list().every((starter) => starter.setupCommand === "bun install")).toBe(true);
   });
 
   test("removes legacy Speedrun default starter records on startup", async () => {
@@ -38,6 +44,9 @@ describe("StarterProjectStore", () => {
 
     const restartedStore = new StarterProjectStore(filePath);
 
-    expect(restartedStore.list().map((starter) => starter.name)).toEqual(["WApp Starter with SQLite DB"]);
+    expect(restartedStore.list().map((starter) => starter.name)).toEqual([
+      "WApp Starter with SQLite DB",
+      "WApp Starter with Tower PG Backend",
+    ]);
   });
 });
