@@ -1,7 +1,11 @@
 import { describe, expect, test } from 'bun:test';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 import { AccessActions } from '../auth/access-control';
 import type { RequestAuthContext } from '../auth/request-context';
+import type { AppRecord } from '../apps/app-registry';
 import { handleAppsApi, type AppsApiContext } from './apps-api-routes';
 
 const authContext: RequestAuthContext = {
@@ -108,7 +112,9 @@ function createContext(
     },
     createCaproverTargetClientsFromEnv: () => [],
     createAppTarball: async () => ({ buffer: new Uint8Array(), fileCount: 0 }),
-    caproverStore: {} as AppsApiContext['caproverStore'],
+    caproverStore: {
+      getAppByLocalAppId: () => null,
+    } as unknown as AppsApiContext['caproverStore'],
     ...overrides,
   };
 }
@@ -153,5 +159,62 @@ describe('handleAppsApi', () => {
       directoryName: 'testwapp',
       viewerNpub: 'npub1viewer',
     }]);
+  });
+
+  test('imports app root .env into managed app environment', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'app-dotenv-import-'));
+    try {
+      writeFileSync(join(dir, '.env'), [
+        'WAPP_NSEC=nsec1starter',
+        'TOWER_URL=https://tower.example',
+      ].join('\n'));
+      let app: AppRecord = {
+        id: 'app-1',
+        label: 'App One',
+        root: dir,
+        scripts: { start: 'bun src/server.ts' },
+        tmuxSession: 'app-1',
+        ownerNpub: 'npub1viewer',
+        env: { EXISTING: 'keep' },
+        createdAt: '2026-07-06T00:00:00.000Z',
+        updatedAt: '2026-07-06T00:00:00.000Z',
+        webApp: true,
+        webAppPort: 4123,
+      };
+      const ctx = createContext({
+        appRegistry: {
+          listApps: async () => [app],
+          getApp: async (id) => id === app.id ? app : undefined,
+          discoverScripts: async () => ({}),
+          registerApp: async () => {
+            throw new Error('not implemented');
+          },
+          updateApp: async (id, input) => {
+            if (id !== app.id) throw new Error('unknown app');
+            app = { ...app, ...input, updatedAt: '2026-07-06T00:01:00.000Z' };
+            return app;
+          },
+          removeApp: async () => false,
+        },
+        buildAppResponse: (record) => ({ id: record.id, env: record.env }),
+      });
+      const request = new Request('http://localhost/api/apps/app-1/env/import-dotenv', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ filename: '.env' }),
+      });
+
+      const response = await handleAppsApi(request, new URL(request.url), 'POST', authContext, ctx);
+      expect(response?.status).toBe(200);
+      const payload = await response!.json() as any;
+      expect(payload.imported.keys).toEqual(['TOWER_URL', 'WAPP_NSEC']);
+      expect(app.env).toEqual({
+        EXISTING: 'keep',
+        TOWER_URL: 'https://tower.example',
+        WAPP_NSEC: 'nsec1starter',
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

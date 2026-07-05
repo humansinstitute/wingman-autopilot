@@ -8,6 +8,7 @@ import type { TreeNode } from '../apps/app-detector';
 import type { AppLifecycleAction, AppLifecycleScripts, AppRecord } from '../apps/app-registry';
 import type { AppProcessStatus } from '../apps/app-process-manager';
 import { parseAppEnvInput, type AppEnvironmentVariables } from '../apps/app-env';
+import { readDotenvFile } from '../apps/dotenv-file';
 import { AppActionInProgressError, AppScriptMissingError } from '../apps/app-process-manager';
 import type { CaproverAppDefinition, CaproverRepoInfo, CaproverStore, CaproverTargetClient } from '../caprover';
 import type { WappRecord } from '../wapps/types';
@@ -887,6 +888,68 @@ export async function handleAppsApi(
           ),
         });
       } catch (error) {
+        return Response.json({ error: (error as Error).message }, { status: 400 });
+      }
+    }
+
+    if (method === 'POST' && parts.length === 6 && parts[4] === 'env' && parts[5] === 'import-dotenv') {
+      const current = await ctx.appRegistry.getApp(id);
+      if (!current) {
+        return Response.json({ error: 'Not found' }, { status: 404 });
+      }
+      if (!ctx.canAccessApp(current)) {
+        return Response.json({ error: 'Not found' }, { status: 404 });
+      }
+      let payload: Record<string, unknown> = {};
+      try {
+        const parsed = await request.json().catch(() => ({}));
+        payload = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+      } catch {
+        payload = {};
+      }
+      const filename = ctx.normaliseOptionalString(payload.filename) ?? '.env';
+      if (filename !== '.env' && filename !== '.env.local') {
+        return Response.json({ error: 'Only .env and .env.local can be imported' }, { status: 400 });
+      }
+      const overwrite = payload.overwrite === undefined ? true : ctx.parseBooleanInput(payload.overwrite) === true;
+      try {
+        const imported = await readDotenvFile(current.root, filename);
+        const nextEnv: AppEnvironmentVariables = { ...(current.env ?? {}) };
+        const skippedKeys: string[] = [];
+        for (const [key, value] of Object.entries(imported.env)) {
+          if (!overwrite && Object.prototype.hasOwnProperty.call(nextEnv, key)) {
+            skippedKeys.push(key);
+            continue;
+          }
+          nextEnv[key] = value;
+        }
+        const updated = await ctx.appRegistry.updateApp(id, { env: nextEnv });
+        const status = await ctx.appProcessManager.getStatus(id);
+        const aliasRecord = await ctx.appAliasRegistry.getByAppId(id);
+        const subdomainAlias = aliasRecord?.alias ?? null;
+        return Response.json({
+          imported: {
+            path: imported.path,
+            keys: Object.keys(imported.env).sort((left, right) => left.localeCompare(right)),
+            skippedKeys,
+            warnings: imported.warnings,
+            overwrite,
+          },
+          app: withWappAssignments(
+            withCaproverDeploymentInfo(
+              ctx.buildAppResponse(updated, status, { subdomainAlias }),
+              updated.id,
+              ctx.caproverStore,
+            ),
+            updated.id,
+            buildWappsByAppId(ctx),
+          ),
+        });
+      } catch (error) {
+        const nodeError = error as NodeJS.ErrnoException;
+        if (nodeError.code === 'ENOENT') {
+          return Response.json({ error: `${filename} not found in app root` }, { status: 404 });
+        }
         return Response.json({ error: (error as Error).message }, { status: 400 });
       }
     }

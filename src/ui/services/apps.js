@@ -129,3 +129,29 @@ export async function revealWappNsecApi(wappId) {
   }
   return { success: true, data: payload };
 }
+
+/**
+ * Imports KEY=value entries from an app root .env file into managed encrypted env.
+ * @param {string} appId
+ * @param {{filename?: string, overwrite?: boolean}} options
+ * @returns {Promise<{success: boolean, error?: string, data?: Object}>}
+ */
+export async function importAppDotenvApi(appId, options = {}) {
+  const response = await fetch(`/api/apps/${encodeURIComponent(appId)}/env/import-dotenv`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      filename: options.filename || ".env",
+      overwrite: options.overwrite !== false,
+    }),
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    const message =
+      payload && typeof payload === "object" && typeof payload.error === "string" && payload.error.length > 0
+        ? payload.error
+        : response.statusText || "Failed to import .env";
+    return { success: false, error: message, data: payload };
+  }
+  return { success: true, data: payload };
+}

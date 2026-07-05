@@ -2,8 +2,10 @@ import type { RequestAuthContext } from "../auth/request-context";
 import type { AccessAction } from "../auth/access-control";
 import type { WorkspaceScope } from "../workspaces/workspace-scope";
 import type { AppLifecycleScripts, AppRecord } from "../apps/app-registry";
+import type { AppEnvironmentVariables } from "../apps/app-env";
 import type { AppProcessStatus } from "../apps/app-process-manager";
 import type { StarterProjectRecord } from "../storage/starter-project-store";
+import { createWappAppNsec } from "../wapps/app-key";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "HEAD";
 
@@ -170,6 +172,13 @@ function slugifyDirectoryName(input: string): string {
   return slug;
 }
 
+function buildStarterManagedEnv(starter: StarterProjectRecord): AppEnvironmentVariables | undefined {
+  if (starter.id !== "wapp-starter-tower-pg") return undefined;
+  return {
+    WAPP_NSEC: createWappAppNsec("generate", null),
+  };
+}
+
 async function registerLaunchedStarterApp(
   ctx: StarterProjectsApiContext,
   ownerNpub: string,
@@ -198,6 +207,7 @@ async function registerLaunchedStarterApp(
     scripts: Object.keys(scriptPayload).length > 0 ? scriptPayload : undefined,
     notes: starter.notes ?? undefined,
     ownerNpub,
+    env: buildStarterManagedEnv(starter),
     webApp: Boolean(starter.webApp),
   });
 

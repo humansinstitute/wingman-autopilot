@@ -121,7 +121,7 @@ import {
   renameSession as renameSessionAction,
   resumeNativeSession as resumeNativeSessionAction,
 } from "./sessions/actions.js";
-import { fetchAppLogsApi, revealWappNsecApi } from "./services/apps.js";
+import { fetchAppLogsApi, importAppDotenvApi, revealWappNsecApi } from "./services/apps.js";
 import { isChatRoute } from "./chat/index.js";
 import { initPrivateChat } from "./chat/private-chat.js";
 import { initIdentityPanels } from "./identity/panels.js";
@@ -2011,6 +2011,7 @@ const appCardsModule = initAppCards({
   renderLogPreview: (...args) => renderAppLogPreview(...args),
   launchSession: (...args) => launchSession(...args),
   fetchAppLogsApi,
+  importAppDotenvApi,
   removeApp: (...args) => removeApp(...args),
   removeWapp: (...args) => removeWapp(...args),
   revealWappNsecApi,
@@ -2032,6 +2033,7 @@ const appCardsModule = initAppCards({
   openDeployDialog: (...args) => openDeployDialog(...args),
   openCaproverDialog: (...args) => openCaproverDialog(...args),
   openAppDialog: (...args) => openAppDialog(...args),
+  refreshApps: (...args) => refreshApps(...args),
 });
 renderAppCard = appCardsModule.renderAppCard;
 renderWingmanCard = appCardsModule.renderWingmanCard;

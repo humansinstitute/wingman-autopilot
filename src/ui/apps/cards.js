@@ -10,6 +10,7 @@
  * @param {(logs: string[]) => HTMLElement} deps.renderLogPreview - renders a log preview <pre>
  * @param {Function} deps.launchSession              - launches an agent session
  * @param {Function} deps.fetchAppLogsApi            - fetches app logs from API
+ * @param {Function} deps.importAppDotenvApi         - imports app root .env into managed env
  * @param {Function} deps.removeApp                  - removes an app by id
  * @param {Function} deps.removeWapp                 - removes a WApp assignment by id
  * @param {Function} deps.revealWappNsecApi          - reveals a Tower-backed WApp WAPP_NSEC
@@ -31,6 +32,7 @@
  * @param {Function} deps.openDeployDialog           - opens the deploy dialog
  * @param {Function} deps.openCaproverDialog         - opens the CapRover setup dialog
  * @param {Function} deps.openAppDialog              - opens the app edit dialog
+ * @param {Function} deps.refreshApps                - refreshes app cards
  */
 import { openConfirmDialog } from "../common/dialog-prompts.js";
 
@@ -41,6 +43,7 @@ export function initAppCards(deps) {
     renderLogPreview,
     launchSession,
     fetchAppLogsApi,
+    importAppDotenvApi,
     removeApp,
     removeWapp,
     revealWappNsecApi,
@@ -62,6 +65,7 @@ export function initAppCards(deps) {
     openDeployDialog,
     openCaproverDialog,
     openAppDialog,
+    refreshApps,
   } = deps;
 
   const renderWingmanCard = (app) => {
@@ -711,6 +715,44 @@ export function initAppCards(deps) {
       openAppDialog(app.id);
     });
     linkBar.append(editLink);
+
+    if (typeof importAppDotenvApi === "function") {
+      const importEnvLink = document.createElement("a");
+      importEnvLink.href = "#";
+      importEnvLink.textContent = "Import .env";
+      importEnvLink.dataset.testid = "app-card-import-dotenv";
+      importEnvLink.addEventListener("click", async (event) => {
+        event.preventDefault();
+        if (importEnvLink.getAttribute("aria-disabled") === "true") return;
+        const confirmed = await openConfirmDialog({
+          title: "Import .env",
+          description: "Read the app root .env file and copy its variables into this app card's managed environment.",
+          confirmLabel: "Import .env",
+          testId: "import-dotenv-dialog",
+        });
+        if (!confirmed) return;
+        importEnvLink.setAttribute("aria-disabled", "true");
+        try {
+          const result = await importAppDotenvApi(app.id, { filename: ".env", overwrite: true });
+          if (!result?.success) {
+            showToast(result?.error || "Failed to import .env", { type: "error" });
+            return;
+          }
+          const keys = Array.isArray(result.data?.imported?.keys) ? result.data.imported.keys : [];
+          const warningCount = Array.isArray(result.data?.imported?.warnings) ? result.data.imported.warnings.length : 0;
+          const suffix = warningCount > 0 ? `; ${warningCount} warning${warningCount === 1 ? "" : "s"}` : "";
+          showToast(`Imported ${keys.length} env variable${keys.length === 1 ? "" : "s"}${suffix}`, { type: "success" });
+          await refreshApps?.({ skipRender: false });
+        } catch (error) {
+          showToast(error instanceof Error ? error.message : "Failed to import .env", { type: "error" });
+        } finally {
+          if (importEnvLink.isConnected) {
+            importEnvLink.removeAttribute("aria-disabled");
+          }
+        }
+      });
+      linkBar.append(importEnvLink);
+    }
 
     activeWapps.forEach((wapp) => {
       if (wapp.towerBindingId && typeof revealWappNsecApi === "function") {
