@@ -51,6 +51,10 @@ function text(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
+function wappNsecInput(body: Record<string, unknown>): string | null {
+  return text(body.wappNsec ?? body.wapp_nsec ?? body.WAPP_NSEC);
+}
+
 function status(value: unknown): WappStatus | undefined {
   const normalized = text(value);
   if (normalized === "archived") return "archived";
@@ -185,12 +189,12 @@ function prepareTowerRegistration(
       throw new Error("WApp app key replacement is not supported for existing assignments");
     }
     if (!input.existing?.appNpub) {
-      throw new Error("Existing Tower-backed WApp assignment is missing APP_NPUB");
+      throw new Error("Existing Tower-backed WApp assignment is missing the derived app npub");
     }
     return { binding, appNsec: existingNsec, appNpub: input.existing.appNpub };
   }
   if (input.existing?.towerBindingId || input.existing?.appNpub) {
-    throw new Error("Existing Tower-backed WApp assignment is missing encrypted APP_NSEC");
+    throw new Error("Existing Tower-backed WApp assignment is missing encrypted WAPP_NSEC");
   }
   const appNsec = createWappAppNsec(input.appKeyMode, input.appNsec);
   return { binding, appNsec, appNpub: deriveWappAppNpubFromNsec(appNsec) };
@@ -293,7 +297,7 @@ export async function handleWappsApi(
       const towerRegistration = prepareTowerRegistration(ctx, {
         towerBindingId: text(body.towerBindingId ?? body.tower_binding_id),
         appKeyMode: appKeyMode(body.appKeyMode ?? body.app_key_mode),
-        appNsec: text(body.appNsec ?? body.app_nsec ?? body.APP_NSEC),
+        appNsec: wappNsecInput(body),
       });
       await registerPreparedTowerWapp(ctx, towerRegistration, title);
       const wapp = ctx.wappStore.create({
@@ -311,7 +315,7 @@ export async function handleWappsApi(
         subdomainAlias: alias,
         towerBindingId: towerRegistration?.binding.id ?? text(body.towerBindingId ?? body.tower_binding_id),
         appKeyMode: towerRegistration ? "import" : appKeyMode(body.appKeyMode ?? body.app_key_mode),
-        appNsec: towerRegistration?.appNsec ?? text(body.appNsec ?? body.app_nsec ?? body.APP_NSEC),
+        appNsec: towerRegistration?.appNsec ?? wappNsecInput(body),
         status: status(body.status) ?? "active",
         schedule: normalizeSchedule(body.schedule) ?? null,
       });
@@ -371,6 +375,23 @@ export async function handleWappsApi(
     return Response.json({ wapp });
   }
 
+  if (action === "nsec" && method === "GET") {
+    if (!wapp.towerBindingId) {
+      return Response.json({ error: "WApp is not Tower-backed" }, { status: 400 });
+    }
+    const wappNsec = ctx.wappStore.getAppNsec(wapp.id);
+    if (!wappNsec) {
+      return Response.json({ error: "WAPP_NSEC not found for this WApp" }, { status: 404 });
+    }
+    return Response.json({
+      wappId: wapp.id,
+      appId: wapp.appId,
+      appNpub: wapp.appNpub,
+      keyName: "WAPP_NSEC",
+      wappNsec,
+    });
+  }
+
   if (!action && (method === "PUT" || method === "PATCH")) {
     const body = await parseBody(request);
     if (!body) return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
@@ -396,7 +417,7 @@ export async function handleWappsApi(
       const towerRegistration = prepareTowerRegistration(ctx, {
         towerBindingId: nextTowerBindingId,
         appKeyMode: appKeyMode(body.appKeyMode ?? body.app_key_mode),
-        appNsec: text(body.appNsec ?? body.app_nsec ?? body.APP_NSEC) ?? undefined,
+        appNsec: wappNsecInput(body) ?? undefined,
         existing: wapp,
       });
       await registerPreparedTowerWapp(ctx, towerRegistration, text(body.title) ?? wapp.title);
@@ -409,7 +430,7 @@ export async function handleWappsApi(
         allowedNpubs: scopeAccess ? scopeAccess.allowedNpubs : undefined,
         towerBindingId: towerRegistration?.binding.id ?? nextTowerBindingId,
         appKeyMode: towerRegistration && !wapp.towerBindingId ? "import" : appKeyMode(body.appKeyMode ?? body.app_key_mode),
-        appNsec: towerRegistration && !wapp.towerBindingId ? towerRegistration.appNsec : text(body.appNsec ?? body.app_nsec ?? body.APP_NSEC) ?? undefined,
+        appNsec: towerRegistration && !wapp.towerBindingId ? towerRegistration.appNsec : wappNsecInput(body) ?? undefined,
         status: status(body.status),
         schedule: normalizeSchedule(body.schedule),
       });

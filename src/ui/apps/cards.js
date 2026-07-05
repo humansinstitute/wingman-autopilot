@@ -12,6 +12,7 @@
  * @param {Function} deps.fetchAppLogsApi            - fetches app logs from API
  * @param {Function} deps.removeApp                  - removes an app by id
  * @param {Function} deps.removeWapp                 - removes a WApp assignment by id
+ * @param {Function} deps.revealWappNsecApi          - reveals a Tower-backed WApp WAPP_NSEC
  * @param {object} deps.state                        - global UI state
  * @param {Function} deps.formatAppTimestamp         - formats a timestamp for display
  * @param {Function} deps.formatAppActionLabel       - formats an action label
@@ -42,6 +43,7 @@ export function initAppCards(deps) {
     fetchAppLogsApi,
     removeApp,
     removeWapp,
+    revealWappNsecApi,
     state,
     formatAppTimestamp,
     formatAppActionLabel,
@@ -711,6 +713,46 @@ export function initAppCards(deps) {
     linkBar.append(editLink);
 
     activeWapps.forEach((wapp) => {
+      if (wapp.towerBindingId && typeof revealWappNsecApi === "function") {
+        const revealKeyLink = document.createElement("a");
+        revealKeyLink.href = "#";
+        revealKeyLink.textContent = activeWapps.length === 1 ? "Copy WAPP_NSEC" : `Copy WAPP_NSEC: ${wapp.title || wapp.id}`;
+        revealKeyLink.dataset.testid = "app-card-copy-wapp-nsec";
+        revealKeyLink.addEventListener("click", async (event) => {
+          event.preventDefault();
+          if (revealKeyLink.getAttribute("aria-disabled") === "true") return;
+          const confirmed = await openConfirmDialog({
+            title: "Reveal WAPP_NSEC",
+            description: "This copies the WApp signing private key to your clipboard. Only use it for trusted deployment or recovery.",
+            confirmLabel: "Copy WAPP_NSEC",
+            testId: "copy-wapp-nsec-dialog",
+          });
+          if (!confirmed) return;
+          revealKeyLink.setAttribute("aria-disabled", "true");
+          try {
+            const result = await revealWappNsecApi(wapp.id);
+            if (!result?.success) {
+              showToast(result?.error || "Failed to reveal WAPP_NSEC", { type: "error" });
+              return;
+            }
+            const wappNsec = result.data?.wappNsec;
+            if (typeof wappNsec !== "string" || wappNsec.length === 0) {
+              showToast("WAPP_NSEC was not returned", { type: "error" });
+              return;
+            }
+            await navigator.clipboard.writeText(wappNsec);
+            showToast("WAPP_NSEC copied", { type: "success" });
+          } catch (error) {
+            showToast(error instanceof Error ? error.message : "Failed to copy WAPP_NSEC", { type: "error" });
+          } finally {
+            if (revealKeyLink.isConnected) {
+              revealKeyLink.removeAttribute("aria-disabled");
+            }
+          }
+        });
+        linkBar.append(revealKeyLink);
+      }
+
       const removeWappLink = document.createElement("a");
       removeWappLink.href = "#";
       removeWappLink.textContent = activeWapps.length === 1 ? "Remove WApp" : `Remove WApp: ${wapp.title || wapp.id}`;

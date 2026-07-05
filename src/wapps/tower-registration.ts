@@ -77,7 +77,7 @@ export async function registerTowerBackedWappAssignment(input: {
     });
   }
   if (!wapp.appNpub) {
-    throw new TowerWappRegistrationError(`Tower-backed WApp ${wapp.id} is missing APP_NPUB`, {
+    throw new TowerWappRegistrationError(`Tower-backed WApp ${wapp.id} is missing the derived app npub`, {
       detailCode: "wapp_app_npub_missing",
     });
   }

@@ -7,14 +7,14 @@ export function decodeWappAppNsec(value: string): Uint8Array {
   if (raw.startsWith("nsec1")) {
     const decoded = nip19.decode(raw);
     if (decoded.type !== "nsec" || !(decoded.data instanceof Uint8Array)) {
-      throw new Error("APP_NSEC must be a valid nsec value");
+      throw new Error("WAPP_NSEC must be a valid nsec value");
     }
     return decoded.data;
   }
   if (/^[a-fA-F0-9]{64}$/.test(raw)) {
     return Uint8Array.from(Buffer.from(raw, "hex"));
   }
-  throw new Error("APP_NSEC must be nsec1... or 64-char hex");
+  throw new Error("WAPP_NSEC must be nsec1... or 64-char hex");
 }
 
 export function deriveWappAppNpubFromNsec(nsec: string): string {
@@ -24,7 +24,7 @@ export function deriveWappAppNpubFromNsec(nsec: string): string {
 export function createWappAppNsec(mode: WappAppKeyMode | undefined, importedNsec: string | null | undefined): string {
   if (mode === "import") {
     if (!importedNsec?.trim()) {
-      throw new Error("APP_NSEC is required when importing a WApp app key");
+      throw new Error("WAPP_NSEC is required when importing a WApp app key");
     }
     decodeWappAppNsec(importedNsec);
     return importedNsec.trim();

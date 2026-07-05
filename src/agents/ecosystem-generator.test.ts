@@ -110,6 +110,7 @@ describe("createUserAppEcosystemConfig WApp env injection", () => {
         store,
         hostEnv: {},
         envFileReader: async () => ({}),
+        appEnvReader: async () => ({}),
         redshiftDetector: async () => false,
       });
       expect(runnerPlan.env.WAPP_ID).toBe("wapp-1");
@@ -168,8 +169,7 @@ describe("createUserAppEcosystemConfig WApp env injection", () => {
       expect(serializedConfig).toContain("--wapp-id");
       expect(serializedConfig).toContain("wapp-tower");
       expect(serializedConfig).not.toContain(appNsec);
-      expect(serializedConfig).not.toContain("APP_NSEC");
-      expect(serializedConfig).not.toContain("WAPP_APP_NSEC");
+      expect(serializedConfig).not.toContain("WAPP_NSEC");
 
       const runnerPlan = await buildUserAppSpawnPlan({
         appId: "wapp-app",
@@ -183,11 +183,14 @@ describe("createUserAppEcosystemConfig WApp env injection", () => {
         store,
         hostEnv: {},
         envFileReader: async () => ({}),
+        appEnvReader: async () => ({}),
         redshiftDetector: async () => false,
       });
-      expect(runnerPlan.env.APP_NPUB).toBeDefined();
-      expect(runnerPlan.env.APP_NSEC).toBe(appNsec);
-      expect(runnerPlan.env.WAPP_APP_NSEC).toBe(appNsec);
+      expect(runnerPlan.env.WAPP_NSEC).toBe(appNsec);
+      expect(runnerPlan.env.APP_NPUB).toBeUndefined();
+      expect(runnerPlan.env.APP_NSEC).toBeUndefined();
+      expect(runnerPlan.env.WAPP_APP_NSEC).toBeUndefined();
+      expect(runnerPlan.env.WAPP_APP_NPUB).toBeUndefined();
       expect(runnerPlan.env.TOWER_URL).toBe("https://tower.example");
       expect(runnerPlan.env.WORKSPACE_OWNER_NPUB).toBe("npub1workspace");
       expect(runnerPlan.env.WAPP_DB_MODE).toBe("tower-api");

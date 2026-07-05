@@ -57,7 +57,7 @@ const DEFAULT_STARTERS: CreateStarterProjectInput[] = [
     gitUrl: "https://github.com/humansinstitute/wapp-starter-tower.git",
     webApp: true,
     scriptAuto: true,
-    notes: "Reference WApp starter with Tower-managed Postgres over the Tower API, APP_NSEC app identity, migrations, and Autopilot pipeline chat wiring.",
+    notes: "Reference WApp starter with Tower-managed Postgres over the Tower API, WAPP_NSEC app identity, migrations, and Autopilot pipeline chat wiring.",
     setupCommand: DEFAULT_SETUP_COMMAND,
   },
 ];

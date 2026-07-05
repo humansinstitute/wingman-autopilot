@@ -108,7 +108,7 @@ function makeContext(): {
 }
 
 describe("handleWappsApi", () => {
-  test("creates Tower bindings and Tower-backed WApps without exposing APP_NSEC", async () => {
+  test("creates Tower bindings and Tower-backed WApps without exposing WAPP_NSEC by default", async () => {
     const { ctx, cleanup, registrations } = makeContext();
     try {
       const secret = generateSecretKey();
@@ -139,7 +139,7 @@ describe("handleWappsApi", () => {
           scopeId: "scope-1",
           towerBindingId: "tower-dev",
           appKeyMode: "import",
-          appNsec,
+          wappNsec: appNsec,
         }),
       });
       const createResponse = await handleWappsApi(createRequest, new URL(createRequest.url), "POST", authContext, ctx);
@@ -159,6 +159,15 @@ describe("handleWappsApi", () => {
       });
       expect(JSON.stringify(created)).not.toContain(appNsec);
       expect(ctx.wappStore.getAppNsec(created.wapp.id)).toBe(appNsec);
+
+      const revealRequest = new Request(`http://localhost:3000/api/wapps/${created.wapp.id}/nsec`);
+      const revealResponse = await handleWappsApi(revealRequest, new URL(revealRequest.url), "GET", authContext, ctx);
+      expect(revealResponse?.status).toBe(200);
+      expect(await revealResponse!.json()).toMatchObject({
+        keyName: "WAPP_NSEC",
+        wappNsec: appNsec,
+        appNpub,
+      });
     } finally {
       cleanup();
     }
@@ -187,7 +196,7 @@ describe("handleWappsApi", () => {
           scopeId: "scope-1",
           towerBindingId: "tower-dev",
           appKeyMode: "import",
-          appNsec,
+          wappNsec: appNsec,
         }),
       });
       const createResponse = await handleWappsApi(createRequest, new URL(createRequest.url), "POST", authContext, ctx);
@@ -207,7 +216,7 @@ describe("handleWappsApi", () => {
       const importRequest = new Request(`http://localhost:3000/api/wapps/${created.wapp.id}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ appKeyMode: "import", appNsec: replacementNsec }),
+        body: JSON.stringify({ appKeyMode: "import", wappNsec: replacementNsec }),
       });
       const importResponse = await handleWappsApi(importRequest, new URL(importRequest.url), "PATCH", authContext, ctx);
       expect(importResponse?.status).toBe(400);
@@ -246,7 +255,7 @@ describe("handleWappsApi", () => {
           scopeId: "scope-1",
           towerBindingId: "tower-dev",
           appKeyMode: "import",
-          appNsec,
+          wappNsec: appNsec,
         }),
       });
       const createResponse = await handleWappsApi(createRequest, new URL(createRequest.url), "POST", authContext, ctx);

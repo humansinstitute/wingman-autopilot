@@ -25,14 +25,12 @@ export function buildWappRuntimeEnv(wapp: WappRecord, wappRoot: string): Record<
     ...baseEnv,
     APP_ID: wapp.appId,
     APP_LABEL: wapp.title,
-    APP_NPUB: wapp.appNpub,
     TOWER_URL: wapp.towerBinding.towerUrl,
     WORKSPACE_OWNER_NPUB: wapp.towerBinding.workspaceOwnerNpub,
     USER_ALIAS: wapp.towerBinding.userAlias ?? "",
     WAPP_DB_MODE: "tower-api",
     WAPP_TOWER_BINDING_ID: wapp.towerBinding.id,
     WAPP_TOWER_URL: wapp.towerBinding.towerUrl,
-    WAPP_APP_NPUB: wapp.appNpub,
   };
 }
 
@@ -47,10 +45,9 @@ export function getWappRuntimeEnvForWapp(
   if (wapp.towerBindingId) {
     const appNsec = store.getAppNsec(wapp.id);
     if (!appNsec) {
-      throw new Error(`WApp ${wapp.id} is Tower-backed but has no stored APP_NSEC`);
+      throw new Error(`WApp ${wapp.id} is Tower-backed but has no stored WAPP_NSEC`);
     }
-    env.APP_NSEC = appNsec;
-    env.WAPP_APP_NSEC = appNsec;
+    env.WAPP_NSEC = appNsec;
   }
   return env;
 }

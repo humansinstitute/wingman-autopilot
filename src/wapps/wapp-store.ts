@@ -405,7 +405,7 @@ export class WappStore {
       };
     }
     if (existing.towerBindingId || existing.appNpub) {
-      throw new Error("Existing Tower-backed WApp assignment is missing encrypted APP_NSEC");
+      throw new Error("Existing Tower-backed WApp assignment is missing encrypted WAPP_NSEC");
     }
     const nsec = createWappAppNsec(appKeyMode, appNsec);
     return {

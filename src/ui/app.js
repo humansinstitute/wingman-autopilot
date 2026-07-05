@@ -121,7 +121,7 @@ import {
   renameSession as renameSessionAction,
   resumeNativeSession as resumeNativeSessionAction,
 } from "./sessions/actions.js";
-import { fetchAppLogsApi } from "./services/apps.js";
+import { fetchAppLogsApi, revealWappNsecApi } from "./services/apps.js";
 import { isChatRoute } from "./chat/index.js";
 import { initPrivateChat } from "./chat/private-chat.js";
 import { initIdentityPanels } from "./identity/panels.js";
@@ -2013,6 +2013,7 @@ const appCardsModule = initAppCards({
   fetchAppLogsApi,
   removeApp: (...args) => removeApp(...args),
   removeWapp: (...args) => removeWapp(...args),
+  revealWappNsecApi,
   state,
   formatAppTimestamp,
   formatAppActionLabel,
