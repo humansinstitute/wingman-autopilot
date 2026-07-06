@@ -408,6 +408,7 @@ export class AppProcessManager {
       state.message = message;
       state.updatedAt = new Date().toISOString();
       state.lastSuccessAt = state.updatedAt;
+      state.inProgress = null;
       return this.toStatus(app, state);
     } catch (error) {
       state.status = "failed";
@@ -417,7 +418,9 @@ export class AppProcessManager {
       state.lastFailureAt = state.updatedAt;
       throw error;
     } finally {
-      state.inProgress = null;
+      if (state.inProgress === action) {
+        state.inProgress = null;
+      }
     }
   }
 

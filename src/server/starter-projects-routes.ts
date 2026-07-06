@@ -80,6 +80,7 @@ export interface StarterProjectsApiContext {
       scripts?: AppLifecycleScripts;
       notes?: string;
       ownerNpub?: string | null;
+      env?: AppEnvironmentVariables;
       webApp?: boolean;
       webAppPort?: number | null;
     }) => Promise<AppRecord>;
@@ -89,6 +90,7 @@ export interface StarterProjectsApiContext {
   appProcessManager: {
     getStatus: (id: string) => Promise<AppProcessStatus>;
     setup: (id: string) => Promise<AppProcessStatus>;
+    start: (id: string) => Promise<AppProcessStatus>;
   };
 
   appAliasRegistry: {
@@ -186,7 +188,12 @@ async function registerLaunchedStarterApp(
   label: string,
   scripts: Partial<AppLifecycleScripts>,
   starter: StarterProjectRecord,
-): Promise<{ app: AppRecord; setupStatus: AppProcessStatus | null }> {
+): Promise<{
+  app: AppRecord;
+  setupStatus: AppProcessStatus | null;
+  startStatus: AppProcessStatus | null;
+  startError: string | null;
+}> {
   const scriptPayload: AppLifecycleScripts = {};
   const incoming = scripts ?? {};
   const keys: Array<keyof AppLifecycleScripts> = ["start", "stop", "restart", "setup", "build"];
@@ -226,11 +233,26 @@ async function registerLaunchedStarterApp(
   }
 
   if (!starter.scriptAuto) {
-    return { app, setupStatus: null };
+    return { app, setupStatus: null, startStatus: null, startError: null };
   }
 
   const setupStatus = await ctx.appProcessManager.setup(app.id);
-  return { app, setupStatus };
+  if (setupStatus.status !== "failed" && app.webApp && app.scripts.start) {
+    try {
+      const startStatus = await ctx.appProcessManager.start(app.id);
+      return { app, setupStatus, startStatus, startError: null };
+    } catch (error) {
+      const startStatus = await ctx.appProcessManager.getStatus(app.id).catch(() => null);
+      return {
+        app,
+        setupStatus,
+        startStatus,
+        startError: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  return { app, setupStatus, startStatus: null, startError: null };
 }
 
 export async function handleStarterProjectsApi(
@@ -299,7 +321,7 @@ export async function handleStarterProjectsApi(
         protectBranches,
         createDeployedBranch,
       });
-      const { app, setupStatus } = await registerLaunchedStarterApp(
+      const { app, setupStatus, startStatus, startError } = await registerLaunchedStarterApp(
         ctx,
         ownerNpub,
         cloneResult.root,
@@ -317,6 +339,11 @@ export async function handleStarterProjectsApi(
           setup: {
             attempted: starter.scriptAuto,
             status: setupStatus ?? null,
+          },
+          start: {
+            attempted: Boolean(starter.scriptAuto && starter.webApp && app.scripts.start),
+            status: startStatus ?? null,
+            error: startError,
           },
           github: cloneResult.github ?? null,
         },
