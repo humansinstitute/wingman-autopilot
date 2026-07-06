@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
+import { finalizeEvent, generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
 
 import { AccessActions } from "../auth/access-control";
 import type { RequestAuthContext } from "../auth/request-context";
@@ -13,6 +13,7 @@ function createAuthContext(adminNpub: string, adminNpubs: string[] = [adminNpub]
   const normalizedAdmins = adminNpubs.map((npub) => normaliseNpub(npub)).filter((npub): npub is string => Boolean(npub));
   return {
     config: {
+      baseUrl: "",
       registrationEnabled: false,
       connectRelays: [],
       giteaUrl: null,
@@ -57,6 +58,21 @@ const requestAuthContext = (): RequestAuthContext => ({
   actorNpub: null,
   session: null,
 });
+
+const signLoginEvent = (secretKey: Uint8Array, url = "http://localhost/api/auth/session") =>
+  finalizeEvent(
+    {
+      kind: 27235,
+      created_at: Math.floor(Date.now() / 1000),
+      tags: [
+        ["u", url],
+        ["method", "POST"],
+        ["purpose", "wingman-login"],
+      ],
+      content: "wingman-login",
+    },
+    secretKey,
+  );
 
 describe("auth routes", () => {
   test("allows the configured admin to bootstrap when registration is disabled", async () => {
@@ -113,6 +129,47 @@ describe("auth routes", () => {
     expect(response?.status).toBe(403);
     await expect(response!.json()).resolves.toMatchObject({
       error: "Registration is currently disabled",
+    });
+  });
+
+  test("accepts a verified signed login event for the submitted npub", async () => {
+    const secretKey = generateSecretKey();
+    const adminNpub = nip19.npubEncode(getPublicKey(secretKey));
+    const request = new Request("http://localhost/api/auth/session", {
+      method: "POST",
+      body: JSON.stringify({ npub: adminNpub, signedEvent: signLoginEvent(secretKey) }),
+    });
+
+    const response = await handleAuthApi(
+      request,
+      new URL(request.url),
+      "POST",
+      requestAuthContext(),
+      createAuthContext(adminNpub),
+    );
+
+    expect(response?.status).toBe(200);
+  });
+
+  test("rejects a signed login event from a different npub", async () => {
+    const submittedNpub = makeNpub();
+    const signerSecretKey = generateSecretKey();
+    const request = new Request("http://localhost/api/auth/session", {
+      method: "POST",
+      body: JSON.stringify({ npub: submittedNpub, signedEvent: signLoginEvent(signerSecretKey) }),
+    });
+
+    const response = await handleAuthApi(
+      request,
+      new URL(request.url),
+      "POST",
+      requestAuthContext(),
+      createAuthContext(submittedNpub),
+    );
+
+    expect(response?.status).toBe(400);
+    await expect(response!.json()).resolves.toMatchObject({
+      error: "signedEvent.pubkey must match npub",
     });
   });
 });

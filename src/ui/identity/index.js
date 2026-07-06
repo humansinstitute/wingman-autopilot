@@ -746,11 +746,14 @@ const generateLocalSecretKey = () => {
   throw new Error("Failed to generate valid private key");
 };
 
-const persistServerSession = async (npub, encryptedNsec) => {
+const persistServerSession = async (npub, encryptedNsec, signedEvent = null) => {
   const body = {
     npub,
     encryptedNsec: typeof encryptedNsec === "string" ? encryptedNsec : null,
   };
+  if (signedEvent && typeof signedEvent === "object") {
+    body.signedEvent = signedEvent;
+  }
   const response = await fetch("/api/auth/session", {
     method: "POST",
     headers: {
@@ -799,6 +802,20 @@ const applyIdentityUpdate = (context, partial) => {
   if (ui && typeof ui.update === "function") {
     ui.update(partial);
   }
+};
+
+const createLoginEventTemplate = () => {
+  const loginUrl = new URL("/api/auth/session", window.location.href);
+  return {
+    kind: 27235,
+    created_at: Math.floor(Date.now() / 1000),
+    tags: [
+      ["u", loginUrl.toString()],
+      ["method", "POST"],
+      ["purpose", "wingman-login"],
+    ],
+    content: "wingman-login",
+  };
 };
 
 const saveCachedSession = ({ npub, expiresAt, method }) => {
@@ -1052,20 +1069,21 @@ const wireNip07Panel = (root, context) => {
 
   loginButton?.addEventListener("click", async () => {
     if (!loginButton) return;
-    if (typeof window === "undefined" || !window.nostr || typeof window.nostr.getPublicKey !== "function") {
+    if (typeof window === "undefined" || !window.nostr || typeof window.nostr.signEvent !== "function") {
       setStatus("No Nostr extension detected.", "error");
       return;
     }
 
     loginButton.disabled = true;
-    setStatus("Requesting permission from extension…");
+    setStatus("Requesting login signature from extension…");
     try {
-      const pubkeyHex = await window.nostr.getPublicKey();
+      const signedEvent = await window.nostr.signEvent(createLoginEventTemplate());
+      const pubkeyHex = signedEvent?.pubkey;
       if (!pubkeyHex || typeof pubkeyHex !== "string") {
-        throw new Error("Extension returned an empty key");
+        throw new Error("Extension returned an empty signature");
       }
       const npub = nip19.npubEncode(pubkeyHex);
-      const { expiresAt } = await persistServerSession(npub, null);
+      const { expiresAt } = await persistServerSession(npub, null, signedEvent);
       saveCachedSession({ npub, expiresAt, method: "nip07" });
       applyIdentityUpdate(context, { npub, method: "nip07", expiresAt, isAuthenticated: true, alias: npub });
       root.classList.add("is-authenticated");

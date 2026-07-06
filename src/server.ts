@@ -2557,6 +2557,7 @@ const handleApi = createApiRouteHandler({
   },
   authApiContext: {
     config: {
+      baseUrl: config.baseUrl,
       registrationEnabled: config.registrationEnabled,
       connectRelays: config.connectRelays,
       giteaUrl: config.giteaUrl,

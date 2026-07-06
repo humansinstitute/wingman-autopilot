@@ -7,6 +7,8 @@ import { normaliseNpub } from "../identity/npub-utils";
 import type { RequestAuthContext } from "../auth/request-context";
 import type { AccessAction } from "../auth/access-control";
 import type { MintSessionCookieOptions, SessionCookiePayload } from "../auth/session-cookie";
+import { nip19, verifyEvent } from "nostr-tools";
+import { configuredPublicRequestUrl, forwardedRequestUrl } from "./request-url";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "HEAD";
 
@@ -18,10 +20,90 @@ function isConfiguredAdminNpub(ctx: AuthApiContext, npub: string | null | undefi
   return Boolean(ctx.adminNpub && normalized && ctx.adminNpub === normalized);
 }
 
+function normalizePathname(value: string): string {
+  const normalized = value.replace(/\/+$/, "");
+  return normalized || "/";
+}
+
+function signedLoginEventNpub(input: unknown, request: Request, url: URL, ctx: AuthApiContext): string {
+  if (!input || typeof input !== "object") {
+    throw new Error("signedEvent must be an object");
+  }
+
+  const event = input as {
+    kind?: unknown;
+    created_at?: unknown;
+    tags?: unknown;
+    content?: unknown;
+    pubkey?: unknown;
+    id?: unknown;
+    sig?: unknown;
+  };
+
+  if (!verifyEvent(event as Parameters<typeof verifyEvent>[0])) {
+    throw new Error("signedEvent signature verification failed");
+  }
+  if (event.kind !== 27235) {
+    throw new Error("signedEvent must be a NIP-98 event");
+  }
+  if (typeof event.pubkey !== "string" || !/^[0-9a-f]{64}$/i.test(event.pubkey)) {
+    throw new Error("signedEvent.pubkey must be a 64 character hex key");
+  }
+  if (!Number.isInteger(event.created_at)) {
+    throw new Error("signedEvent.created_at must be an integer");
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  if (Math.abs(now - Number(event.created_at)) > 300) {
+    throw new Error("signedEvent is too old");
+  }
+
+  const tags = Array.isArray(event.tags) ? event.tags : [];
+  const uTag = tags.find((tag): tag is string[] => Array.isArray(tag) && tag[0] === "u" && typeof tag[1] === "string");
+  const methodTag = tags.find((tag): tag is string[] => Array.isArray(tag) && tag[0] === "method" && typeof tag[1] === "string");
+  const purposeTag = tags.find((tag): tag is string[] => Array.isArray(tag) && tag[0] === "purpose" && typeof tag[1] === "string");
+
+  if (!uTag?.[1]) {
+    throw new Error("signedEvent missing u tag");
+  }
+  if (methodTag?.[1] !== request.method) {
+    throw new Error("signedEvent method tag does not match request");
+  }
+  if (purposeTag?.[1] !== "wingman-login") {
+    throw new Error("signedEvent purpose tag must be wingman-login");
+  }
+
+  let eventUrl: URL;
+  try {
+    eventUrl = new URL(uTag[1]);
+  } catch {
+    throw new Error("signedEvent u tag is not a valid URL");
+  }
+
+  const candidates = [
+    url,
+    forwardedRequestUrl(request, url),
+    ctx.config.baseUrl ? configuredPublicRequestUrl(url, ctx.config.baseUrl) : null,
+  ].filter((candidate): candidate is URL => Boolean(candidate));
+
+  const matchesUrl = candidates.some(
+    (candidate) =>
+      eventUrl.origin === candidate.origin &&
+      normalizePathname(eventUrl.pathname) === normalizePathname(candidate.pathname),
+  );
+
+  if (!matchesUrl) {
+    throw new Error("signedEvent u tag does not match login URL");
+  }
+
+  return nip19.npubEncode(event.pubkey);
+}
+
 // ---------- Context supplied by server.ts ----------
 
 export interface AuthApiContext {
   config: {
+    baseUrl?: string;
     registrationEnabled: boolean;
     connectRelays: string[];
     giteaUrl: string | null;
@@ -83,7 +165,7 @@ export async function handleAuthApi(
       return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
     }
 
-    const { npub, encryptedNsec } = payload as Record<string, unknown>;
+    const { npub, encryptedNsec, signedEvent } = payload as Record<string, unknown>;
     if (typeof npub !== "string" || npub.trim().length === 0) {
       return Response.json({ error: "npub is required" }, { status: 400 });
     }
@@ -91,6 +173,18 @@ export async function handleAuthApi(
     const trimmedNpub = npub.trim();
     if (typeof encryptedNsec !== "undefined" && encryptedNsec !== null && typeof encryptedNsec !== "string") {
       return Response.json({ error: "encryptedNsec must be a string" }, { status: 400 });
+    }
+
+    if (typeof signedEvent !== "undefined" && signedEvent !== null) {
+      try {
+        const signerNpub = signedLoginEventNpub(signedEvent, request, url, ctx);
+        if (normaliseNpub(signerNpub) !== normaliseNpub(trimmedNpub)) {
+          return Response.json({ error: "signedEvent.pubkey must match npub" }, { status: 400 });
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Invalid signedEvent";
+        return Response.json({ error: message }, { status: 400 });
+      }
     }
 
     try {
