@@ -4,22 +4,36 @@ import type { AppRecord } from "../apps/app-registry";
 import { handleStarterProjectsApi, type StarterProjectsApiContext } from "./starter-projects-routes";
 
 const ownerNpub = "npub1jss47s4fvv6usl7tn6yp5zamv2u60923ncgfea0e6thkza5p7c3q0afmzy";
+const towerWorkspaceOwnerNpub = "npub1jvj7txjsge62gmg7ar7kfu23zd95spw32nz5n0663eq4pzzyyjqsnlaz7e";
 
 function normaliseOptionalString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-function makeContext(): StarterProjectsApiContext & {
+function makeContext(options: { starterId?: string } = {}): StarterProjectsApiContext & {
   setupCalls: string[];
   startCalls: string[];
+  towerRegistrations: Array<{
+    towerUrl: string;
+    workspaceOwnerNpub: string;
+    appNpub: string;
+    appName: string;
+  }>;
 } {
   const setupCalls: string[] = [];
   const startCalls: string[] = [];
+  const towerRegistrations: Array<{
+    towerUrl: string;
+    workspaceOwnerNpub: string;
+    appNpub: string;
+    appName: string;
+  }> = [];
   let registeredApp: AppRecord | null = null;
 
   return {
     setupCalls,
     startCalls,
+    towerRegistrations,
     adminNpub: ownerNpub,
     viewerNpub: ownerNpub,
     workspaceScope: {
@@ -36,6 +50,28 @@ function makeContext(): StarterProjectsApiContext & {
     ensureApiAccess: async () => null,
     normaliseOptionalString,
     normaliseNpub: (npub) => normaliseOptionalString(npub),
+    towerUrl: "https://tower.example",
+    towerWorkspaceOwnerNpub,
+    towerRegistrationIdentity: {
+      botNpub: "npub1s4658awhcachmhzk5jhsg256gzdl7e4gh5a9zq8skjyt7g3k2axql224qz",
+      botPubkeyHex: "8461bd03983292c1e41822f425274a27d35cfed2f6518cbcdac53ad0ad297b87",
+      botSecret: new Uint8Array(32).fill(1),
+    },
+    towerWappRegistrar: {
+      register: async (input) => {
+        towerRegistrations.push({
+          towerUrl: input.towerUrl,
+          workspaceOwnerNpub: input.workspaceOwnerNpub,
+          appNpub: input.appNpub,
+          appName: input.appName,
+        });
+        return {
+          workspaceOwnerNpub: input.workspaceOwnerNpub,
+          appNpub: input.appNpub,
+          app: null,
+        };
+      },
+    },
     createRepositoryFromStarter: async () => ({
       root: "/tmp/workspace/code/demo-wapp",
       label: "Demo WApp",
@@ -119,9 +155,13 @@ function makeContext(): StarterProjectsApiContext & {
     starterProjectStore: {
       list: () => [],
       getById: () => ({
-        id: "wapp-starter-sqlite",
-        name: "WApp Starter with SQLite DB",
-        gitUrl: "https://github.com/humansinstitute/wapp-starter.git",
+        id: options.starterId ?? "wapp-starter-sqlite",
+        name: options.starterId === "wapp-starter-tower-pg"
+          ? "WApp Starter with Tower PG Backend"
+          : "WApp Starter with SQLite DB",
+        gitUrl: options.starterId === "wapp-starter-tower-pg"
+          ? "https://github.com/humansinstitute/wapp-starter-tower.git"
+          : "https://github.com/humansinstitute/wapp-starter.git",
         webApp: true,
         scriptAuto: true,
         notes: "Reference WApp starter",
@@ -177,5 +217,46 @@ describe("handleStarterProjectsApi", () => {
     expect(payload.setup.status.status).toBe("idle");
     expect(payload.start.status.status).toBe("running");
     expect(payload.start.error).toBeNull();
+  });
+
+  test("injects Tower workspace env for Tower-backed WApp starters", async () => {
+    const ctx = makeContext({ starterId: "wapp-starter-tower-pg" });
+    const request = new Request("http://localhost/api/apps/starter-projects/launch", {
+      method: "POST",
+      body: JSON.stringify({
+        starterId: "wapp-starter-tower-pg",
+        name: "Tower WApp",
+        githubOwner: "humansinstitute",
+        githubRepo: "tower-wapp",
+      }),
+    });
+
+    const response = await handleStarterProjectsApi(
+      request,
+      new URL(request.url),
+      "POST",
+      {} as any,
+      ctx,
+    );
+
+    expect(response?.status).toBe(201);
+    const app = await ctx.appRegistry.getApp("app-1");
+    expect(app?.env).toMatchObject({
+      TOWER_URL: "https://tower.example",
+      WAPP_OWNER_NPUB: ownerNpub,
+      WAPP_WORKSPACE_OWNER_NPUB: towerWorkspaceOwnerNpub,
+      WORKSPACE_OWNER_NPUB: towerWorkspaceOwnerNpub,
+      WAPP_ALLOWED_NPUBS_JSON: JSON.stringify([ownerNpub]),
+    });
+    expect(app?.env?.WAPP_NSEC).toStartWith("nsec1");
+    expect(ctx.towerRegistrations).toHaveLength(1);
+    expect(ctx.towerRegistrations[0]).toMatchObject({
+      towerUrl: "https://tower.example",
+      workspaceOwnerNpub: towerWorkspaceOwnerNpub,
+      appName: "Tower WApp",
+    });
+    expect(ctx.towerRegistrations[0]?.appNpub).toStartWith("npub1");
+    expect(ctx.setupCalls).toEqual(["app-1"]);
+    expect(ctx.startCalls).toEqual(["app-1"]);
   });
 });

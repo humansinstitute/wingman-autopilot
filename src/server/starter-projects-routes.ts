@@ -5,7 +5,9 @@ import type { AppLifecycleScripts, AppRecord } from "../apps/app-registry";
 import type { AppEnvironmentVariables } from "../apps/app-env";
 import type { AppProcessStatus } from "../apps/app-process-manager";
 import type { StarterProjectRecord } from "../storage/starter-project-store";
-import { createWappAppNsec } from "../wapps/app-key";
+import type { RuntimeBotIdentity } from "../agent-chat/types";
+import { createWappAppNsec, deriveWappAppNpubFromNsec } from "../wapps/app-key";
+import { TowerWappRegistrationError, type TowerWappRegistrar } from "../wapps/tower-registration";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "HEAD";
 
@@ -72,6 +74,10 @@ export interface StarterProjectsApiContext {
     status: AppProcessStatus,
     options?: { ownerAlias?: string | null; subdomainAlias?: string | null },
   ) => Record<string, unknown>;
+  towerUrl?: string | null;
+  towerWorkspaceOwnerNpub?: string | null;
+  towerRegistrationIdentity?: RuntimeBotIdentity | null;
+  towerWappRegistrar?: TowerWappRegistrar;
 
   appRegistry: {
     registerApp: (input: {
@@ -174,11 +180,72 @@ function slugifyDirectoryName(input: string): string {
   return slug;
 }
 
-function buildStarterManagedEnv(starter: StarterProjectRecord): AppEnvironmentVariables | undefined {
-  if (starter.id !== "wapp-starter-tower-pg") return undefined;
-  return {
+function isTowerBackedStarter(starter: StarterProjectRecord): boolean {
+  return starter.id === "wapp-starter-tower-pg";
+}
+
+function buildStarterManagedEnv(
+  starter: StarterProjectRecord,
+  ownerNpub: string,
+  workspaceOwnerNpub: string,
+  towerUrl: string | null | undefined,
+): AppEnvironmentVariables | undefined {
+  if (!isTowerBackedStarter(starter)) return undefined;
+  const env: AppEnvironmentVariables = {
+    WAPP_ALLOWED_NPUBS_JSON: JSON.stringify([ownerNpub]),
+    WAPP_OWNER_NPUB: ownerNpub,
+    WAPP_WORKSPACE_OWNER_NPUB: workspaceOwnerNpub,
     WAPP_NSEC: createWappAppNsec("generate", null),
+    WORKSPACE_OWNER_NPUB: workspaceOwnerNpub,
   };
+  if (towerUrl?.trim()) {
+    env.TOWER_URL = towerUrl.trim().replace(/\/$/, "");
+  }
+  return env;
+}
+
+async function registerTowerBackedStarterApp(
+  ctx: StarterProjectsApiContext,
+  starter: StarterProjectRecord,
+  app: AppRecord,
+  workspaceOwnerNpub: string,
+  appName: string,
+): Promise<void> {
+  if (!isTowerBackedStarter(starter)) return;
+  const towerUrl = ctx.towerUrl?.trim().replace(/\/$/, "");
+  if (!towerUrl) {
+    throw new TowerWappRegistrationError("Tower-backed starter requires a Tower URL", {
+      status: 503,
+      detailCode: "tower_url_missing",
+    });
+  }
+  if (!ctx.towerRegistrationIdentity) {
+    throw new TowerWappRegistrationError("Tower-backed starter requires a configured Wingman instance identity for Tower registration", {
+      status: 503,
+      detailCode: "tower_registration_identity_missing",
+    });
+  }
+  const appNsec = app.env?.WAPP_NSEC;
+  if (!appNsec) {
+    throw new TowerWappRegistrationError("Tower-backed starter app is missing WAPP_NSEC", {
+      status: 503,
+      detailCode: "wapp_nsec_missing",
+    });
+  }
+  const registrar = ctx.towerWappRegistrar;
+  if (!registrar) {
+    throw new TowerWappRegistrationError("Tower-backed starter requires a Tower WApp registrar", {
+      status: 503,
+      detailCode: "tower_registrar_missing",
+    });
+  }
+  await registrar.register({
+    towerUrl,
+    workspaceOwnerNpub,
+    appNpub: deriveWappAppNpubFromNsec(appNsec),
+    appName,
+    authority: ctx.towerRegistrationIdentity,
+  });
 }
 
 async function registerLaunchedStarterApp(
@@ -207,6 +274,7 @@ async function registerLaunchedStarterApp(
     const setupCommand = ctx.normaliseOptionalString(starter.setupCommand) ?? "bun run setup";
     scriptPayload.setup = setupCommand;
   }
+  const towerWorkspaceOwnerNpub = ctx.towerWorkspaceOwnerNpub?.trim() || ownerNpub;
 
   const app = await ctx.appRegistry.registerApp({
     label,
@@ -214,9 +282,11 @@ async function registerLaunchedStarterApp(
     scripts: Object.keys(scriptPayload).length > 0 ? scriptPayload : undefined,
     notes: starter.notes ?? undefined,
     ownerNpub,
-    env: buildStarterManagedEnv(starter),
+    env: buildStarterManagedEnv(starter, ownerNpub, towerWorkspaceOwnerNpub, ctx.towerUrl),
     webApp: Boolean(starter.webApp),
   });
+
+  await registerTowerBackedStarterApp(ctx, starter, app, towerWorkspaceOwnerNpub, label);
 
   try {
     let project = ctx.npubProjectStore.getByPath(ownerNpub, root);
@@ -350,6 +420,15 @@ export async function handleStarterProjectsApi(
         { status: 201 },
       );
     } catch (error) {
+      if (error instanceof TowerWappRegistrationError) {
+        const status = error.status && error.status >= 400 && error.status < 500 ? 400 : 502;
+        return Response.json({
+          error: "wapp-tower-registration-failed",
+          message: error.message,
+          detailCode: error.detailCode,
+          details: error.details ?? null,
+        }, { status });
+      }
       const message = error instanceof Error ? error.message : String(error);
       return Response.json({ error: message }, { status: 400 });
     }

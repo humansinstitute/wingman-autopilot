@@ -94,6 +94,7 @@ import { BotKeyStore } from "./identity/bot-key-store";
 import { createBotKeyApiHandler } from "./identity/bot-key-api";
 import { createBotCryptoApiHandler } from "./identity/bot-crypto-api";
 import { loadWingmanInstanceIdentity } from "./identity/wingman-instance-identity";
+import { HttpTowerWappRegistrar } from "./wapps/tower-registration";
 import { isAgentDispatchAdminOnlyEnabled, isSharedAgentDispatchEnabled, isSharedInstanceAccessEnabled } from "./shared-instance";
 import { WorkspaceSubscriptionManager } from './agent-chat/subscription-runtime';
 import { DispatchPipelineRuntime } from './agent-chat/dispatch-pipelines/runtime';
@@ -251,6 +252,20 @@ import {
 
 const config = loadConfig();
 const wingmanInstanceIdentity = loadWingmanInstanceIdentity();
+const defaultTowerUrl = (
+  Bun.env.WAPP_TOWER_URL?.trim() ||
+  Bun.env.TOWER_URL?.trim() ||
+  Bun.env.WINGMAN_TOWER_URL?.trim() ||
+  "http://127.0.0.1:3100"
+).replace(/\/$/, "");
+const towerWappRegistrar = new HttpTowerWappRegistrar();
+const towerRegistrationIdentity = wingmanInstanceIdentity
+  ? {
+    botNpub: wingmanInstanceIdentity.npub,
+    botPubkeyHex: wingmanInstanceIdentity.pubkeyHex,
+    botSecret: wingmanInstanceIdentity.secretKey,
+  }
+  : null;
 
 function resolveScheduledPipelineAgent(
   requestedAgent: string | null | undefined,
@@ -279,13 +294,8 @@ if (wingmanInstanceIdentity) {
   console.warn("[identity] WINGMAN_PRIV not configured; shared Wingman bot identity is missing");
 }
 appProcessManager.configureTowerRegistration({
-  identity: wingmanInstanceIdentity
-    ? {
-      botNpub: wingmanInstanceIdentity.npub,
-      botPubkeyHex: wingmanInstanceIdentity.pubkeyHex,
-      botSecret: wingmanInstanceIdentity.secretKey,
-    }
-    : null,
+  identity: towerRegistrationIdentity,
+  registrar: towerWappRegistrar,
 });
 const migratedUserSettingCount = userSettingsStore.migrateSensitiveValues();
 if (migratedUserSettingCount > 0) {
@@ -2698,22 +2708,29 @@ const handleApi = createApiRouteHandler({
   AccessActions,
 
   // Per-request context builders
-  buildStarterProjectsContext: (workspaceScope, viewerNpub) => ({
-    adminNpub,
-    workspaceScope,
-    viewerNpub,
-    AccessActions,
-    ensureApiAccess,
-    normaliseOptionalString,
-    normaliseNpub,
-    createRepositoryFromStarter,
-    buildAppResponse,
-    appRegistry,
-    appProcessManager,
-    appAliasRegistry,
-    starterProjectStore,
-    npubProjectStore,
-  }),
+  buildStarterProjectsContext: (workspaceScope, viewerNpub) => {
+    const defaultTowerBinding = wappStore.getDefaultTowerBinding();
+    return {
+      adminNpub,
+      workspaceScope,
+      viewerNpub,
+      AccessActions,
+      ensureApiAccess,
+      normaliseOptionalString,
+      normaliseNpub,
+      createRepositoryFromStarter,
+      buildAppResponse,
+      appRegistry,
+      appProcessManager,
+      appAliasRegistry,
+      towerUrl: defaultTowerBinding?.towerUrl ?? defaultTowerUrl,
+      towerWorkspaceOwnerNpub: defaultTowerBinding?.workspaceOwnerNpub ?? null,
+      towerRegistrationIdentity,
+      towerWappRegistrar,
+      starterProjectStore,
+      npubProjectStore,
+    };
+  },
   buildAppsContext: (appsAuthContext, workspaceScopeOverride, canAccessAppOverride) => {
     const effectiveAppsAuthContext = getEffectiveOwnerAuthContext(appsAuthContext);
     const appsWorkspaceScope = workspaceScopeOverride ?? resolveWorkspace(effectiveAppsAuthContext);
@@ -2807,13 +2824,8 @@ const handleApi = createApiRouteHandler({
       wappStore,
       publisher: wappPublisher,
       scopeAccessResolver: wappScopeAccessResolver,
-      towerRegistrationIdentity: wingmanInstanceIdentity
-        ? {
-          botNpub: wingmanInstanceIdentity.npub,
-          botPubkeyHex: wingmanInstanceIdentity.pubkeyHex,
-          botSecret: wingmanInstanceIdentity.secretKey,
-        }
-        : null,
+      towerRegistrationIdentity,
+      towerWappRegistrar,
       buildLaunchUrl: (alias, app) => {
         const aliasUrl = buildAppHostUrl(alias);
         if (aliasUrl) {
