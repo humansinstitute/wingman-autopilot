@@ -945,13 +945,32 @@ export const initAppDialogs = ({
       await refreshApps({ skipRender: false });
       const setupStatus = payload?.setup?.status;
       const setupAttempted = Boolean(payload?.setup?.attempted);
+      const startStatus = payload?.start?.status;
+      const startAttempted = Boolean(payload?.start?.attempted);
+      const startError = typeof payload?.start?.error === "string" ? payload.start.error.trim() : "";
       const warnings = Array.isArray(payload?.github?.protection?.warnings) ? payload.github.protection.warnings : [];
       if (setupAttempted) {
         const exitCode = typeof setupStatus?.lastExitCode === "number" ? setupStatus.lastExitCode : null;
-        if (exitCode === 0) {
-          showToast("Starter project created and setup completed", { type: "success" });
+        const setupMessage = typeof setupStatus?.message === "string" ? setupStatus.message : "";
+        if (exitCode !== 0) {
+          showToast(
+            setupMessage
+              ? `Starter created, but setup failed: ${setupMessage}`
+              : "Starter created, but setup failed. Open the WApp card logs for details.",
+            { type: "error", duration: 10000 },
+          );
+        } else if (startAttempted && startStatus?.status !== "running") {
+          const startMessage = startError || (typeof startStatus?.message === "string" ? startStatus.message : "");
+          showToast(
+            startMessage
+              ? `Starter setup completed, but start failed: ${startMessage}`
+              : "Starter setup completed, but start failed. Open the WApp card logs for details.",
+            { type: "error", duration: 10000 },
+          );
+        } else if (startAttempted) {
+          showToast("Starter project created, setup completed, and app started", { type: "success" });
         } else {
-          showToast("Starter project created, but setup command reported an issue", { type: "error" });
+          showToast("Starter project created and setup completed", { type: "success" });
         }
       } else if (warnings.length > 0) {
         showToast(`Starter project created, but branch protection needs review: ${warnings[0]}`, { type: "warning", duration: 8000 });

@@ -21,7 +21,8 @@ import {
   startProcessFromConfig,
   stopProcess,
 } from "../agents/pm2-wrapper";
-import { readCombinedLogs } from "../agents/log-reader";
+import { readCombinedLogs, readLogTail } from "../agents/log-reader";
+import { sanitizeLogEntry } from "../logging/log-sanitizer";
 import { runtimePortRegistry } from "./runtime-port-registry";
 import { waitForListeningPort, waitForTcpPort } from "../utils/port-utils";
 import { wappStore, type WappStore } from "../wapps/wapp-store";
@@ -108,6 +109,39 @@ const ACTION_STATUS: Record<AppLifecycleAction, AppRuntimeStatus> = {
   setup: "setting-up",
   build: "building",
 };
+
+function summarizeCommandOutput(output: string, fallback: string): string {
+  const lines = output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  const meaningful = [...lines].reverse().find((line) =>
+    !line.startsWith("$ ")
+    && !/^bun v\d/i.test(line)
+    && !/^error: script ".+" exited with code \d+$/i.test(line)
+  );
+  return meaningful ? `${fallback}: ${meaningful.slice(0, 240)}` : fallback;
+}
+
+function oneShotLogNames(app: AppRecord, action?: "setup" | "build"): string[] {
+  const actions = action ? [action] : ["setup", "build"] as const;
+  const prefixes = [app.id, app.pm2Name].filter((value): value is string => Boolean(value));
+  return prefixes.flatMap((prefix) => actions.map((entry) => `${prefix}-${entry}.log`));
+}
+
+async function readOneShotLogs(app: AppRecord, logsDir: string, lines: number): Promise<string[]> {
+  const entries: string[] = [];
+  for (const logName of oneShotLogNames(app)) {
+    const content = await readLogTail(join(logsDir, logName), lines);
+    for (const line of content.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const sanitized = sanitizeLogEntry(`[${logName}] ${trimmed}`);
+      if (sanitized) entries.push(sanitized);
+    }
+  }
+  return entries;
+}
 
 export class AppProcessManager {
   private readonly registry: AppRegistry;
@@ -295,10 +329,11 @@ export class AppProcessManager {
     return this.runAction(appId, "build", async (app) => {
       const script = this.requireScript(app, "build");
       const result = await this.runOneShot(app, script, "build");
+      const failureMessage = `Build failed with exit code ${result.exitCode}`;
       return {
         finalStatus: result.exitCode === 0 ? ("idle" as AppRuntimeStatus) : ("failed" as AppRuntimeStatus),
         exitCode: result.exitCode,
-        message: result.exitCode === 0 ? "Build completed" : `Build failed with exit code ${result.exitCode}`,
+        message: result.exitCode === 0 ? "Build completed" : summarizeCommandOutput(result.output, failureMessage),
       };
     });
   }
@@ -308,10 +343,11 @@ export class AppProcessManager {
       const script = this.requireScript(app, "setup");
       await this.ensureTowerWappRegistered(app);
       const result = await this.runOneShot(app, script, "setup");
+      const failureMessage = `Setup failed with exit code ${result.exitCode}`;
       return {
         finalStatus: result.exitCode === 0 ? ("idle" as AppRuntimeStatus) : ("failed" as AppRuntimeStatus),
         exitCode: result.exitCode,
-        message: result.exitCode === 0 ? "Setup completed" : `Setup failed with exit code ${result.exitCode}`,
+        message: result.exitCode === 0 ? "Setup completed" : summarizeCommandOutput(result.output, failureMessage),
       };
     });
   }
@@ -325,16 +361,22 @@ export class AppProcessManager {
       throw new Error(`Unknown app: ${appId}`);
     }
 
-    // If we have PM2 info, use that
-    if (app.pm2Name && app.logsDir) {
+    const { userRootDir, isAdmin } = this.resolveUserContext(app);
+    const resolvedLogsDir = app.logsDir ?? getLogsDirectory(userRootDir, isAdmin);
+    const combinedLogs: string[] = [];
+
+    const oneShotLogs = await readOneShotLogs(app, resolvedLogsDir, lines);
+    combinedLogs.push(...oneShotLogs);
+
+    if (app.pm2Name) {
       try {
-        return await readCombinedLogs(app.logsDir, app.pm2Name, lines);
+        combinedLogs.push(...await readCombinedLogs(resolvedLogsDir, app.pm2Name, lines));
       } catch {
-        // Fall through to empty
+        // Fall through to one-shot logs.
       }
     }
 
-    return [];
+    return combinedLogs.slice(-lines);
   }
 
   async clearLogs(appId: string): Promise<void> {
@@ -342,12 +384,11 @@ export class AppProcessManager {
     if (!app) {
       throw new Error(`Unknown app: ${appId}`);
     }
-    if (!app.logsDir) {
-      return;
-    }
+    const { userRootDir, isAdmin } = this.resolveUserContext(app);
+    const logsDir = app.logsDir ?? getLogsDirectory(userRootDir, isAdmin);
 
     await clearAppLogFiles({
-      logsDir: app.logsDir,
+      logsDir,
       appId: app.id,
       processName: app.pm2Name ?? null,
     });
@@ -582,6 +623,9 @@ export class AppProcessManager {
     const { userRootDir, isAdmin } = this.resolveUserContext(app);
     const logsDir = getLogsDirectory(userRootDir, isAdmin);
     await mkdir(logsDir, { recursive: true });
+    if (app.logsDir !== logsDir) {
+      await this.registry.updateApp(app.id, { logsDir });
+    }
 
     // Build command with port if web app
     let command = script;
