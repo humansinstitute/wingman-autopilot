@@ -11397,8 +11397,10 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
 }
 
 .wm-live-split {
+  --wm-live-chat-rail-width: 3.75rem;
+  --wm-live-split-gap: 0.75rem;
   display: flex;
-  gap: 0.75rem;
+  gap: var(--wm-live-split-gap);
   flex: 1;
   min-height: 0;
   overflow: hidden;
@@ -11469,8 +11471,13 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
 }
 
 .wm-live-split--chat-collapsed > .wm-live-chat-col {
-  flex: 0 0 3.75rem;
+  flex: 0 0 var(--wm-live-chat-rail-width);
   align-items: stretch;
+}
+
+.wm-live-split--chat-collapsed {
+  --wm-live-chat-rail-width: 3rem;
+  --wm-live-split-gap: 0.5rem;
 }
 
 .wm-live-split--chat-collapsed > .wm-live-chat-col > .wm-live-main,
@@ -11479,7 +11486,7 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
 }
 
 .wm-live-split--chat-collapsed > .wm-webview-col {
-  flex: 1 1 auto;
+  flex: 1 1 calc(100% - var(--wm-live-chat-rail-width) - var(--wm-live-split-gap));
 }
 
 .wm-live-chat-rail {
@@ -12173,8 +12180,8 @@ body[data-theme="light"] .wm-writer-code-file .token.comment {
   display: grid;
   align-content: start;
   gap: 0.65rem;
-  width: 22rem;
-  max-width: 38vw;
+  width: clamp(18rem, 24vw, 22rem);
+  max-width: none;
   min-height: 0;
   padding: 0.7rem 1rem;
   border-left: 1px solid var(--border-primary);
