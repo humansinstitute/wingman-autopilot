@@ -11999,6 +11999,14 @@ body[data-theme="light"] .wm-writer-code-file .token.comment {
   margin-top: 0.6rem;
 }
 
+.wm-tiptap-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .wm-tiptap-body {
   flex: 1;
   min-height: 0;
@@ -12108,10 +12116,45 @@ body[data-theme="light"] .wm-writer-code-file .token.comment {
 
 .wm-tiptap-comments {
   display: grid;
+  align-content: start;
   gap: 0.65rem;
+  width: 22rem;
+  max-width: 38vw;
+  min-height: 0;
   padding: 0.7rem 1rem;
-  border-top: 1px solid var(--border-primary);
+  border-left: 1px solid var(--border-primary);
   background: var(--bg-secondary);
+  overflow: hidden;
+  transition: width 0.16s ease, padding 0.16s ease;
+}
+
+.wm-tiptap-comments[data-expanded="false"] {
+  width: 3.75rem;
+  padding-inline: 0.55rem;
+}
+
+.wm-tiptap-comments[data-expanded="false"] .wm-tiptap-comments__header {
+  flex-direction: column;
+  align-items: center;
+}
+
+.wm-tiptap-comments[data-expanded="false"] .wm-tiptap-comments__header h3 {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+}
+
+.wm-tiptap-comments[data-expanded="false"] .wm-tiptap-comments__count {
+  min-width: 1.35rem;
+}
+
+.wm-tiptap-comments[data-expanded="false"] .wm-tiptap-comments__toggle {
+  writing-mode: vertical-rl;
+  min-width: 2.25rem;
+  min-height: 6rem;
+  padding: 0.55rem 0.25rem;
 }
 
 .wm-tiptap-comments__header {
@@ -12179,6 +12222,13 @@ body[data-theme="light"] .wm-writer-code-file .token.comment {
   gap: 0.5rem;
 }
 
+.wm-tiptap-comments__form-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.45rem;
+}
+
 .wm-tiptap-comments textarea {
   width: 100%;
   box-sizing: border-box;
@@ -12194,6 +12244,23 @@ body[data-theme="light"] .wm-writer-code-file .token.comment {
 .wm-tiptap-comments textarea:focus {
   outline: 2px solid #7c9cff;
   outline-offset: 1px;
+}
+
+.wm-tiptap-comments__image {
+  min-height: 2rem;
+  padding: 0.25rem 0.65rem;
+  border: 1px solid var(--border-primary);
+  border-radius: 0.35rem;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.wm-tiptap-comments__image:focus-visible {
+  outline: 2px solid #7c9cff;
+  outline-offset: 2px;
 }
 
 .wm-tiptap-comments__list {
@@ -12257,12 +12324,64 @@ body[data-theme="light"] .wm-writer-code-file .token.comment {
   gap: 0.45rem;
 }
 
-.wm-tiptap-comments__message p {
-  margin: 0.15rem 0 0;
+.wm-tiptap-comments__message-body {
+  margin-top: 0.15rem;
   color: var(--text-primary);
   font-size: 0.88rem;
   line-height: 1.45;
-  white-space: pre-wrap;
+}
+
+.wm-tiptap-comments__message-body p,
+.wm-tiptap-comments__message-body ul,
+.wm-tiptap-comments__message-body ol,
+.wm-tiptap-comments__message-body blockquote,
+.wm-tiptap-comments__message-body pre {
+  margin: 0.35rem 0 0;
+}
+
+.wm-tiptap-comments__message-body p:first-child,
+.wm-tiptap-comments__message-body ul:first-child,
+.wm-tiptap-comments__message-body ol:first-child,
+.wm-tiptap-comments__message-body blockquote:first-child,
+.wm-tiptap-comments__message-body pre:first-child {
+  margin-top: 0;
+}
+
+.wm-tiptap-comments__message-body pre {
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 0.65rem;
+  border-radius: 0.35rem;
+  background: #000;
+  color: #f8fafc;
+}
+
+.wm-tiptap-comments__message-body code {
+  font-family: ui-monospace, "SF Mono", "Cascadia Mono", "Segoe UI Mono", monospace;
+}
+
+.wm-tiptap-comments__message-body pre code {
+  background: transparent;
+  color: #f8fafc;
+}
+
+.wm-tiptap-comments__message-body :not(pre) > code {
+  padding: 0.1rem 0.25rem;
+  border-radius: 0.25rem;
+  background: var(--bg-tertiary);
+}
+
+.wm-tiptap-comments__message-body img {
+  display: block;
+  max-width: 100%;
+  max-height: 18rem;
+  margin-top: 0.45rem;
+  border-radius: 0.35rem;
+  object-fit: contain;
+}
+
+.wm-tiptap-comments__message-body a {
+  color: #7c9cff;
 }
 
 .wm-tiptap-comments__empty {
@@ -12270,6 +12389,16 @@ body[data-theme="light"] .wm-writer-code-file .token.comment {
 }
 
 @media (max-width: 768px) {
+  .wm-tiptap-workspace {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .wm-tiptap-body {
+    flex: 1;
+  }
+
   .wm-tiptap-toolbar {
     position: sticky;
     top: 0;
@@ -12288,11 +12417,41 @@ body[data-theme="light"] .wm-writer-code-file .token.comment {
   }
 
   .wm-tiptap-comments {
+    width: auto;
+    max-width: none;
     padding: 0.55rem 0.75rem;
+    border-top: 1px solid var(--border-primary);
+    border-left: 0;
+  }
+
+  .wm-tiptap-comments[data-expanded="false"] {
+    width: auto;
+    padding-inline: 0.75rem;
+  }
+
+  .wm-tiptap-comments[data-expanded="false"] .wm-tiptap-comments__header {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .wm-tiptap-comments[data-expanded="false"] .wm-tiptap-comments__header h3 {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip: auto;
+  }
+
+  .wm-tiptap-comments[data-expanded="false"] .wm-tiptap-comments__toggle {
+    writing-mode: horizontal-tb;
+    min-width: 0;
+    min-height: 2.4rem;
+    padding: 0.25rem 0.65rem;
   }
 
   .wm-tiptap-comments__toggle,
   .wm-tiptap-comments__status,
+  .wm-tiptap-comments__image,
   .wm-tiptap-comments .wm-button {
     min-height: 2.4rem;
   }

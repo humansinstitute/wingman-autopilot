@@ -1,27 +1,10 @@
 import { Editor } from "/vendor/tiptap-bundle.js";
 import { createAutopilotTiptapExtensions } from "./extensions.js";
-import {
-  inspectMarkdownForRichEditing,
-  markdownToProseMirrorDoc,
-  proseMirrorDocToMarkdown,
-} from "./markdown-codecs.js";
-import {
-  decodeBase64ToUint8Array,
-  decodeBytesToText,
-  encodeTextToBytes,
-  encodeUint8ArrayToBase64,
-} from "../core/encoding.js";
+import { inspectMarkdownForRichEditing, markdownToProseMirrorDoc, proseMirrorDocToMarkdown } from "./markdown-codecs.js";
+import { decodeBase64ToUint8Array, decodeBytesToText, encodeTextToBytes, encodeUint8ArrayToBase64 } from "../core/encoding.js";
 import { createTiptapToolbar } from "./toolbar.js";
-import {
-  getParentDirectory,
-  rewriteImageSourcesForDisplay,
-} from "./file-paths.js";
-import {
-  appendCommentMessage,
-  combineMarkdownAndComments,
-  createCommentThread,
-  parseAutopilotCommentEndmatter,
-} from "./comment-endmatter.js";
+import { getParentDirectory, rewriteImageSourcesForDisplay } from "./file-paths.js";
+import { appendCommentMessage, combineMarkdownAndComments, createCommentThread, parseAutopilotCommentEndmatter } from "./comment-endmatter.js";
 import { createCommentsPanel } from "./comments-panel.js";
 import { handleImagePaste } from "./image-paste.js";
 import { buildCommentAnchor } from "./comment-anchor.js";
@@ -249,9 +232,12 @@ export function createTiptapFilePanel(sessionId, targetFile, deps = {}) {
       panel.append(warningEl);
     }
 
+    const workspace = document.createElement("div");
+    workspace.className = "wm-tiptap-workspace";
     const body = document.createElement("div");
     body.className = "wm-tiptap-body";
-    panel.append(body);
+    workspace.append(body);
+    panel.append(workspace);
 
     if (mode === "source") {
       sourceEditor = document.createElement("textarea");
@@ -282,12 +268,15 @@ export function createTiptapFilePanel(sessionId, targetFile, deps = {}) {
       onSave: () => void handleSave(),
       onToggleMode: toggleMode,
     });
-    panel.insertBefore(toolbar, body);
-    panel.append(createCommentsPanel({
+    panel.insertBefore(toolbar, workspace);
+    workspace.append(createCommentsPanel({
       threads: commentThreads,
       onAddThread: addCommentThread,
       onAddReply: addCommentReply,
       onSetStatus: setCommentStatus,
+      defaultOpen: typeof window !== "undefined" && window.matchMedia?.("(min-width: 900px)")?.matches,
+      fileDirectory,
+      showToast,
     }));
     updateControls();
   }

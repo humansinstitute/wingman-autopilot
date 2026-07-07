@@ -25,7 +25,7 @@ function createPastedImageFilename(file) {
   return `pasted-image-${stamp}-${random}.${guessImageExtension(file?.type)}`;
 }
 
-async function uploadPastedImage(file, fileDirectory) {
+export async function uploadPastedImage(file, fileDirectory) {
   const uploadName = createPastedImageFilename(file);
   const base64 = encodeUint8ArrayToBase64(new Uint8Array(await file.arrayBuffer()));
   const response = await fetch("/api/docs/file", {

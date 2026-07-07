@@ -1,3 +1,7 @@
+import { renderMarkdownToHtml } from "../rendering/markdown.js";
+import { toDisplayImageSrc } from "./file-paths.js";
+import { uploadPastedImage } from "./image-paste.js";
+
 function formatTimestamp(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
@@ -12,6 +16,93 @@ function createDisclosureButton({ text, expanded = false, controls }) {
   button.setAttribute("aria-expanded", expanded ? "true" : "false");
   if (controls) button.setAttribute("aria-controls", controls);
   return button;
+}
+
+function rewriteCommentImageSources(markdown, fileDirectory) {
+  return String(markdown ?? "").replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (match, alt, rawSrc) => {
+    return `![${alt}](${toDisplayImageSrc(fileDirectory, rawSrc)})`;
+  });
+}
+
+function renderCommentBody(body, fileDirectory) {
+  return renderMarkdownToHtml(rewriteCommentImageSources(body, fileDirectory));
+}
+
+function getImageFilesFromPaste(event) {
+  return Array.from(event.clipboardData?.items ?? [])
+    .filter((item) => item.kind === "file" && String(item.type || "").startsWith("image/"))
+    .map((item) => item.getAsFile())
+    .filter((file) => file instanceof File);
+}
+
+function insertTextAtCursor(textarea, text) {
+  const start = textarea.selectionStart ?? textarea.value.length;
+  const end = textarea.selectionEnd ?? textarea.value.length;
+  const prefix = textarea.value.slice(0, start);
+  const suffix = textarea.value.slice(end);
+  const spacerBefore = prefix && !prefix.endsWith("\n") ? "\n" : "";
+  const spacerAfter = suffix && !suffix.startsWith("\n") ? "\n" : "";
+  textarea.value = `${prefix}${spacerBefore}${text}${spacerAfter}${suffix}`;
+  const nextPosition = prefix.length + spacerBefore.length + text.length;
+  textarea.setSelectionRange(nextPosition, nextPosition);
+  textarea.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function createImageUploadButton(textarea, deps) {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "image/*";
+  input.multiple = true;
+  input.hidden = true;
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "wm-tiptap-comments__image";
+  button.textContent = "Image";
+  button.setAttribute("aria-label", "Add image to comment");
+  button.addEventListener("click", () => input.click());
+  input.addEventListener("change", () => {
+    void uploadCommentImages(Array.from(input.files ?? []), textarea, deps).finally(() => {
+      input.value = "";
+    });
+  });
+  return { button, input };
+}
+
+async function uploadCommentImages(files, textarea, deps) {
+  const images = files.filter((file) => file instanceof File && String(file.type || "").startsWith("image/"));
+  if (images.length === 0) return;
+  let uploaded = 0;
+  for (const image of images) {
+    try {
+      const savedName = await uploadPastedImage(image, deps.fileDirectory);
+      insertTextAtCursor(textarea, `![${savedName}](${savedName})`);
+      uploaded += 1;
+    } catch (error) {
+      deps.showToast?.(error instanceof Error ? error.message : "Failed to upload comment image", { type: "error" });
+    }
+  }
+  if (uploaded > 0) {
+    deps.showToast?.(`Uploaded ${uploaded} comment image${uploaded > 1 ? "s" : ""}`, { duration: 2000 });
+  }
+}
+
+function wireCommentImagePaste(textarea, deps) {
+  textarea.addEventListener("paste", (event) => {
+    const images = getImageFilesFromPaste(event);
+    if (images.length === 0) return;
+    event.preventDefault();
+    void uploadCommentImages(images, textarea, deps);
+  });
+}
+
+function appendCommentFormActions(form, textarea, deps, submitButton) {
+  const actions = document.createElement("div");
+  actions.className = "wm-tiptap-comments__form-actions";
+  const upload = createImageUploadButton(textarea, deps);
+  actions.append(upload.button, upload.input, submitButton);
+  form.append(actions);
+  wireCommentImagePaste(textarea, deps);
 }
 
 function renderThread(thread, deps) {
@@ -52,8 +143,9 @@ function renderThread(thread, deps) {
     const meta = document.createElement("div");
     meta.className = "wm-tiptap-comments__meta";
     meta.textContent = [message.author, formatTimestamp(message.createdAt)].filter(Boolean).join(" · ");
-    const body = document.createElement("p");
-    body.textContent = message.body;
+    const body = document.createElement("div");
+    body.className = "wm-tiptap-comments__message-body";
+    body.innerHTML = renderCommentBody(message.body, deps.fileDirectory);
     row.append(meta, body);
     messages.append(row);
   }
@@ -76,7 +168,8 @@ function renderThread(thread, deps) {
   replyButton.type = "submit";
   replyButton.className = "wm-button secondary";
   replyButton.textContent = "Send reply";
-  replyForm.append(replyInput, replyButton);
+  replyForm.append(replyInput);
+  appendCommentFormActions(replyForm, replyInput, deps, replyButton);
   replyToggle.addEventListener("click", () => {
     const isOpen = replyToggle.getAttribute("aria-expanded") === "true";
     replyToggle.setAttribute("aria-expanded", isOpen ? "false" : "true");
@@ -96,10 +189,15 @@ export function createCommentsPanel({
   onAddThread,
   onAddReply,
   onSetStatus,
+  defaultOpen = false,
+  fileDirectory = "",
+  showToast,
 } = {}) {
+  const deps = { onAddReply, onSetStatus, fileDirectory, showToast };
   const panel = document.createElement("aside");
   panel.className = "wm-tiptap-comments";
   panel.dataset.testid = "tiptap-comments-panel";
+  panel.dataset.expanded = defaultOpen ? "true" : "false";
   panel.setAttribute("aria-label", "Markdown comments");
   const bodyId = `tiptap-comments-${Math.random().toString(36).slice(2)}`;
 
@@ -114,8 +212,8 @@ export function createCommentsPanel({
   count.textContent = String(threads.length);
   headerText.append(title, count);
   const panelToggle = createDisclosureButton({
-    text: threads.length > 0 ? "Show comments" : "Add comment",
-    expanded: false,
+    text: defaultOpen ? "Hide comments" : (threads.length > 0 ? "Show comments" : "Add comment"),
+    expanded: defaultOpen,
     controls: bodyId,
   });
   header.append(headerText, panelToggle);
@@ -124,7 +222,7 @@ export function createCommentsPanel({
   const body = document.createElement("div");
   body.id = bodyId;
   body.className = "wm-tiptap-comments__body";
-  body.hidden = true;
+  body.hidden = !defaultOpen;
   panel.append(body);
 
   const newToggle = createDisclosureButton({ text: "Comment on selection" });
@@ -144,7 +242,8 @@ export function createCommentsPanel({
   button.className = "wm-button";
   button.textContent = "Add comment";
   button.dataset.testid = "tiptap-add-comment-button";
-  form.append(textarea, button);
+  form.append(textarea);
+  appendCommentFormActions(form, textarea, { fileDirectory, showToast }, button);
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     onAddThread?.(textarea.value);
@@ -165,7 +264,7 @@ export function createCommentsPanel({
     list.append(empty);
   } else {
     for (const thread of threads) {
-      list.append(renderThread(thread, { onAddReply, onSetStatus }));
+      list.append(renderThread(thread, deps));
     }
   }
   body.append(list);
@@ -174,6 +273,7 @@ export function createCommentsPanel({
     const isOpen = panelToggle.getAttribute("aria-expanded") === "true";
     panelToggle.setAttribute("aria-expanded", isOpen ? "false" : "true");
     body.hidden = isOpen;
+    panel.dataset.expanded = isOpen ? "false" : "true";
     panelToggle.textContent = isOpen
       ? (threads.length > 0 ? "Show comments" : "Add comment")
       : "Hide comments";
