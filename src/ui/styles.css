@@ -11468,6 +11468,48 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
   flex: 1;
 }
 
+.wm-live-split--chat-collapsed > .wm-live-chat-col {
+  flex: 0 0 3.75rem;
+  align-items: stretch;
+}
+
+.wm-live-split--chat-collapsed > .wm-live-chat-col > .wm-live-main,
+.wm-live-split--chat-collapsed > .wm-live-chat-col > .wm-composer-shell {
+  display: none;
+}
+
+.wm-live-split--chat-collapsed > .wm-webview-col {
+  flex: 1 1 auto;
+}
+
+.wm-live-chat-rail {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  height: 100%;
+  border: 1px solid var(--border-primary);
+  border-radius: 0.5rem;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.wm-live-chat-rail:hover,
+.wm-live-chat-rail:focus-visible {
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+  outline: none;
+}
+
+.wm-live-chat-rail span {
+  writing-mode: vertical-rl;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
 .wm-webview-panel {
   flex: 1;
   min-height: 0;
@@ -11654,6 +11696,19 @@ body[data-theme="dark"] .wm-file-editor__editor .ace_cursor {
   .wm-live-split {
     flex-direction: column;
     overflow: hidden;
+  }
+
+  .wm-live-split--chat-collapsed > .wm-live-chat-col {
+    flex: 0 0 auto;
+  }
+
+  .wm-live-split--chat-collapsed > .wm-live-chat-col > .wm-live-main,
+  .wm-live-split--chat-collapsed > .wm-live-chat-col > .wm-composer-shell {
+    display: flex;
+  }
+
+  .wm-live-split--chat-collapsed .wm-live-chat-rail {
+    display: none;
   }
 
   /* Default mobile stacking for non-writer splits (artifacts, webview) */

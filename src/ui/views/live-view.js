@@ -413,6 +413,17 @@ export function initLiveView(deps) {
     return Boolean(document.querySelector(".wm-live-split"));
   }
 
+  function createCollapsedChatRail(onRestore) {
+    const rail = document.createElement("button");
+    rail.type = "button";
+    rail.className = "wm-live-chat-rail";
+    rail.setAttribute("aria-label", "Restore AI chat");
+    rail.title = "Restore AI chat";
+    rail.innerHTML = '<span aria-hidden="true">AI chat</span>';
+    rail.addEventListener("click", onRestore);
+    return rail;
+  }
+
   function shouldRenderLiveForSessionSwitch(sessionId) {
     return (
       hasMountedLiveSplitPanel() ||
@@ -1609,6 +1620,12 @@ export function initLiveView(deps) {
       chatCol.className = "wm-live-chat-col";
       main.append(scrollRegion);
       chatCol.append(main);
+      if (state.writerLayout.mode === "chat-collapsed") {
+        chatCol.prepend(createCollapsedChatRail(() => {
+          state.writerLayout.mode = "chat-narrow";
+          render();
+        }));
+      }
 
       const writerCol = document.createElement("div");
       writerCol.className = "wm-webview-col";

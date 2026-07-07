@@ -189,6 +189,7 @@ export function createCommentsPanel({
   onAddThread,
   onAddReply,
   onSetStatus,
+  onOpenChange,
   defaultOpen = false,
   fileDirectory = "",
   showToast,
@@ -274,6 +275,7 @@ export function createCommentsPanel({
     panelToggle.setAttribute("aria-expanded", isOpen ? "false" : "true");
     body.hidden = isOpen;
     panel.dataset.expanded = isOpen ? "false" : "true";
+    onOpenChange?.(!isOpen);
     panelToggle.textContent = isOpen
       ? (threads.length > 0 ? "Show comments" : "Add comment")
       : "Hide comments";

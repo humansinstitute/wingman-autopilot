@@ -1,13 +1,14 @@
 import { Editor } from "/vendor/tiptap-bundle.js";
 import { createAutopilotTiptapExtensions } from "./extensions.js";
 import { inspectMarkdownForRichEditing, markdownToProseMirrorDoc, proseMirrorDocToMarkdown } from "./markdown-codecs.js";
-import { decodeBase64ToUint8Array, decodeBytesToText, encodeTextToBytes, encodeUint8ArrayToBase64 } from "../core/encoding.js";
 import { createTiptapToolbar } from "./toolbar.js";
 import { getParentDirectory, rewriteImageSourcesForDisplay } from "./file-paths.js";
 import { appendCommentMessage, combineMarkdownAndComments, createCommentThread, parseAutopilotCommentEndmatter } from "./comment-endmatter.js";
 import { createCommentsPanel } from "./comments-panel.js";
 import { handleImagePaste } from "./image-paste.js";
 import { buildCommentAnchor } from "./comment-anchor.js";
+import { createCommentAutosave } from "./comment-autosave.js";
+import { createTiptapFileIo, decodeDocsFileContent } from "./file-io.js";
 const POLL_INTERVAL_MS = 2500;
 
 export function createTiptapFilePanel(sessionId, targetFile, deps = {}) {
@@ -34,8 +35,29 @@ export function createTiptapFilePanel(sessionId, targetFile, deps = {}) {
   let error = null;
   let statusMessage = "";
   let statusType = "info";
+  let commentsPanelOpen = typeof window !== "undefined" && window.matchMedia?.("(min-width: 900px)")?.matches;
   const fileDirectory = getParentDirectory(targetFile);
-
+  const fileIo = createTiptapFileIo(targetFile, {
+    getExpectedMtime: () => lastMtimeMs,
+    setMtime: (value) => { lastMtimeMs = value; },
+    onSaving: ({ renderSaving }) => {
+      saving = true;
+      if (renderSaving) render();
+    },
+  });
+  const commentAutosave = createCommentAutosave({
+    canSave: () => !destroyed && dirty && !saving,
+    save: autosaveComments,
+    onSuccess: () => setStatus("Autosaved comments", "success"),
+    onError: (autosaveError) => {
+      saving = false;
+      const message = autosaveError instanceof Error ? autosaveError.message : "Failed to autosave comments";
+      error = /changed since it was loaded/i.test(message)
+        ? "This file changed on disk. Copy your draft or reload before saving."
+        : message;
+      render();
+    },
+  });
   function setStatus(message, type = "info") {
     statusMessage = message || "";
     statusType = type;
@@ -45,47 +67,14 @@ export function createTiptapFilePanel(sessionId, targetFile, deps = {}) {
     status.dataset.type = statusType;
     status.hidden = !statusMessage;
   }
-
-  async function loadFile() {
-    const response = await fetch(`/api/docs/file/raw?path=${encodeURIComponent(targetFile)}`);
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(data?.error || response.statusText || "Failed to load file");
-    }
-    lastMtimeMs = typeof data?.mtimeMs === "number" ? data.mtimeMs : null;
-    return data?.base64 ? decodeBytesToText(decodeBase64ToUint8Array(data.base64)) : "";
-  }
-
-  async function saveFile(content) {
-    saving = true;
-    render();
-    const response = await fetch("/api/docs/file", {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        path: targetFile,
-        base64: encodeUint8ArrayToBase64(encodeTextToBytes(content)),
-        expectedMtimeMs: lastMtimeMs,
-      }),
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const message = data?.error || response.statusText || "Failed to save file";
-      throw new Error(message);
-    }
-    lastMtimeMs = typeof data?.mtimeMs === "number" ? data.mtimeMs : lastMtimeMs;
-  }
-
   function getCurrentMarkdown() {
     if (mode === "source") return sourceEditor?.value ?? rawContent;
     if (!editor) return rawContent;
     return proseMirrorDocToMarkdown(editor.getJSON());
   }
-
   function getCurrentDocumentMarkdown() {
     return combineMarkdownAndComments(getCurrentMarkdown(), commentThreads);
   }
-
   function syncDirtyState() {
     dirty = getCurrentDocumentMarkdown() !== initialDocumentContent;
     updateControls();
@@ -145,10 +134,11 @@ export function createTiptapFilePanel(sessionId, targetFile, deps = {}) {
 
   async function handleSave() {
     if (saving || !dirty) return;
+    commentAutosave.clear();
     const nextContent = getCurrentMarkdown();
     const nextDocumentContent = combineMarkdownAndComments(nextContent, commentThreads);
     try {
-      await saveFile(nextDocumentContent);
+      await fileIo.saveFile(nextDocumentContent);
       rawContent = nextContent;
       initialDocumentContent = nextDocumentContent;
       dirty = false;
@@ -171,6 +161,19 @@ export function createTiptapFilePanel(sessionId, targetFile, deps = {}) {
     rawContent = getCurrentMarkdown();
     mode = mode === "source" ? "rich" : "source";
     render();
+  }
+
+  async function autosaveComments() {
+    const nextContent = getCurrentMarkdown();
+    const nextDocumentContent = combineMarkdownAndComments(nextContent, commentThreads);
+    await fileIo.saveFile(nextDocumentContent, { renderSaving: false });
+    rawContent = nextContent;
+    initialDocumentContent = nextDocumentContent;
+    dirty = false;
+    saving = false;
+    error = null;
+    updateControls();
+    startPolling();
   }
 
   function renderConflictActions(container) {
@@ -274,7 +277,10 @@ export function createTiptapFilePanel(sessionId, targetFile, deps = {}) {
       onAddThread: addCommentThread,
       onAddReply: addCommentReply,
       onSetStatus: setCommentStatus,
-      defaultOpen: typeof window !== "undefined" && window.matchMedia?.("(min-width: 900px)")?.matches,
+      defaultOpen: commentsPanelOpen,
+      onOpenChange: (open) => {
+        commentsPanelOpen = open;
+      },
       fileDirectory,
       showToast,
     }));
@@ -289,7 +295,7 @@ export function createTiptapFilePanel(sessionId, targetFile, deps = {}) {
       const data = await response.json();
       const mtime = typeof data?.mtimeMs === "number" ? data.mtimeMs : null;
       if (mtime !== null && lastMtimeMs !== null && Math.abs(mtime - lastMtimeMs) > 1) {
-        const content = data.base64 ? decodeBytesToText(decodeBase64ToUint8Array(data.base64)) : "";
+        const content = decodeDocsFileContent(data);
         lastMtimeMs = mtime;
         applyLoadedMarkdown(content);
         setStatus("Reloaded external changes", "info");
@@ -315,7 +321,7 @@ export function createTiptapFilePanel(sessionId, targetFile, deps = {}) {
   async function refreshContent() {
     try {
       error = null;
-      applyLoadedMarkdown(await loadFile());
+      applyLoadedMarkdown(await fileIo.loadFile());
       dirty = false;
       render();
       startPolling();
@@ -348,7 +354,8 @@ export function createTiptapFilePanel(sessionId, targetFile, deps = {}) {
     }
     commentThreads = [...commentThreads, thread];
     syncDirtyState();
-    setStatus("Comment added. Save to write it into the Markdown file.", "info");
+    commentAutosave.queue();
+    setStatus("Comment added. Autosaving...", "info");
     render();
   }
 
@@ -366,6 +373,7 @@ export function createTiptapFilePanel(sessionId, targetFile, deps = {}) {
       return;
     }
     syncDirtyState();
+    commentAutosave.queue();
     render();
   }
 
@@ -374,6 +382,7 @@ export function createTiptapFilePanel(sessionId, targetFile, deps = {}) {
       thread.id === threadId ? { ...thread, status: status === "resolved" ? "resolved" : "open" } : thread
     ));
     syncDirtyState();
+    commentAutosave.queue();
     render();
   }
 
@@ -382,6 +391,7 @@ export function createTiptapFilePanel(sessionId, targetFile, deps = {}) {
     cleanup() {
       destroyed = true;
       stopPolling();
+      commentAutosave.clear();
       destroyEditor();
     },
   };

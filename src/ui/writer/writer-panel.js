@@ -249,17 +249,29 @@ export function createWriterToolbar(currentMode, onModeChange, onClose) {
   const modeGroup = document.createElement("div");
   modeGroup.className = "wm-webview-toolbar-modes";
 
-  const currentViewMode = getWriterViewMode(currentMode);
+  const isChatCollapsed = currentMode === "chat-collapsed";
+  const fullscreenBtn = document.createElement("button");
+  fullscreenBtn.className = `wm-webview-mode-btn wm-writer-fullscreen-toggle${isChatCollapsed ? " active" : ""}`;
+  fullscreenBtn.title = isChatCollapsed ? "Restore AI chat" : "Collapse AI chat";
+  fullscreenBtn.setAttribute("aria-label", isChatCollapsed ? "Restore AI chat" : "Collapse AI chat");
+  fullscreenBtn.setAttribute("aria-pressed", isChatCollapsed ? "true" : "false");
+  fullscreenBtn.textContent = "<-|";
+  fullscreenBtn.addEventListener("click", () => {
+    onModeChange(isChatCollapsed ? "chat-narrow" : "chat-collapsed");
+  });
+
+  const cycleBaseMode = isChatCollapsed ? "chat-narrow" : currentMode;
+  const currentViewMode = getWriterViewMode(cycleBaseMode);
   const viewSizeBtn = document.createElement("button");
   viewSizeBtn.className = "wm-webview-mode-btn wm-writer-view-cycle";
   viewSizeBtn.title = `${currentViewMode.title}; click to cycle`;
   viewSizeBtn.setAttribute("aria-label", "Cycle artifact view size");
   viewSizeBtn.textContent = currentViewMode.label;
   viewSizeBtn.addEventListener("click", () => {
-    onModeChange(getNextWriterViewMode(currentMode).mode);
+    onModeChange(getNextWriterViewMode(cycleBaseMode).mode);
   });
 
-  modeGroup.append(viewSizeBtn);
+  modeGroup.append(fullscreenBtn, viewSizeBtn);
 
   const actionsGroup = document.createElement("div");
   actionsGroup.className = "wm-webview-toolbar-actions";
