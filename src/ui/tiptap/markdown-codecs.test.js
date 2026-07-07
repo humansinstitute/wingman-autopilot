@@ -53,7 +53,7 @@ describe("markdown-codecs", () => {
   });
 
   test("does not repeatedly escape ordinary punctuation", () => {
-    const markdown = "The first implementation should be file-backed. Markdown-compatible fields stay readable.\n";
+    const markdown = "Markdown files (`.md`, `.markdown`, `.mdx`) should stay file-backed.\n";
     const once = proseMirrorDocToMarkdown(markdownToProseMirrorDoc(markdown));
     const twice = proseMirrorDocToMarkdown(markdownToProseMirrorDoc(once));
 

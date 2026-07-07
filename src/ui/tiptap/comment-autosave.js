@@ -6,24 +6,46 @@ export function createCommentAutosave({
   onError,
 } = {}) {
   let timer = null;
+  let pending = false;
+  let activeSave = null;
 
   function clear() {
     if (timer !== null) {
       clearTimeout(timer);
       timer = null;
     }
+    pending = false;
+  }
+
+  function runSave() {
+    pending = false;
+    if (canSave?.() === false) return Promise.resolve();
+    activeSave = Promise.resolve(save?.())
+      .then(() => onSuccess?.())
+      .catch((error) => onError?.(error))
+      .finally(() => {
+        activeSave = null;
+      });
+    return activeSave;
   }
 
   function queue() {
     clear();
+    pending = true;
     timer = setTimeout(() => {
       timer = null;
-      if (canSave?.() === false) return;
-      void Promise.resolve(save?.())
-        .then(() => onSuccess?.())
-        .catch((error) => onError?.(error));
+      void runSave();
     }, delayMs);
   }
 
-  return { queue, clear };
+  function flush() {
+    if (!pending && timer === null) return activeSave ?? Promise.resolve();
+    if (timer !== null) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    return runSave();
+  }
+
+  return { queue, clear, flush };
 }

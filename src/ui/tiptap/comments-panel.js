@@ -186,6 +186,7 @@ function renderThread(thread, deps) {
 
 export function createCommentsPanel({
   threads = [],
+  onPrepareThread,
   onAddThread,
   onAddReply,
   onSetStatus,
@@ -229,6 +230,7 @@ export function createCommentsPanel({
   const newToggle = createDisclosureButton({ text: "Comment on selection" });
   newToggle.classList.add("wm-tiptap-comments__new-toggle");
   body.append(newToggle);
+  let pendingThreadAnchor = null;
 
   const form = document.createElement("form");
   form.className = "wm-tiptap-comments__new";
@@ -247,10 +249,17 @@ export function createCommentsPanel({
   appendCommentFormActions(form, textarea, { fileDirectory, showToast }, button);
   form.addEventListener("submit", (event) => {
     event.preventDefault();
-    onAddThread?.(textarea.value);
+    onAddThread?.(textarea.value, pendingThreadAnchor);
+    pendingThreadAnchor = null;
   });
   newToggle.addEventListener("click", () => {
     const isOpen = newToggle.getAttribute("aria-expanded") === "true";
+    if (!isOpen) {
+      pendingThreadAnchor = onPrepareThread?.() ?? null;
+      if (!pendingThreadAnchor) return;
+    } else {
+      pendingThreadAnchor = null;
+    }
     newToggle.setAttribute("aria-expanded", isOpen ? "false" : "true");
     form.hidden = isOpen;
   });

@@ -39,4 +39,37 @@ describe("comment-autosave", () => {
 
     expect(saves).toBe(0);
   });
+
+  test("flushes a pending save without waiting for the debounce", async () => {
+    let saves = 0;
+    const autosave = createCommentAutosave({
+      delayMs: 1000,
+      canSave: () => true,
+      save: () => {
+        saves += 1;
+      },
+    });
+
+    autosave.queue();
+    await autosave.flush();
+
+    expect(saves).toBe(1);
+  });
+
+  test("clear drops a pending save", async () => {
+    let saves = 0;
+    const autosave = createCommentAutosave({
+      delayMs: 10,
+      canSave: () => true,
+      save: () => {
+        saves += 1;
+      },
+    });
+
+    autosave.queue();
+    autosave.clear();
+    await wait(30);
+
+    expect(saves).toBe(0);
+  });
 });

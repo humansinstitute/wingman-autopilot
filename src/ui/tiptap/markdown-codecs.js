@@ -227,7 +227,7 @@ export function markdownToProseMirrorDoc(markdown = "") {
 }
 
 function escapeText(value = "") {
-  return String(value ?? "").replace(/([`*_{}\[\]()#|>])/g, "\\$1");
+  return String(value ?? "").replace(/([`*_{}#|>])/g, "\\$1");
 }
 
 function markText(text, marks = []) {

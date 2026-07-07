@@ -9,6 +9,8 @@ import { handleImagePaste } from "./image-paste.js";
 import { buildCommentAnchor } from "./comment-anchor.js";
 import { createCommentAutosave } from "./comment-autosave.js";
 import { createTiptapFileIo, decodeDocsFileContent } from "./file-io.js";
+import { bindCommentAutosaveLifecycle } from "./comment-save-lifecycle.js";
+import { renderTiptapConflictActions } from "./conflict-actions.js";
 const POLL_INTERVAL_MS = 2500;
 
 export function createTiptapFilePanel(sessionId, targetFile, deps = {}) {
@@ -58,6 +60,7 @@ export function createTiptapFilePanel(sessionId, targetFile, deps = {}) {
       render();
     },
   });
+  const commentSaveLifecycle = bindCommentAutosaveLifecycle(commentAutosave);
   function setStatus(message, type = "info") {
     statusMessage = message || "";
     statusType = type;
@@ -176,31 +179,6 @@ export function createTiptapFilePanel(sessionId, targetFile, deps = {}) {
     startPolling();
   }
 
-  function renderConflictActions(container) {
-    const actions = document.createElement("div");
-    actions.className = "wm-tiptap-conflict__actions";
-
-    const reloadButton = document.createElement("button");
-    reloadButton.type = "button";
-    reloadButton.className = "wm-button secondary";
-    reloadButton.textContent = "Reload";
-    reloadButton.addEventListener("click", () => {
-      void refreshContent();
-    });
-
-    const copyButton = document.createElement("button");
-    copyButton.type = "button";
-    copyButton.className = "wm-button secondary";
-    copyButton.textContent = "Copy draft";
-    copyButton.addEventListener("click", async () => {
-      await navigator.clipboard?.writeText(getCurrentMarkdown());
-      showToast?.("Draft copied", { duration: 1600 });
-    });
-
-    actions.append(reloadButton, copyButton);
-    container.append(actions);
-  }
-
   function render() {
     if (destroyed) return;
     destroyEditor();
@@ -226,7 +204,13 @@ export function createTiptapFilePanel(sessionId, targetFile, deps = {}) {
       conflict.dataset.testid = "tiptap-conflict-banner";
       conflict.setAttribute("role", "alert");
       conflict.textContent = error;
-      if (/changed on disk/i.test(error)) renderConflictActions(conflict);
+      if (/changed on disk/i.test(error)) {
+        renderTiptapConflictActions(conflict, {
+          onReload: refreshContent,
+          getDraftMarkdown: getCurrentMarkdown,
+          showToast,
+        });
+      }
       panel.append(conflict);
     } else if (warning) {
       const warningEl = document.createElement("div");
@@ -274,6 +258,11 @@ export function createTiptapFilePanel(sessionId, targetFile, deps = {}) {
     panel.insertBefore(toolbar, workspace);
     workspace.append(createCommentsPanel({
       threads: commentThreads,
+      onPrepareThread: () => {
+        const anchor = buildAnchorForSelection();
+        if (!anchor) setStatus("Select document text before adding a comment.", "error");
+        return anchor;
+      },
       onAddThread: addCommentThread,
       onAddReply: addCommentReply,
       onSetStatus: setCommentStatus,
@@ -341,8 +330,8 @@ export function createTiptapFilePanel(sessionId, targetFile, deps = {}) {
     if (parsed.error) error = parsed.error;
   }
 
-  function addCommentThread(body) {
-    const anchor = buildAnchorForSelection();
+  function addCommentThread(body, preparedAnchor = null) {
+    const anchor = preparedAnchor || buildAnchorForSelection();
     if (!anchor) {
       setStatus("Select document text before adding a comment.", "error");
       return;
@@ -389,9 +378,11 @@ export function createTiptapFilePanel(sessionId, targetFile, deps = {}) {
   return {
     panel,
     cleanup() {
+      commentSaveLifecycle.flush();
       destroyed = true;
       stopPolling();
       commentAutosave.clear();
+      commentSaveLifecycle.cleanup();
       destroyEditor();
     },
   };

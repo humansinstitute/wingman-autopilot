@@ -12454,11 +12454,14 @@ body[data-theme="light"] .wm-writer-code-file .token.comment {
   .wm-tiptap-workspace {
     display: flex;
     flex-direction: column;
+    min-height: 0;
     overflow: hidden;
   }
 
   .wm-tiptap-body {
     flex: 1;
+    min-height: 0;
+    overflow: auto;
   }
 
   .wm-tiptap-toolbar {
@@ -12479,16 +12482,48 @@ body[data-theme="light"] .wm-writer-code-file .token.comment {
   }
 
   .wm-tiptap-comments {
+    position: sticky;
+    bottom: 0;
+    z-index: 3;
+    flex: 0 0 auto;
     width: auto;
     max-width: none;
+    max-height: min(46vh, 28rem);
     padding: 0.55rem 0.75rem;
     border-top: 1px solid var(--border-primary);
     border-left: 0;
+    overflow-y: auto;
+    box-shadow: 0 -0.45rem 1.2rem rgba(15, 23, 42, 0.08);
   }
 
   .wm-tiptap-comments[data-expanded="false"] {
     width: auto;
+    max-height: 3.5rem;
     padding-inline: 0.75rem;
+    overflow: hidden;
+  }
+
+  .wm-tiptap-comments__header {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--bg-secondary);
+    padding-block: 0.15rem;
+  }
+
+  .wm-tiptap-comments__body {
+    max-height: calc(46vh - 3.25rem);
+    overflow-y: auto;
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+  }
+
+  .wm-tiptap-comments__form-actions {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .wm-tiptap-comments__form-actions .wm-button {
+    width: 100%;
   }
 
   .wm-tiptap-comments[data-expanded="false"] .wm-tiptap-comments__header {
@@ -12520,6 +12555,8 @@ body[data-theme="light"] .wm-writer-code-file .token.comment {
 
   .wm-tiptap-comments textarea {
     font-size: 1rem;
+    max-height: 8rem;
+    resize: none;
   }
 }
 
