@@ -51,4 +51,13 @@ describe("markdown-codecs", () => {
     const result = inspectMarkdownForRichEditing("Intro\n\n---\n\nOutro");
     expect(result.reasons).not.toContain("frontmatter");
   });
+
+  test("does not repeatedly escape ordinary punctuation", () => {
+    const markdown = "The first implementation should be file-backed. Markdown-compatible fields stay readable.\n";
+    const once = proseMirrorDocToMarkdown(markdownToProseMirrorDoc(markdown));
+    const twice = proseMirrorDocToMarkdown(markdownToProseMirrorDoc(once));
+
+    expect(once).toBe(markdown);
+    expect(twice).toBe(markdown);
+  });
 });
