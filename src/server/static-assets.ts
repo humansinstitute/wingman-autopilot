@@ -1,4 +1,5 @@
-import { extname, join, normalize, sep } from "node:path";
+import { existsSync } from "node:fs";
+import { dirname, extname, join, normalize, sep } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "bun";
@@ -97,6 +98,17 @@ const resolvePackageRoot = (specifier: string) => {
     const packageJsonPath = require.resolve(`${specifier}/package.json`);
     return normalize(join(packageJsonPath, ".."));
   } catch (error) {
+    try {
+      let current = dirname(require.resolve(specifier));
+      while (current && current !== dirname(current)) {
+        if (existsSync(join(current, "package.json"))) {
+          return normalize(current);
+        }
+        current = dirname(current);
+      }
+    } catch {
+      // Fall through to the original warning.
+    }
     const message = error instanceof Error ? error.message : String(error);
     console.warn(`[static] failed to resolve package root for ${specifier}: ${message}`);
     return undefined;
@@ -130,6 +142,30 @@ export const createProjectStaticAssetService = (projectRoot: string): StaticAsse
   registerVendorPackage("alpinejs", "dist", "module.esm.js");
   registerVendorPackage("@xterm/xterm", "", join("lib", "xterm.mjs"));
   registerVendorPackage("@xterm/addon-fit", "", join("lib", "addon-fit.mjs"));
+  registerVendorPackage("@tiptap/core", "dist");
+  registerVendorPackage("@tiptap/starter-kit", "dist");
+  registerVendorPackage("@tiptap/extension-blockquote", "dist");
+  registerVendorPackage("@tiptap/extension-bold", "dist");
+  registerVendorPackage("@tiptap/extension-code", "dist");
+  registerVendorPackage("@tiptap/extension-code-block", "dist");
+  registerVendorPackage("@tiptap/extension-document", "dist");
+  registerVendorPackage("@tiptap/extension-hard-break", "dist");
+  registerVendorPackage("@tiptap/extension-heading", "dist");
+  registerVendorPackage("@tiptap/extension-horizontal-rule", "dist");
+  registerVendorPackage("@tiptap/extension-image", "dist");
+  registerVendorPackage("@tiptap/extension-italic", "dist");
+  registerVendorPackage("@tiptap/extension-link", "dist");
+  registerVendorPackage("@tiptap/extension-list", "dist");
+  registerVendorPackage("@tiptap/extension-paragraph", "dist");
+  registerVendorPackage("@tiptap/extension-placeholder", "dist");
+  registerVendorPackage("@tiptap/extension-strike", "dist");
+  registerVendorPackage("@tiptap/extension-task-item", "dist");
+  registerVendorPackage("@tiptap/extension-task-list", "dist");
+  registerVendorPackage("@tiptap/extension-text", "dist");
+  registerVendorPackage("@tiptap/extension-underline", "dist");
+  registerVendorPackage("@tiptap/extensions", "dist");
+  registerVendorPackage("@tiptap/pm", "dist");
+  registerVendorPackage("linkifyjs", "dist", "linkify.mjs");
 
   const publicRoot = normalize(join(projectRoot, "public"));
   return createStaticAssetService({

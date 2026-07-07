@@ -11918,6 +11918,188 @@ body[data-theme="light"] .wm-writer-code-file .token.comment {
   color: #ef4444;
 }
 
+.wm-tiptap-panel {
+  background: var(--bg-primary);
+}
+
+.wm-tiptap-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid var(--border-primary);
+  background: var(--bg-secondary);
+}
+
+.wm-tiptap-toolbar__button {
+  min-width: 2rem;
+  height: 2rem;
+  padding: 0 0.55rem;
+  border: 1px solid var(--border-primary);
+  border-radius: 0.35rem;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.wm-tiptap-toolbar__button:hover:not(:disabled),
+.wm-tiptap-toolbar__button.is-active {
+  border-color: #7c9cff;
+  background: color-mix(in srgb, #7c9cff 16%, var(--bg-primary));
+}
+
+.wm-tiptap-toolbar__button:focus-visible {
+  outline: 2px solid #7c9cff;
+  outline-offset: 2px;
+}
+
+.wm-tiptap-toolbar__button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.wm-tiptap-toolbar__spacer {
+  flex: 1 1 auto;
+  min-width: 1rem;
+}
+
+.wm-tiptap-status,
+.wm-tiptap-warning,
+.wm-tiptap-conflict {
+  margin: 0.75rem 0.9rem 0;
+  padding: 0.65rem 0.75rem;
+  border-radius: 0.45rem;
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.wm-tiptap-status {
+  border: 1px solid var(--border-primary);
+  color: var(--text-secondary);
+}
+
+.wm-tiptap-warning {
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--text-primary);
+}
+
+.wm-tiptap-conflict {
+  border: 1px solid rgba(239, 68, 68, 0.55);
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--text-primary);
+}
+
+.wm-tiptap-conflict__actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+
+.wm-tiptap-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.wm-tiptap-editor {
+  min-height: 100%;
+  padding: 1rem 1.25rem 2.5rem;
+}
+
+.wm-tiptap-editor .ProseMirror {
+  min-height: 18rem;
+  max-width: 76ch;
+  outline: none;
+  color: var(--text-primary);
+  line-height: 1.65;
+}
+
+.wm-tiptap-editor .ProseMirror:focus {
+  box-shadow: inset 3px 0 0 #7c9cff;
+  padding-left: 0.75rem;
+}
+
+.wm-tiptap-editor .ProseMirror p {
+  margin: 0 0 0.75rem;
+}
+
+.wm-tiptap-editor .ProseMirror h1,
+.wm-tiptap-editor .ProseMirror h2,
+.wm-tiptap-editor .ProseMirror h3,
+.wm-tiptap-editor .ProseMirror h4,
+.wm-tiptap-editor .ProseMirror h5,
+.wm-tiptap-editor .ProseMirror h6 {
+  margin: 1rem 0 0.45rem;
+  letter-spacing: 0;
+}
+
+.wm-tiptap-editor .ProseMirror pre {
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 0.9rem;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 0.45rem;
+  background: var(--code-bg);
+  color: var(--text-secondary);
+}
+
+.wm-tiptap-editor .ProseMirror code {
+  font-family: ui-monospace, "SF Mono", "Cascadia Mono", "Segoe UI Mono", monospace;
+}
+
+.wm-tiptap-editor .ProseMirror :not(pre) > code {
+  padding: 0.12rem 0.28rem;
+  border-radius: 0.25rem;
+  background: var(--bg-tertiary);
+}
+
+.wm-tiptap-editor .ProseMirror blockquote {
+  margin: 0.75rem 0;
+  padding-left: 0.9rem;
+  border-left: 3px solid var(--border-primary);
+  color: var(--text-secondary);
+}
+
+.wm-tiptap-editor .ProseMirror ul,
+.wm-tiptap-editor .ProseMirror ol {
+  margin: 0.5rem 0 0.75rem;
+  padding-left: 1.5rem;
+}
+
+.wm-tiptap-editor .ProseMirror img {
+  display: block;
+  max-width: min(100%, 720px);
+  max-height: 520px;
+  margin: 0.75rem 0;
+  border-radius: 0.35rem;
+  object-fit: contain;
+}
+
+.wm-tiptap-source {
+  display: block;
+  width: calc(100% - 2rem);
+  min-height: calc(100% - 2rem);
+  margin: 1rem;
+  padding: 0.85rem;
+  border: 1px solid var(--border-primary);
+  border-radius: 0.45rem;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: ui-monospace, "SF Mono", "Cascadia Mono", "Segoe UI Mono", monospace;
+  font-size: 0.88rem;
+  line-height: 1.55;
+  resize: none;
+}
+
+.wm-tiptap-source:focus {
+  outline: 2px solid #7c9cff;
+  outline-offset: 2px;
+}
+
 .wm-artifact-file-selector {
   background: var(--bg-primary);
 }

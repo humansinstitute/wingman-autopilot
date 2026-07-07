@@ -31,7 +31,8 @@ import {
 } from "../live/index.js";
 import { attachPathMentionAutocomplete } from "../live/path-mention-autocomplete.js";
 import { findAppForSession, findWebAppForSession, createWebviewPanel, createLayoutToolbar } from "../live/webview-panel.js";
-import { createWriterPanel, createWriterToolbar } from "../writer/writer-panel.js";
+import { createWriterToolbar } from "../writer/writer-panel.js";
+import { createFileEditingPanel } from "../writer/file-editing-panel.js";
 import { createArtifactFileSelector } from "../writer/artifact-file-selector.js";
 import { createMobileTabBar, attachSwipeGesture } from "../writer/mobile-tabs.js";
 import { fetchSessionArtifacts, createArtifactsPanel, createArtifactsToolbar } from "../live/artifacts-panel.js";
@@ -1613,7 +1614,7 @@ export function initLiveView(deps) {
       writerCol.className = "wm-webview-col";
 
       const writerResult = effectiveFile
-        ? createWriterPanel(sessionId, effectiveFile, { showToast })
+        ? createFileEditingPanel(sessionId, effectiveFile, { showToast })
         : createArtifactFileSelector({
             initialPath: activeSession?.workingDirectory || "",
             showToast,

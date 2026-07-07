@@ -18,7 +18,7 @@ import {
   createPdfPreview,
 } from "../files/preview-renderers.js";
 import { buildDocsFileDownloadUrl } from "../files/download-url.js";
-import { createWriterPanel } from "../writer/writer-panel.js";
+import { createFileEditingPanel } from "../writer/file-editing-panel.js";
 
 /**
  * Show a small floating agent picker menu anchored to a button.
@@ -963,7 +963,7 @@ export function initFilesView(deps) {
       if (activeFileWriter && activeFileWriter.path === files.previewPath) {
         previewBody.append(activeFileWriter.panel);
       } else {
-        const { panel: writerEl, cleanup } = createWriterPanel(null, files.previewPath, { showToast });
+        const { panel: writerEl, cleanup } = createFileEditingPanel(null, files.previewPath, { showToast });
         activeFileWriter = { path: files.previewPath, panel: writerEl, cleanup };
         previewBody.append(writerEl);
       }
