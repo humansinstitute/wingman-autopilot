@@ -12043,12 +12043,18 @@ body[data-theme="light"] .wm-writer-code-file .token.comment {
   padding: 0.9rem;
   border: 1px solid rgba(148, 163, 184, 0.25);
   border-radius: 0.45rem;
-  background: var(--code-bg);
-  color: var(--text-secondary);
+  background: #000;
+  color: #f8fafc;
 }
 
 .wm-tiptap-editor .ProseMirror code {
   font-family: ui-monospace, "SF Mono", "Cascadia Mono", "Segoe UI Mono", monospace;
+}
+
+.wm-tiptap-editor .ProseMirror pre code {
+  color: #f8fafc;
+  -webkit-text-fill-color: #f8fafc;
+  background: transparent;
 }
 
 .wm-tiptap-editor .ProseMirror :not(pre) > code {
