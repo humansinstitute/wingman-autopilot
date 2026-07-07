@@ -12108,18 +12108,24 @@ body[data-theme="light"] .wm-writer-code-file .token.comment {
 
 .wm-tiptap-comments {
   display: grid;
-  gap: 0.75rem;
-  padding: 0.85rem 1rem 1rem;
+  gap: 0.65rem;
+  padding: 0.7rem 1rem;
   border-top: 1px solid var(--border-primary);
   background: var(--bg-secondary);
 }
 
-.wm-tiptap-comments__header,
-.wm-tiptap-comments__thread-header {
+.wm-tiptap-comments__header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
+}
+
+.wm-tiptap-comments__header-text {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
 }
 
 .wm-tiptap-comments__header h3 {
@@ -12136,6 +12142,35 @@ body[data-theme="light"] .wm-writer-code-file .token.comment {
   color: var(--text-secondary);
   font-size: 0.78rem;
   text-align: center;
+}
+
+.wm-tiptap-comments__toggle {
+  flex: 0 0 auto;
+  min-height: 2rem;
+  padding: 0.25rem 0.65rem;
+  border: 1px solid var(--border-primary);
+  border-radius: 0.35rem;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.wm-tiptap-comments__toggle:focus-visible {
+  outline: 2px solid #7c9cff;
+  outline-offset: 2px;
+}
+
+.wm-tiptap-comments__body {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.wm-tiptap-comments__body[hidden],
+.wm-tiptap-comments__new[hidden],
+.wm-tiptap-comments__reply[hidden] {
+  display: none;
 }
 
 .wm-tiptap-comments__new,
@@ -12179,6 +12214,18 @@ body[data-theme="light"] .wm-writer-code-file .token.comment {
   opacity: 0.72;
 }
 
+.wm-tiptap-comments__thread-header,
+.wm-tiptap-comments__thread-actions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.wm-tiptap-comments__thread-actions {
+  justify-content: flex-start;
+}
+
 .wm-tiptap-comments__thread blockquote {
   margin: 0;
   padding-left: 0.65rem;
@@ -12220,6 +12267,39 @@ body[data-theme="light"] .wm-writer-code-file .token.comment {
 
 .wm-tiptap-comments__empty {
   margin: 0;
+}
+
+@media (max-width: 768px) {
+  .wm-tiptap-toolbar {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+  }
+
+  .wm-tiptap-editor {
+    padding: 0.8rem 0.85rem 2rem;
+  }
+
+  .wm-tiptap-editor .ProseMirror {
+    max-width: none;
+    min-height: 24rem;
+    font-size: 1rem;
+    line-height: 1.7;
+  }
+
+  .wm-tiptap-comments {
+    padding: 0.55rem 0.75rem;
+  }
+
+  .wm-tiptap-comments__toggle,
+  .wm-tiptap-comments__status,
+  .wm-tiptap-comments .wm-button {
+    min-height: 2.4rem;
+  }
+
+  .wm-tiptap-comments textarea {
+    font-size: 1rem;
+  }
 }
 
 .wm-artifact-file-selector {

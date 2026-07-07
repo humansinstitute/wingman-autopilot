@@ -4,6 +4,16 @@ function formatTimestamp(value) {
   return date.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
 }
 
+function createDisclosureButton({ text, expanded = false, controls }) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "wm-tiptap-comments__toggle";
+  button.textContent = text;
+  button.setAttribute("aria-expanded", expanded ? "true" : "false");
+  if (controls) button.setAttribute("aria-controls", controls);
+  return button;
+}
+
 function renderThread(thread, deps) {
   const item = document.createElement("article");
   item.className = "wm-tiptap-comments__thread";
@@ -49,8 +59,15 @@ function renderThread(thread, deps) {
   }
   item.append(messages);
 
+  const footer = document.createElement("div");
+  footer.className = "wm-tiptap-comments__thread-actions";
+  const replyToggle = createDisclosureButton({ text: "Reply" });
+  footer.append(replyToggle);
+  item.append(footer);
+
   const replyForm = document.createElement("form");
   replyForm.className = "wm-tiptap-comments__reply";
+  replyForm.hidden = true;
   const replyInput = document.createElement("textarea");
   replyInput.rows = 2;
   replyInput.placeholder = "Reply";
@@ -58,8 +75,13 @@ function renderThread(thread, deps) {
   const replyButton = document.createElement("button");
   replyButton.type = "submit";
   replyButton.className = "wm-button secondary";
-  replyButton.textContent = "Reply";
+  replyButton.textContent = "Send reply";
   replyForm.append(replyInput, replyButton);
+  replyToggle.addEventListener("click", () => {
+    const isOpen = replyToggle.getAttribute("aria-expanded") === "true";
+    replyToggle.setAttribute("aria-expanded", isOpen ? "false" : "true");
+    replyForm.hidden = isOpen;
+  });
   replyForm.addEventListener("submit", (event) => {
     event.preventDefault();
     deps.onAddReply?.(thread.id, replyInput.value);
@@ -79,19 +101,39 @@ export function createCommentsPanel({
   panel.className = "wm-tiptap-comments";
   panel.dataset.testid = "tiptap-comments-panel";
   panel.setAttribute("aria-label", "Markdown comments");
+  const bodyId = `tiptap-comments-${Math.random().toString(36).slice(2)}`;
 
   const header = document.createElement("div");
   header.className = "wm-tiptap-comments__header";
+  const headerText = document.createElement("div");
+  headerText.className = "wm-tiptap-comments__header-text";
   const title = document.createElement("h3");
   title.textContent = "Comments";
   const count = document.createElement("span");
   count.className = "wm-tiptap-comments__count";
   count.textContent = String(threads.length);
-  header.append(title, count);
+  headerText.append(title, count);
+  const panelToggle = createDisclosureButton({
+    text: threads.length > 0 ? "Show comments" : "Add comment",
+    expanded: false,
+    controls: bodyId,
+  });
+  header.append(headerText, panelToggle);
   panel.append(header);
+
+  const body = document.createElement("div");
+  body.id = bodyId;
+  body.className = "wm-tiptap-comments__body";
+  body.hidden = true;
+  panel.append(body);
+
+  const newToggle = createDisclosureButton({ text: "Comment on selection" });
+  newToggle.classList.add("wm-tiptap-comments__new-toggle");
+  body.append(newToggle);
 
   const form = document.createElement("form");
   form.className = "wm-tiptap-comments__new";
+  form.hidden = true;
   const textarea = document.createElement("textarea");
   textarea.rows = 3;
   textarea.placeholder = "Comment on selection";
@@ -107,7 +149,12 @@ export function createCommentsPanel({
     event.preventDefault();
     onAddThread?.(textarea.value);
   });
-  panel.append(form);
+  newToggle.addEventListener("click", () => {
+    const isOpen = newToggle.getAttribute("aria-expanded") === "true";
+    newToggle.setAttribute("aria-expanded", isOpen ? "false" : "true");
+    form.hidden = isOpen;
+  });
+  body.append(form);
 
   const list = document.createElement("div");
   list.className = "wm-tiptap-comments__list";
@@ -121,7 +168,16 @@ export function createCommentsPanel({
       list.append(renderThread(thread, { onAddReply, onSetStatus }));
     }
   }
-  panel.append(list);
+  body.append(list);
+
+  panelToggle.addEventListener("click", () => {
+    const isOpen = panelToggle.getAttribute("aria-expanded") === "true";
+    panelToggle.setAttribute("aria-expanded", isOpen ? "false" : "true");
+    body.hidden = isOpen;
+    panelToggle.textContent = isOpen
+      ? (threads.length > 0 ? "Show comments" : "Add comment")
+      : "Hide comments";
+  });
 
   return panel;
 }
