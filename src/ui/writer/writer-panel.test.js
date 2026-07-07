@@ -8,7 +8,13 @@ describe("writer-panel toolbar", () => {
   test("offers a chat collapse control before the width cycle", () => {
     expect(source).toContain("wm-writer-fullscreen-toggle");
     expect(source).toContain('"chat-collapsed"');
-    expect(source).toContain('fullscreenBtn.textContent = "<-|"');
+    expect(source).toContain('fullscreenBtn.innerHTML = createSideCollapseIcon("left")');
     expect(source).toContain("modeGroup.append(fullscreenBtn, viewSizeBtn)");
+  });
+
+  test("uses mirrored icons for left and right toolbar collapse controls", () => {
+    expect(source).toContain("function createSideCollapseIcon(side)");
+    expect(source).toContain('closeBtn.innerHTML = createSideCollapseIcon("right")');
+    expect(source).not.toContain('textContent = "<-|"');
   });
 });
