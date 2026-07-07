@@ -106,4 +106,10 @@ describe("live-view composition", () => {
     expect(source).toContain("activeFilePath: nextActiveFile");
     expect(source).toContain("await unpinPinnedArtifact(sessionId, pageState)");
   });
+
+  test("can collapse the AI chat column while editing artifacts", () => {
+    expect(source).toContain("createCollapsedChatRail");
+    expect(source).toContain('state.writerLayout.mode === "chat-collapsed"');
+    expect(source).toContain('state.writerLayout.mode = "chat-narrow"');
+  });
 });

@@ -385,3 +385,36 @@ Manual:
 ## Recommendation
 
 Implement TipTap as a shared file editor panel, not as a new document system. Use it for Markdown files in both Files/Docs and Chat Session Plus Artifact panes, keep Ace/source editing available, and avoid copying Flight Deck's record-backed document model into Autopilot. This gives Autopilot rich editing where it is useful while preserving the direct-file semantics agents and developers expect.
+
+<!-- autopilot-comments:start
+{
+  "version": 1,
+  "threads": [
+    {
+      "id": "cmt_740217ba-4cc2-4c65-9b9e-99d8c3d9992d",
+      "anchor": {
+        "type": "quote",
+        "text": "pinned files in the live Chat Session Plus Artifact pane.",
+        "prefix": "",
+        "suffix": "",
+        "blockHint": ""
+      },
+      "status": "open",
+      "messages": [
+        {
+          "id": "msg_14349217-4bfc-4883-88c0-2709e93780c2",
+          "author": "User",
+          "createdAt": "2026-07-07T21:45:11.845Z",
+          "body": "Yo can you read this comment?"
+        },
+        {
+          "id": "msg_f17ae24c-bcbc-41cb-85fc-d4b85bf864e0",
+          "author": "User",
+          "createdAt": "2026-07-07T21:46:20.031Z",
+          "body": "When I select a comment, we should highlight the text it respond to in the doc? \n\n![pasted-image-20260708-064612-0tmkwt.png](pasted-image-20260708-064612-0tmkwt.png)"
+        }
+      ]
+    }
+  ]
+}
+autopilot-comments:end -->

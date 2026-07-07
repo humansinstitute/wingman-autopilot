@@ -31,7 +31,8 @@ import {
 } from "../live/index.js";
 import { attachPathMentionAutocomplete } from "../live/path-mention-autocomplete.js";
 import { findAppForSession, findWebAppForSession, createWebviewPanel, createLayoutToolbar } from "../live/webview-panel.js";
-import { createWriterPanel, createWriterToolbar } from "../writer/writer-panel.js";
+import { createWriterToolbar } from "../writer/writer-panel.js";
+import { createFileEditingPanel } from "../writer/file-editing-panel.js";
 import { createArtifactFileSelector } from "../writer/artifact-file-selector.js";
 import { createMobileTabBar, attachSwipeGesture } from "../writer/mobile-tabs.js";
 import { fetchSessionArtifacts, createArtifactsPanel, createArtifactsToolbar } from "../live/artifacts-panel.js";
@@ -410,6 +411,17 @@ export function initLiveView(deps) {
 
   function hasMountedLiveSplitPanel() {
     return Boolean(document.querySelector(".wm-live-split"));
+  }
+
+  function createCollapsedChatRail(onRestore) {
+    const rail = document.createElement("button");
+    rail.type = "button";
+    rail.className = "wm-live-chat-rail";
+    rail.setAttribute("aria-label", "Restore AI chat");
+    rail.title = "Restore AI chat";
+    rail.innerHTML = '<span aria-hidden="true">AI chat</span>';
+    rail.addEventListener("click", onRestore);
+    return rail;
   }
 
   function shouldRenderLiveForSessionSwitch(sessionId) {
@@ -1608,12 +1620,18 @@ export function initLiveView(deps) {
       chatCol.className = "wm-live-chat-col";
       main.append(scrollRegion);
       chatCol.append(main);
+      if (state.writerLayout.mode === "chat-collapsed") {
+        chatCol.prepend(createCollapsedChatRail(() => {
+          state.writerLayout.mode = "chat-narrow";
+          render();
+        }));
+      }
 
       const writerCol = document.createElement("div");
       writerCol.className = "wm-webview-col";
 
       const writerResult = effectiveFile
-        ? createWriterPanel(sessionId, effectiveFile, { showToast })
+        ? createFileEditingPanel(sessionId, effectiveFile, { showToast })
         : createArtifactFileSelector({
             initialPath: activeSession?.workingDirectory || "",
             showToast,

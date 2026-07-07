@@ -23,6 +23,21 @@ describe("live layout CSS", () => {
     expect(rule?.groups?.body).toContain("flex: 0 0 auto;");
   });
 
+  test("budgets the collapsed chat rail separately from artifact editor space", () => {
+    const splitRule = styles.match(/\.wm-live-split\s*\{(?<body>[^}]+)\}/);
+    const collapsedRule = styles.match(/\.wm-live-split--chat-collapsed\s*\{(?<body>[^}]+)\}/);
+    const chatColumnRule = styles.match(/\.wm-live-split--chat-collapsed > \.wm-live-chat-col\s*\{(?<body>[^}]+)\}/);
+    const artifactColumnRule = styles.match(/\.wm-live-split--chat-collapsed > \.wm-webview-col\s*\{(?<body>[^}]+)\}/);
+    const commentsRule = styles.match(/\.wm-tiptap-comments\s*\{(?<body>[^}]+)\}/);
+
+    expect(splitRule?.groups?.body).toContain("--wm-live-chat-rail-width:");
+    expect(splitRule?.groups?.body).toContain("gap: var(--wm-live-split-gap);");
+    expect(collapsedRule?.groups?.body).toContain("--wm-live-chat-rail-width: 3rem;");
+    expect(chatColumnRule?.groups?.body).toContain("flex: 0 0 var(--wm-live-chat-rail-width);");
+    expect(artifactColumnRule?.groups?.body).toContain("calc(100% - var(--wm-live-chat-rail-width) - var(--wm-live-split-gap))");
+    expect(commentsRule?.groups?.body).toContain("width: clamp(18rem, 24vw, 22rem);");
+  });
+
   test("wraps long markdown links inside message bubbles", () => {
     const messageRule = styles.match(/\.wm-message\s*\{(?<body>[^}]+)\}/);
     const bodyRule = styles.match(/\.wm-message-body,[\s\S]+?\.wm-archive-dialog-message-content\s*\{(?<body>[^}]+)\}/);

@@ -242,6 +242,13 @@ function getNextWriterViewMode(currentMode) {
   return WRITER_VIEW_MODES[(currentIndex + 1 + WRITER_VIEW_MODES.length) % WRITER_VIEW_MODES.length];
 }
 
+function createSideCollapseIcon(side) {
+  const isLeft = side === "left";
+  const arrowPath = isLeft ? "M9 18l-6-6 6-6" : "M15 18l6-6-6-6";
+  const railPath = isLeft ? "M21 5v14" : "M3 5v14";
+  return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${arrowPath}"/><path d="M3 12h18"/><path d="${railPath}"/></svg>`;
+}
+
 export function createWriterToolbar(currentMode, onModeChange, onClose) {
   const toolbar = document.createElement("div");
   toolbar.className = "wm-webview-toolbar";
@@ -249,17 +256,29 @@ export function createWriterToolbar(currentMode, onModeChange, onClose) {
   const modeGroup = document.createElement("div");
   modeGroup.className = "wm-webview-toolbar-modes";
 
-  const currentViewMode = getWriterViewMode(currentMode);
+  const isChatCollapsed = currentMode === "chat-collapsed";
+  const fullscreenBtn = document.createElement("button");
+  fullscreenBtn.className = `wm-webview-mode-btn wm-writer-fullscreen-toggle${isChatCollapsed ? " active" : ""}`;
+  fullscreenBtn.title = isChatCollapsed ? "Restore AI chat" : "Collapse AI chat";
+  fullscreenBtn.setAttribute("aria-label", isChatCollapsed ? "Restore AI chat" : "Collapse AI chat");
+  fullscreenBtn.setAttribute("aria-pressed", isChatCollapsed ? "true" : "false");
+  fullscreenBtn.innerHTML = createSideCollapseIcon("left");
+  fullscreenBtn.addEventListener("click", () => {
+    onModeChange(isChatCollapsed ? "chat-narrow" : "chat-collapsed");
+  });
+
+  const cycleBaseMode = isChatCollapsed ? "chat-narrow" : currentMode;
+  const currentViewMode = getWriterViewMode(cycleBaseMode);
   const viewSizeBtn = document.createElement("button");
   viewSizeBtn.className = "wm-webview-mode-btn wm-writer-view-cycle";
   viewSizeBtn.title = `${currentViewMode.title}; click to cycle`;
   viewSizeBtn.setAttribute("aria-label", "Cycle artifact view size");
   viewSizeBtn.textContent = currentViewMode.label;
   viewSizeBtn.addEventListener("click", () => {
-    onModeChange(getNextWriterViewMode(currentMode).mode);
+    onModeChange(getNextWriterViewMode(cycleBaseMode).mode);
   });
 
-  modeGroup.append(viewSizeBtn);
+  modeGroup.append(fullscreenBtn, viewSizeBtn);
 
   const actionsGroup = document.createElement("div");
   actionsGroup.className = "wm-webview-toolbar-actions";
@@ -268,7 +287,7 @@ export function createWriterToolbar(currentMode, onModeChange, onClose) {
   closeBtn.className = "wm-webview-close-btn";
   closeBtn.title = "Collapse artifact";
   closeBtn.setAttribute("aria-label", "Collapse artifact");
-  closeBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l6-6-6-6"/><path d="M3 12h18"/><path d="M3 5v14"/></svg>`;
+  closeBtn.innerHTML = createSideCollapseIcon("right");
   closeBtn.addEventListener("click", onClose);
 
   actionsGroup.append(closeBtn);
