@@ -15,34 +15,17 @@ import { createTiptapToolbar } from "./toolbar.js";
 import {
   getParentDirectory,
   rewriteImageSourcesForDisplay,
-  toDisplayImageSrc,
 } from "./file-paths.js";
-
+import {
+  appendCommentMessage,
+  combineMarkdownAndComments,
+  createCommentThread,
+  parseAutopilotCommentEndmatter,
+} from "./comment-endmatter.js";
+import { createCommentsPanel } from "./comments-panel.js";
+import { handleImagePaste } from "./image-paste.js";
+import { buildCommentAnchor } from "./comment-anchor.js";
 const POLL_INTERVAL_MS = 2500;
-
-function guessImageExtension(mimeType) {
-  const mime = String(mimeType ?? "").toLowerCase();
-  if (mime === "image/jpeg") return "jpg";
-  if (mime === "image/gif") return "gif";
-  if (mime === "image/webp") return "webp";
-  if (mime === "image/svg+xml") return "svg";
-  return "png";
-}
-
-function createPastedImageFilename(file) {
-  const now = new Date();
-  const stamp = [
-    now.getFullYear(),
-    String(now.getMonth() + 1).padStart(2, "0"),
-    String(now.getDate()).padStart(2, "0"),
-    "-",
-    String(now.getHours()).padStart(2, "0"),
-    String(now.getMinutes()).padStart(2, "0"),
-    String(now.getSeconds()).padStart(2, "0"),
-  ].join("");
-  const random = Math.random().toString(36).slice(2, 8);
-  return `pasted-image-${stamp}-${random}.${guessImageExtension(file?.type)}`;
-}
 
 export function createTiptapFilePanel(sessionId, targetFile, deps = {}) {
   const { showToast } = deps;
@@ -56,7 +39,8 @@ export function createTiptapFilePanel(sessionId, targetFile, deps = {}) {
   let editor = null;
   let sourceEditor = null;
   let rawContent = "";
-  let initialContent = "";
+  let initialDocumentContent = "";
+  let commentThreads = [];
   let lastMtimeMs = null;
   let mode = "rich";
   let dirty = false;
@@ -115,63 +99,20 @@ export function createTiptapFilePanel(sessionId, targetFile, deps = {}) {
     return proseMirrorDocToMarkdown(editor.getJSON());
   }
 
-  async function uploadPastedImage(file) {
-    const uploadName = createPastedImageFilename(file);
-    const base64 = encodeUint8ArrayToBase64(new Uint8Array(await file.arrayBuffer()));
-    const response = await fetch("/api/docs/file", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        directory: fileDirectory,
-        name: uploadName,
-        base64,
-      }),
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(data?.error || response.statusText || "Failed to upload pasted image");
-    }
-    return data?.name || uploadName;
+  function getCurrentDocumentMarkdown() {
+    return combineMarkdownAndComments(getCurrentMarkdown(), commentThreads);
   }
 
-  function handlePaste(event, activeEditor) {
-    const items = Array.from(event.clipboardData?.items ?? []);
-    const images = items
-      .filter((item) => item.kind === "file" && String(item.type || "").startsWith("image/"))
-      .map((item) => item.getAsFile())
-      .filter((file) => file instanceof File);
-    if (images.length === 0) return false;
+  function syncDirtyState() {
+    dirty = getCurrentDocumentMarkdown() !== initialDocumentContent;
+    updateControls();
+  }
 
-    event.preventDefault();
-    void (async () => {
-      let uploaded = 0;
-      for (const image of images) {
-        try {
-          const savedName = await uploadPastedImage(image);
-          activeEditor.chain().focus().setImage({
-            src: toDisplayImageSrc(fileDirectory, savedName),
-            rawSrc: savedName,
-            alt: savedName,
-          }).run();
-          uploaded += 1;
-        } catch (uploadError) {
-          showToast?.(uploadError instanceof Error ? uploadError.message : "Failed to upload pasted image", { type: "error" });
-        }
-      }
-      if (uploaded > 0) {
-        dirty = true;
-        render();
-        showToast?.(`Uploaded ${uploaded} image${uploaded > 1 ? "s" : ""}`, { duration: 2000 });
-      }
-    })();
-    return true;
+  function buildAnchorForSelection() {
+    return buildCommentAnchor({ markdown: getCurrentMarkdown(), mode, editor, sourceEditor });
   }
 
   function createEditor(mount) {
-    const markdownInfo = inspectMarkdownForRichEditing(rawContent);
-    warning = markdownInfo.risky
-      ? `Rich mode may normalize ${markdownInfo.reasons.join(", ")}. Use Source before saving if exact Markdown formatting matters.`
-      : null;
     const content = rewriteImageSourcesForDisplay(markdownToProseMirrorDoc(rawContent), fileDirectory);
     editor = new Editor({
       element: mount,
@@ -182,12 +123,18 @@ export function createTiptapFilePanel(sessionId, targetFile, deps = {}) {
           "aria-label": "Markdown rich editor",
           "data-testid": "tiptap-editor",
         },
-        handlePaste: (_view, event) => handlePaste(event, editor),
+        handlePaste: (_view, event) => handleImagePaste(event, editor, {
+          fileDirectory,
+          showToast,
+          onUploaded: () => {
+            syncDirtyState();
+            render();
+          },
+        }),
       },
       onUpdate() {
         rawContent = proseMirrorDocToMarkdown(editor.getJSON());
-        dirty = rawContent !== initialContent;
-        updateControls();
+        syncDirtyState();
       },
       onFocus() {
         stopPolling();
@@ -216,10 +163,11 @@ export function createTiptapFilePanel(sessionId, targetFile, deps = {}) {
   async function handleSave() {
     if (saving || !dirty) return;
     const nextContent = getCurrentMarkdown();
+    const nextDocumentContent = combineMarkdownAndComments(nextContent, commentThreads);
     try {
-      await saveFile(nextContent);
+      await saveFile(nextDocumentContent);
       rawContent = nextContent;
-      initialContent = nextContent;
+      initialDocumentContent = nextDocumentContent;
       dirty = false;
       saving = false;
       error = null;
@@ -314,8 +262,7 @@ export function createTiptapFilePanel(sessionId, targetFile, deps = {}) {
       sourceEditor.value = rawContent;
       sourceEditor.addEventListener("input", () => {
         rawContent = sourceEditor.value;
-        dirty = rawContent !== initialContent;
-        updateControls();
+        syncDirtyState();
       });
       body.append(sourceEditor);
     } else {
@@ -336,6 +283,12 @@ export function createTiptapFilePanel(sessionId, targetFile, deps = {}) {
       onToggleMode: toggleMode,
     });
     panel.insertBefore(toolbar, body);
+    panel.append(createCommentsPanel({
+      threads: commentThreads,
+      onAddThread: addCommentThread,
+      onAddReply: addCommentReply,
+      onSetStatus: setCommentStatus,
+    }));
     updateControls();
   }
 
@@ -349,8 +302,7 @@ export function createTiptapFilePanel(sessionId, targetFile, deps = {}) {
       if (mtime !== null && lastMtimeMs !== null && Math.abs(mtime - lastMtimeMs) > 1) {
         const content = data.base64 ? decodeBytesToText(decodeBase64ToUint8Array(data.base64)) : "";
         lastMtimeMs = mtime;
-        rawContent = content;
-        initialContent = content;
+        applyLoadedMarkdown(content);
         setStatus("Reloaded external changes", "info");
         render();
       }
@@ -374,8 +326,7 @@ export function createTiptapFilePanel(sessionId, targetFile, deps = {}) {
   async function refreshContent() {
     try {
       error = null;
-      rawContent = await loadFile();
-      initialContent = rawContent;
+      applyLoadedMarkdown(await loadFile());
       dirty = false;
       render();
       startPolling();
@@ -386,6 +337,56 @@ export function createTiptapFilePanel(sessionId, targetFile, deps = {}) {
   }
 
   void refreshContent();
+
+  function applyLoadedMarkdown(markdown) {
+    const parsed = parseAutopilotCommentEndmatter(markdown);
+    rawContent = parsed.body;
+    commentThreads = parsed.threads;
+    initialDocumentContent = parsed.error ? String(markdown ?? "") : combineMarkdownAndComments(rawContent, commentThreads);
+    if (parsed.error) error = parsed.error;
+  }
+
+  function addCommentThread(body) {
+    const anchor = buildAnchorForSelection();
+    if (!anchor) {
+      setStatus("Select document text before adding a comment.", "error");
+      return;
+    }
+    const thread = createCommentThread({ anchor, body });
+    if (!thread) {
+      setStatus("Comment body is required.", "error");
+      return;
+    }
+    commentThreads = [...commentThreads, thread];
+    syncDirtyState();
+    setStatus("Comment added. Save to write it into the Markdown file.", "info");
+    render();
+  }
+
+  function addCommentReply(threadId, body) {
+    let changed = false;
+    commentThreads = commentThreads.map((thread) => {
+      if (thread.id !== threadId) return thread;
+      const next = appendCommentMessage(thread, body);
+      if (!next) return thread;
+      changed = true;
+      return next;
+    });
+    if (!changed) {
+      setStatus("Reply body is required.", "error");
+      return;
+    }
+    syncDirtyState();
+    render();
+  }
+
+  function setCommentStatus(threadId, status) {
+    commentThreads = commentThreads.map((thread) => (
+      thread.id === threadId ? { ...thread, status: status === "resolved" ? "resolved" : "open" } : thread
+    ));
+    syncDirtyState();
+    render();
+  }
 
   return {
     panel,

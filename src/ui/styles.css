@@ -12106,6 +12106,122 @@ body[data-theme="light"] .wm-writer-code-file .token.comment {
   outline-offset: 2px;
 }
 
+.wm-tiptap-comments {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem 1rem;
+  border-top: 1px solid var(--border-primary);
+  background: var(--bg-secondary);
+}
+
+.wm-tiptap-comments__header,
+.wm-tiptap-comments__thread-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.wm-tiptap-comments__header h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  letter-spacing: 0;
+}
+
+.wm-tiptap-comments__count {
+  min-width: 1.5rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  text-align: center;
+}
+
+.wm-tiptap-comments__new,
+.wm-tiptap-comments__reply {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.wm-tiptap-comments textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--border-primary);
+  border-radius: 0.4rem;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+  resize: vertical;
+}
+
+.wm-tiptap-comments textarea:focus {
+  outline: 2px solid #7c9cff;
+  outline-offset: 1px;
+}
+
+.wm-tiptap-comments__list {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.wm-tiptap-comments__thread {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border-primary);
+  border-radius: 0.45rem;
+  background: var(--bg-primary);
+}
+
+.wm-tiptap-comments__thread[data-status="resolved"] {
+  opacity: 0.72;
+}
+
+.wm-tiptap-comments__thread blockquote {
+  margin: 0;
+  padding-left: 0.65rem;
+  border-left: 3px solid #7c9cff;
+  color: var(--text-primary);
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.wm-tiptap-comments__status {
+  padding: 0.25rem 0.55rem;
+  border: 1px solid var(--border-primary);
+  border-radius: 0.35rem;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.wm-tiptap-comments__hint,
+.wm-tiptap-comments__meta,
+.wm-tiptap-comments__empty {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.wm-tiptap-comments__messages {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.wm-tiptap-comments__message p {
+  margin: 0.15rem 0 0;
+  color: var(--text-primary);
+  font-size: 0.88rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.wm-tiptap-comments__empty {
+  margin: 0;
+}
+
 .wm-artifact-file-selector {
   background: var(--bg-primary);
 }
