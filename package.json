@@ -18,6 +18,7 @@
     "cli:status": "bun clis/status.ts",
     "cli:deploy": "bun clis/deploy.ts",
     "build:bunker-client": "bun build src/ui/identity/bunker-client.ts --target browser --outfile public/vendor/bunker-client.js",
+    "build:tiptap-bundle": "bun build src/ui/tiptap/vendor-bundle.ts --target browser --format esm --outfile public/vendor/tiptap-bundle.js",
     "cleanports": "bun run scripts/clean-ports.ts",
     "docker:check": "bun run scripts/docker-readiness.ts",
     "docker:provision": "bun run scripts/provision-docker-instance.ts"

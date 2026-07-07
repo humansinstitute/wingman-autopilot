@@ -1,4 +1,4 @@
-import { Editor } from "/vendor/@tiptap/core";
+import { Editor } from "/vendor/tiptap-bundle.js";
 import { createAutopilotTiptapExtensions } from "./extensions.js";
 import {
   inspectMarkdownForRichEditing,

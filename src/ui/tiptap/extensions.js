@@ -1,9 +1,11 @@
-import StarterKit from "/vendor/@tiptap/starter-kit";
-import Link from "/vendor/@tiptap/extension-link";
-import Placeholder from "/vendor/@tiptap/extension-placeholder";
-import BaseImage from "/vendor/@tiptap/extension-image";
-import TaskList from "/vendor/@tiptap/extension-task-list";
-import TaskItem from "/vendor/@tiptap/extension-task-item";
+import {
+  BaseImage,
+  Link,
+  Placeholder,
+  StarterKit,
+  TaskItem,
+  TaskList,
+} from "/vendor/tiptap-bundle.js";
 
 export const MarkdownImage = BaseImage.extend({
   name: "image",
