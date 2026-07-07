@@ -109,7 +109,22 @@ function renderThread(thread, deps) {
   const item = document.createElement("article");
   item.className = "wm-tiptap-comments__thread";
   item.dataset.status = thread.status || "open";
+  item.dataset.active = deps.activeThreadId === thread.id ? "true" : "false";
+  item.dataset.threadId = thread.id;
   item.dataset.testid = "tiptap-comment-thread";
+  item.tabIndex = 0;
+  item.setAttribute("role", "button");
+  item.setAttribute("aria-label", "Show comment anchor in document");
+  item.setAttribute("aria-pressed", deps.activeThreadId === thread.id ? "true" : "false");
+  item.addEventListener("click", () => {
+    deps.onSelectThread?.(thread.id);
+  });
+  item.addEventListener("keydown", (event) => {
+    if (event.target !== item) return;
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    deps.onSelectThread?.(thread.id);
+  });
 
   const header = document.createElement("div");
   header.className = "wm-tiptap-comments__thread-header";
@@ -122,7 +137,8 @@ function renderThread(thread, deps) {
   statusButton.className = "wm-tiptap-comments__status";
   statusButton.textContent = thread.status === "resolved" ? "Reopen" : "Resolve";
   statusButton.setAttribute("aria-label", thread.status === "resolved" ? "Reopen comment thread" : "Resolve comment thread");
-  statusButton.addEventListener("click", () => {
+  statusButton.addEventListener("click", (event) => {
+    event.stopPropagation();
     deps.onSetStatus?.(thread.id, thread.status === "resolved" ? "open" : "resolved");
   });
   header.append(statusButton);
@@ -170,14 +186,19 @@ function renderThread(thread, deps) {
   replyButton.textContent = "Send reply";
   replyForm.append(replyInput);
   appendCommentFormActions(replyForm, replyInput, deps, replyButton);
-  replyToggle.addEventListener("click", () => {
+  replyToggle.addEventListener("click", (event) => {
+    event.stopPropagation();
     const isOpen = replyToggle.getAttribute("aria-expanded") === "true";
     replyToggle.setAttribute("aria-expanded", isOpen ? "false" : "true");
     replyForm.hidden = isOpen;
   });
   replyForm.addEventListener("submit", (event) => {
     event.preventDefault();
+    event.stopPropagation();
     deps.onAddReply?.(thread.id, replyInput.value);
+  });
+  replyForm.addEventListener("click", (event) => {
+    event.stopPropagation();
   });
   item.append(replyForm);
 
@@ -190,12 +211,14 @@ export function createCommentsPanel({
   onAddThread,
   onAddReply,
   onSetStatus,
+  onSelectThread,
   onOpenChange,
+  activeThreadId = null,
   defaultOpen = false,
   fileDirectory = "",
   showToast,
 } = {}) {
-  const deps = { onAddReply, onSetStatus, fileDirectory, showToast };
+  const deps = { onAddReply, onSetStatus, onSelectThread, activeThreadId, fileDirectory, showToast };
   const panel = document.createElement("aside");
   panel.className = "wm-tiptap-comments";
   panel.dataset.testid = "tiptap-comments-panel";

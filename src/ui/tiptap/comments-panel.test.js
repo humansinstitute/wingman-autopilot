@@ -28,6 +28,24 @@ describe("comments-panel mobile ergonomics", () => {
     expect(source).toContain("onAddThread?.(textarea.value, pendingThreadAnchor);");
   });
 
+  test("supports selecting a thread to highlight its document anchor", () => {
+    expect(source).toContain("onSelectThread");
+    expect(source).toContain("item.dataset.active");
+    expect(source).toContain("item.dataset.threadId");
+    expect(source).toContain("deps.onSelectThread?.(thread.id);");
+  });
+
+  test("keeps the comments body scrollable when the rail overflows", () => {
+    const panelRule = styles.match(/\.wm-tiptap-comments\s*\{(?<body>[^}]+)\}/);
+    const bodyRule = styles.match(/\.wm-tiptap-comments__body\s*\{(?<body>[^}]+)\}/);
+    const listRule = styles.match(/\.wm-tiptap-comments__list\s*\{(?<body>[^}]+)\}/);
+
+    expect(panelRule?.groups?.body).toContain("grid-template-rows: auto minmax(0, 1fr);");
+    expect(bodyRule?.groups?.body).toContain("overflow-y: auto;");
+    expect(bodyRule?.groups?.body).toContain("min-height: 0;");
+    expect(listRule?.groups?.body).toContain("align-content: start;");
+  });
+
   test("renders mobile comments as a bounded bottom drawer", () => {
     const mobileRule = styles.match(/@media \(max-width: 768px\) \{[\s\S]+?\.wm-artifact-file-selector/);
 

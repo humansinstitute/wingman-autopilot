@@ -11,6 +11,7 @@ import { createCommentAutosave } from "./comment-autosave.js";
 import { createTiptapFileIo, decodeDocsFileContent } from "./file-io.js";
 import { bindCommentAutosaveLifecycle } from "./comment-save-lifecycle.js";
 import { renderTiptapConflictActions } from "./conflict-actions.js";
+import { highlightCommentAnchor, markActiveCommentThread } from "./comment-highlight.js";
 const POLL_INTERVAL_MS = 2500;
 
 export function createTiptapFilePanel(sessionId, targetFile, deps = {}) {
@@ -33,10 +34,8 @@ export function createTiptapFilePanel(sessionId, targetFile, deps = {}) {
   let saving = false;
   let destroyed = false;
   let pollTimer = null;
-  let warning = null;
-  let error = null;
-  let statusMessage = "";
-  let statusType = "info";
+  let warning = null, error = null;
+  let statusMessage = "", statusType = "info", activeCommentThreadId = null;
   let commentsPanelOpen = typeof window !== "undefined" && window.matchMedia?.("(min-width: 900px)")?.matches;
   const fileDirectory = getParentDirectory(targetFile);
   const fileIo = createTiptapFileIo(targetFile, {
@@ -266,10 +265,10 @@ export function createTiptapFilePanel(sessionId, targetFile, deps = {}) {
       onAddThread: addCommentThread,
       onAddReply: addCommentReply,
       onSetStatus: setCommentStatus,
+      onSelectThread: selectCommentThread,
+      activeThreadId: activeCommentThreadId,
       defaultOpen: commentsPanelOpen,
-      onOpenChange: (open) => {
-        commentsPanelOpen = open;
-      },
+      onOpenChange: (open) => { commentsPanelOpen = open; },
       fileDirectory,
       showToast,
     }));
@@ -363,6 +362,17 @@ export function createTiptapFilePanel(sessionId, targetFile, deps = {}) {
     }
     syncDirtyState();
     commentAutosave.queue();
+    render();
+  }
+
+  function selectCommentThread(threadId) {
+    activeCommentThreadId = threadId;
+    const thread = commentThreads.find((item) => item.id === threadId);
+    if (mode === "rich" && editor && highlightCommentAnchor(editor, thread)) {
+      markActiveCommentThread(panel, threadId);
+      return;
+    }
+    if (thread?.anchor?.text) setStatus(`Comment anchor: ${thread.anchor.text}`, "info");
     render();
   }
 
