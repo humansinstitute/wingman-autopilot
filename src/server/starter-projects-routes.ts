@@ -75,6 +75,7 @@ export interface StarterProjectsApiContext {
     options?: { ownerAlias?: string | null; subdomainAlias?: string | null },
   ) => Record<string, unknown>;
   towerUrl?: string | null;
+  wingmanUrl?: string | null;
   towerWorkspaceOwnerNpub?: string | null;
   towerRegistrationIdentity?: RuntimeBotIdentity | null;
   towerWappRegistrar?: TowerWappRegistrar;
@@ -189,15 +190,22 @@ function buildStarterManagedEnv(
   ownerNpub: string,
   workspaceOwnerNpub: string,
   towerUrl: string | null | undefined,
+  wingmanUrl: string | null | undefined,
 ): AppEnvironmentVariables | undefined {
-  if (!isTowerBackedStarter(starter)) return undefined;
-  const env: AppEnvironmentVariables = {
+  const env: AppEnvironmentVariables = {};
+  if (wingmanUrl?.trim()) {
+    env.WINGMAN_URL = wingmanUrl.trim().replace(/\/$/, "");
+  }
+  if (!isTowerBackedStarter(starter)) {
+    return Object.keys(env).length > 0 ? env : undefined;
+  }
+  Object.assign(env, {
     WAPP_ALLOWED_NPUBS_JSON: JSON.stringify([ownerNpub]),
     WAPP_OWNER_NPUB: ownerNpub,
     WAPP_WORKSPACE_OWNER_NPUB: workspaceOwnerNpub,
     WAPP_NSEC: createWappAppNsec("generate", null),
     WORKSPACE_OWNER_NPUB: workspaceOwnerNpub,
-  };
+  });
   if (towerUrl?.trim()) {
     env.TOWER_URL = towerUrl.trim().replace(/\/$/, "");
   }
@@ -282,7 +290,7 @@ async function registerLaunchedStarterApp(
     scripts: Object.keys(scriptPayload).length > 0 ? scriptPayload : undefined,
     notes: starter.notes ?? undefined,
     ownerNpub,
-    env: buildStarterManagedEnv(starter, ownerNpub, towerWorkspaceOwnerNpub, ctx.towerUrl),
+    env: buildStarterManagedEnv(starter, ownerNpub, towerWorkspaceOwnerNpub, ctx.towerUrl, ctx.wingmanUrl),
     webApp: Boolean(starter.webApp),
   });
 

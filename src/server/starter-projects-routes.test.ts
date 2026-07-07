@@ -50,6 +50,7 @@ function makeContext(options: { starterId?: string } = {}): StarterProjectsApiCo
     ensureApiAccess: async () => null,
     normaliseOptionalString,
     normaliseNpub: (npub) => normaliseOptionalString(npub),
+    wingmanUrl: "http://127.0.0.1:3256",
     towerUrl: "https://tower.example",
     towerWorkspaceOwnerNpub,
     towerRegistrationIdentity: {
@@ -208,6 +209,10 @@ describe("handleStarterProjectsApi", () => {
     );
 
     expect(response?.status).toBe(201);
+    const app = await ctx.appRegistry.getApp("app-1");
+    expect(app?.env).toMatchObject({
+      WINGMAN_URL: "http://127.0.0.1:3256",
+    });
     expect(ctx.setupCalls).toEqual(["app-1"]);
     expect(ctx.startCalls).toEqual(["app-1"]);
     const payload = await response!.json() as {
@@ -247,6 +252,7 @@ describe("handleStarterProjectsApi", () => {
       WAPP_WORKSPACE_OWNER_NPUB: towerWorkspaceOwnerNpub,
       WORKSPACE_OWNER_NPUB: towerWorkspaceOwnerNpub,
       WAPP_ALLOWED_NPUBS_JSON: JSON.stringify([ownerNpub]),
+      WINGMAN_URL: "http://127.0.0.1:3256",
     });
     expect(app?.env?.WAPP_NSEC).toStartWith("nsec1");
     expect(ctx.towerRegistrations).toHaveLength(1);

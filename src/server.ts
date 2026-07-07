@@ -2723,6 +2723,7 @@ const handleApi = createApiRouteHandler({
       appRegistry,
       appProcessManager,
       appAliasRegistry,
+      wingmanUrl: `http://127.0.0.1:${config.port}`,
       towerUrl: defaultTowerBinding?.towerUrl ?? defaultTowerUrl,
       towerWorkspaceOwnerNpub: defaultTowerBinding?.workspaceOwnerNpub ?? null,
       towerRegistrationIdentity,
