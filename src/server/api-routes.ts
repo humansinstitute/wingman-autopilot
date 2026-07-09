@@ -36,6 +36,10 @@ import { getEffectiveOwnerNpub } from "../auth/effective-owner";
 import { handleSigningApi, type SigningApiContext } from "../signing/signing-api";
 import { handleTerminalApi, type TerminalRoutesContext } from "./terminal-routes";
 import { handleUserSettingsApi, type UserSettingsRoutesContext } from "./user-settings-routes";
+import {
+  handleRemoteInstructApi,
+  type RemoteInstructRoutesContext,
+} from "./remote-instruct-routes";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "HEAD";
 
@@ -106,6 +110,7 @@ export interface ApiRoutesContext {
   signingApiContext?: SigningApiContext;
   terminalRoutesContext?: TerminalRoutesContext;
   userSettingsRoutesContext: UserSettingsRoutesContext;
+  remoteInstructRoutesContext: RemoteInstructRoutesContext;
   workspaceDelegationStore: WorkspaceDelegationStore;
 
   // Stores accessed directly by handleApi
@@ -253,6 +258,17 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
     const providerProxyResponse = await handleProviderProxyApi(request, url, method, ctx.providerProxyApiContext);
     if (providerProxyResponse) {
       return providerProxyResponse;
+    }
+
+    const remoteInstructResponse = await handleRemoteInstructApi(
+      request,
+      url,
+      method,
+      authContext,
+      ctx.remoteInstructRoutesContext,
+    );
+    if (remoteInstructResponse) {
+      return remoteInstructResponse;
     }
 
     const billingApiResponse = await handleBillingApi(request, url, method, authContext, ctx.billingApiContext);

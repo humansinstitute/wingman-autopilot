@@ -101,6 +101,24 @@ function createHandler(options: {
         SessionsManage: "sessions:manage" as any,
       },
     },
+    remoteInstructRoutesContext: {
+      promptPath: "/tmp/remote-instruct.md",
+      config: {
+        baseUrl: "http://localhost:3000",
+        agents: {
+          claude: { label: "Claude" },
+          codex: { label: "Codex" },
+        },
+      },
+      getDefaultWorkdir: () => "/tmp/project",
+      projectReference: "autopilot",
+      resolveNip98AuthContext: () => authContext,
+      ensureApiAccess: async (_action, _request, _url, currentAuth) =>
+        currentAuth.npub ? null : Response.json({ error: "Authentication required" }, { status: 401 }),
+      AccessActions: {
+        SessionsManage: "sessions:manage" as any,
+      },
+    },
     workspaceDelegationStore: {} as any,
     featureFlagStore: {
       getFlag: () => null,

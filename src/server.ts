@@ -188,6 +188,7 @@ import {
 import { performSystemCleanup } from "./server/system-cleanup.js";
 import { type SystemRoutesContext } from "./server/system-routes";
 import { createApiRouteHandler } from "./server/api-routes";
+import { type RemoteInstructRoutesContext } from "./server/remote-instruct-routes";
 import {
   handleTerminalWebSocketUpgrade,
   createTerminalWebSocketHandler,
@@ -2507,6 +2508,18 @@ const terminalWebSocketContext = {
   sessions: terminalSessions,
   isAdminNpub: isConfiguredAdminNpub,
 };
+const remoteInstructRoutesContext: RemoteInstructRoutesContext = {
+  promptPath: join(projectRootPath, "data", "remote-instruct.md"),
+  config: {
+    baseUrl: config.baseUrl,
+    agents: config.agents,
+  },
+  getDefaultWorkdir: (context) => resolveWorkspace(context).defaultDirectory,
+  projectReference: Bun.env.REMOTE_INSTRUCT_PROJECT_REFERENCE?.trim() || null,
+  resolveNip98AuthContext: resolveInternalNip98AuthContext,
+  ensureApiAccess,
+  AccessActions,
+};
 
 const handleApi = createApiRouteHandler({
   getRequestIP: (req) => serverRef.current?.requestIP(req) ?? null,
@@ -2685,6 +2698,7 @@ const handleApi = createApiRouteHandler({
     ensureApiAccess,
     AccessActions,
   },
+  remoteInstructRoutesContext,
   workspaceDelegationStore,
 
   // Stores accessed directly
