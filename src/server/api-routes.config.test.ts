@@ -115,6 +115,8 @@ function createHandler(options: {
       resolveNip98AuthContext: () => authContext,
       ensureApiAccess: async (_action, _request, _url, currentAuth) =>
         currentAuth.npub ? null : Response.json({ error: "Authentication required" }, { status: 401 }),
+      ensureTemplateManageAccess: async (_request, _url, currentAuth) =>
+        currentAuth.npub ? null : Response.json({ error: "admin-only" }, { status: 403 }),
       AccessActions: {
         SessionsManage: "sessions:manage" as any,
       },

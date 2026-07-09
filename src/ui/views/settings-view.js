@@ -17,6 +17,7 @@ import { createDefaultAgentSection } from './settings/profile-sections.js';
 import { createTeamBillingSection } from './settings/admin-billing-section.js';
 import { createAgentChatSection } from './settings/agent-chat-section.js';
 import { createFlightDeckSection } from './settings/flight-deck-section.js';
+import { createRemoteInstructSection } from './settings/remote-instruct-section.js';
 
 export function initSettingsView(deps) {
   const {
@@ -226,6 +227,7 @@ export function initSettingsView(deps) {
 
   function renderAdminTab() {
     const fragment = document.createDocumentFragment();
+    fragment.append(createRemoteInstructSection());
     fragment.append(createTeamBillingSection());
     ensureFeatureFlagsLoaded();
     fragment.append(renderFeatureFlagsPanel());

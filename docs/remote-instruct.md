@@ -26,6 +26,15 @@ Supported template variables:
 
 Unknown `$variable` tokens are left in the content and returned in `missingVariables`.
 
+Admin template editing:
+
+```text
+GET /api/remote-instruct/template
+PUT /api/remote-instruct/template
+```
+
+The template routes use the existing admin/system access gate because the prompt is machine-level configuration. The Settings page exposes this editor under Settings -> Admin -> Remote Instruct.
+
 CLI:
 
 ```bash

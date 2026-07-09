@@ -2518,6 +2518,8 @@ const remoteInstructRoutesContext: RemoteInstructRoutesContext = {
   projectReference: Bun.env.REMOTE_INSTRUCT_PROJECT_REFERENCE?.trim() || null,
   resolveNip98AuthContext: resolveInternalNip98AuthContext,
   ensureApiAccess,
+  ensureTemplateManageAccess: (request, url, authContext) =>
+    ensureApiAccess(AccessActions.SystemManage, request, url, authContext),
   AccessActions,
 };
 

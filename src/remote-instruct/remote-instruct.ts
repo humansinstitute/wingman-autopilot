@@ -1,4 +1,5 @@
 import { hostname } from "node:os";
+import { writeFile } from "node:fs/promises";
 
 export interface RemoteInstructVariables {
   [key: string]: string;
@@ -15,6 +16,11 @@ export interface LoadRemoteInstructOptions {
   variables: RemoteInstructVariables;
 }
 
+export interface RemoteInstructTemplate {
+  template: string;
+  promptPath: string;
+}
+
 export class RemoteInstructConfigError extends Error {
   constructor(message: string) {
     super(message);
@@ -23,6 +29,7 @@ export class RemoteInstructConfigError extends Error {
 }
 
 const VARIABLE_PATTERN = /\$([A-Za-z_][A-Za-z0-9_]*)/g;
+const hasOwn = Object.prototype.hasOwnProperty;
 
 export function buildRemoteInstructVariables(input: {
   autopilotUrl: string;
@@ -50,7 +57,7 @@ export function renderRemoteInstructTemplate(
 ): RenderRemoteInstructResult {
   const missingVariables = new Set<string>();
   const content = template.replace(VARIABLE_PATTERN, (match, key: string) => {
-    if (Object.hasOwn(variables, key)) {
+    if (hasOwn.call(variables, key)) {
       return variables[key] ?? "";
     }
     missingVariables.add(key);
@@ -67,13 +74,31 @@ export function renderRemoteInstructTemplate(
 export async function loadRemoteInstruct(
   options: LoadRemoteInstructOptions,
 ): Promise<RenderRemoteInstructResult> {
-  const file = Bun.file(options.promptPath);
+  const { template } = await readRemoteInstructTemplate(options.promptPath);
+  return renderRemoteInstructTemplate(template, options.variables);
+}
+
+export async function readRemoteInstructTemplate(promptPath: string): Promise<RemoteInstructTemplate> {
+  const file = Bun.file(promptPath);
   if (!(await file.exists())) {
     throw new RemoteInstructConfigError(
-      `Remote Instruct prompt is not configured at ${options.promptPath}`,
+      `Remote Instruct prompt is not configured at ${promptPath}`,
     );
   }
 
-  const template = await file.text();
-  return renderRemoteInstructTemplate(template, options.variables);
+  return {
+    template: await file.text(),
+    promptPath,
+  };
+}
+
+export async function writeRemoteInstructTemplate(
+  promptPath: string,
+  template: string,
+): Promise<RemoteInstructTemplate> {
+  await writeFile(promptPath, template, "utf8");
+  return {
+    template,
+    promptPath,
+  };
 }

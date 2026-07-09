@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 import type { RequestAuthContext } from "../auth/request-context";
 import { handleRemoteInstructApi, type RemoteInstructRoutesContext } from "./remote-instruct-routes";
@@ -29,6 +31,7 @@ function makeContext(overrides: Partial<RemoteInstructRoutesContext> = {}): Remo
     projectReference: "Project X",
     resolveNip98AuthContext: () => authenticatedAuth,
     ensureApiAccess: async () => null,
+    ensureTemplateManageAccess: async () => null,
     AccessActions: {
       SessionsManage: "sessions:manage" as never,
     },
@@ -103,5 +106,73 @@ describe("handleRemoteInstructApi", () => {
 
     expect(response!.status).toBe(405);
     expect(response!.headers.get("allow")).toBe("GET");
+  });
+
+  test("returns the raw template for admin settings", async () => {
+    const root = await mkdtemp(join(tmpdir(), "remote-instruct-test-"));
+    try {
+      const promptPath = join(root, "remote-instruct.md");
+      await writeFile(promptPath, "Hello $hostname from $project_reference", "utf8");
+      const url = new URL("http://localhost:3000/api/remote-instruct/template");
+      const response = await handleRemoteInstructApi(
+        new Request(url),
+        url,
+        "GET",
+        authenticatedAuth,
+        makeContext({ promptPath }),
+      );
+      const body = await response!.json() as {
+        template: string;
+        variables: Record<string, string>;
+      };
+
+      expect(response!.status).toBe(200);
+      expect(body.template).toBe("Hello $hostname from $project_reference");
+      expect(body.variables.project_reference).toBe("Project X");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("saves the raw template for admin settings", async () => {
+    const root = await mkdtemp(join(tmpdir(), "remote-instruct-test-"));
+    try {
+      const promptPath = join(root, "remote-instruct.md");
+      await writeFile(promptPath, "Old prompt", "utf8");
+      const url = new URL("http://localhost:3000/api/remote-instruct/template");
+      const response = await handleRemoteInstructApi(
+        new Request(url, {
+          method: "PUT",
+          body: JSON.stringify({ template: "New $hostname prompt" }),
+          headers: { "content-type": "application/json" },
+        }),
+        url,
+        "PUT",
+        authenticatedAuth,
+        makeContext({ promptPath }),
+      );
+      const body = await response!.json() as { template: string };
+
+      expect(response!.status).toBe(200);
+      expect(body.template).toBe("New $hostname prompt");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("requires admin access for raw template settings", async () => {
+    const url = new URL("http://localhost:3000/api/remote-instruct/template");
+    const response = await handleRemoteInstructApi(
+      new Request(url),
+      url,
+      "GET",
+      authenticatedAuth,
+      makeContext({
+        ensureTemplateManageAccess: async () =>
+          Response.json({ error: "admin-only" }, { status: 403 }),
+      }),
+    );
+
+    expect(response!.status).toBe(403);
   });
 });
