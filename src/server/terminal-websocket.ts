@@ -1,4 +1,4 @@
-import type { Server, ServerWebSocket } from "bun";
+import type { ServerWebSocket } from "bun";
 import type { RequestAuthContext } from "../auth/request-context";
 import { getEffectiveOwnerNpub } from "../auth/effective-owner";
 import type { TerminalSessionManager } from "../terminal/terminal-session-manager";
@@ -16,11 +16,15 @@ export interface TerminalWebSocketContext {
   isAdminNpub: (npub: string | null | undefined) => boolean;
 }
 
+export interface TerminalWebSocketUpgradeServer {
+  upgrade: (request: Request, options: { data: TerminalWebSocketData }) => boolean;
+}
+
 export async function handleTerminalWebSocketUpgrade(
   request: Request,
   url: URL,
   authContext: RequestAuthContext,
-  server: Server<TerminalWebSocketData>,
+  server: TerminalWebSocketUpgradeServer,
   ctx: TerminalWebSocketContext,
 ): Promise<Response | null | undefined> {
   if (url.pathname !== "/api/terminal/ws") {

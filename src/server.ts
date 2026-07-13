@@ -193,9 +193,9 @@ import { createApiRouteHandler } from "./server/api-routes";
 import { type RemoteInstructRoutesContext } from "./server/remote-instruct-routes";
 import {
   handleTerminalWebSocketUpgrade,
-  createTerminalWebSocketHandler,
-  type TerminalWebSocketData,
 } from "./server/terminal-websocket";
+import { handleAppWebSocketUpgrade, type AppWebSocketUpgradeServer } from "./server/app-websocket-proxy";
+import { createWingmanWebSocketHandler, type WingmanWebSocketData } from "./server/websocket-handler";
 import { ensureAgentApiBinary } from "./server/bootstrap/agentapi";
 import { SchedulerStore } from "./scheduler/scheduler-store";
 import { SchedulerEngine } from "./scheduler/scheduler-engine";
@@ -353,6 +353,7 @@ if (subdomainProxyConfig.enabled) {
 const handlePathBasedAppRequest = async (
   request: Request,
   pathname: string,
+  requestServer: AppWebSocketUpgradeServer,
 ): Promise<Response | null> => {
   // Extract alias from path: /host/<alias> or /host/<alias>/...
   const pathParts = pathname.split("/").filter(Boolean);
@@ -398,21 +399,6 @@ const handlePathBasedAppRequest = async (
     );
   }
 
-  // Check for WebSocket upgrade
-  const upgradeHeader = request.headers.get("upgrade");
-  if (upgradeHeader?.toLowerCase() === "websocket") {
-    return new Response(
-      JSON.stringify({
-        error: "WebSocket not supported",
-        message: "WebSocket connections through path routing are not yet fully supported.",
-      }),
-      {
-        status: 501,
-        headers: { "Content-Type": "application/json" },
-      },
-    );
-  }
-
   // Rewrite the path to remove /host/<alias> prefix
   const remainingPath = "/" + pathParts.slice(2).join("/");
   const url = new URL(request.url);
@@ -425,6 +411,12 @@ const handlePathBasedAppRequest = async (
     body: request.body,
     duplex: "half",
   });
+
+  // Check for WebSocket upgrade
+  const upgradeHeader = request.headers.get("upgrade");
+  if (upgradeHeader?.toLowerCase() === "websocket") {
+    return handleAppWebSocketUpgrade(rewrittenRequest, resolved.port, requestServer) ?? null;
+  }
 
   return proxyRequestToApp(rewrittenRequest, resolved.port);
 };
@@ -2877,7 +2869,7 @@ const handleApi = createApiRouteHandler({
   },
 });
 
-const server = Bun.serve<TerminalWebSocketData>({
+const server = Bun.serve<WingmanWebSocketData>({
   port: config.port,
   // Disable idle timeout for SSE connections (default is 10 seconds)
   idleTimeout: 255, // Max value in seconds (about 4 minutes)
@@ -2897,7 +2889,7 @@ const server = Bun.serve<TerminalWebSocketData>({
         return httpsRedirect;
       }
 
-      const appHostResponse = await handleAppHostRequest(request, subdomainProxyConfig);
+      const appHostResponse = await handleAppHostRequest(request, subdomainProxyConfig, requestServer);
       if (appHostResponse) {
         return appHostResponse;
       }
@@ -2920,7 +2912,7 @@ const server = Bun.serve<TerminalWebSocketData>({
 
       // Handle path-based app routing (/host/<alias> and /host/<alias>/*)
       if (pathname.startsWith("/host/")) {
-        const pathHostResponse = await handlePathBasedAppRequest(request, pathname);
+        const pathHostResponse = await handlePathBasedAppRequest(request, pathname, requestServer);
         if (pathHostResponse) {
           return pathHostResponse;
         }
@@ -2971,7 +2963,7 @@ const server = Bun.serve<TerminalWebSocketData>({
       { status: 500 },
     );
   },
-  websocket: createTerminalWebSocketHandler(terminalWebSocketContext),
+  websocket: createWingmanWebSocketHandler(terminalWebSocketContext),
 });
 
 // Wire up the request-IP resolver now that the server object exists.

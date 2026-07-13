@@ -3,6 +3,7 @@ import { appDomainRegistry, normalizeAppHostname } from "../apps/app-domain-regi
 import { appRegistry } from "../apps/app-registry";
 import { appProcessManager } from "../apps/app-process-manager";
 import { isValidAppRuntimePort, runtimePortRegistry } from "../apps/runtime-port-registry";
+import { handleAppWebSocketUpgrade, type AppWebSocketUpgradeServer } from "./app-websocket-proxy";
 
 function logRouting(message: string, data?: unknown): void {
   if (Bun.env.WINGMAN_ROUTING_DEBUG !== "1") {
@@ -398,6 +399,7 @@ export const handleSubdomainRequest = async (
 export const handleAppHostRequest = async (
   request: Request,
   config: SubdomainProxyConfig,
+  server?: AppWebSocketUpgradeServer,
 ): Promise<Response | null> => {
   const host = request.headers.get("host");
   logRouting(`handleAppHostRequest called`, { host, enabled: config.enabled, baseDomain: config.baseDomain });
@@ -436,16 +438,10 @@ export const handleAppHostRequest = async (
 
   const upgradeHeader = request.headers.get("upgrade");
   if (upgradeHeader?.toLowerCase() === "websocket") {
-    return new Response(
-      JSON.stringify({
-        error: "WebSocket not supported",
-        message: "WebSocket connections through app host routing are not yet fully supported.",
-      }),
-      {
-        status: 501,
-        headers: { "Content-Type": "application/json" },
-      },
-    );
+    if (!server) {
+      return Response.json({ error: "WebSocket upgrade server unavailable" }, { status: 501 });
+    }
+    return handleAppWebSocketUpgrade(request, resolved.port, server) ?? null;
   }
 
   return proxyRequestToApp(request, resolved.port);
