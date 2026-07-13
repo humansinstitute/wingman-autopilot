@@ -112,7 +112,7 @@ Cloudflare's proxied HTTP service only accepts traffic on supported HTTP/HTTPS p
 
 ## Remote Edge Patterns
 
-### Pattern A: Shared Host With Edge Router
+### Pattern A: Public Origin Edge Router
 
 Use this when the machine has inbound `80`/`443`, or when another machine/router forwards those ports to it.
 
@@ -133,7 +133,7 @@ Requirements:
 - The edge router must support WebSocket upgrades.
 - The edge router should not rewrite all branded hosts to `rick.runwingman.com`; Autopilot needs to see `brandname.com`.
 
-This is the best default when a remote box has a stable public name like `rick.runwingman.com` but Autopilot itself is not bound to public ports.
+This is useful for CapRover or servers that already operate a public HTTPS edge. It is not the default path for Docker/Bun installs that already use Cloudflare Tunnel.
 
 ### Pattern B: Cloudflare Tunnel
 
@@ -165,21 +165,28 @@ This does not give Cloudflare HTTP proxy behavior, edge TLS, or origin hiding. I
 
 ## TLS and Edge Routing
 
-There are two possible TLS models:
+There are three possible TLS models:
 
-1. External edge router terminates TLS.
-   - Caddy, Traefik, Nginx, CapRover, Cloudflare Tunnel, or another host-level router owns ports 80/443.
+1. Cloudflare Tunnel terminates public TLS at Cloudflare.
+   - `cloudflared` opens an outbound tunnel from the machine to Cloudflare.
+   - Cloudflare maps public hostnames to local services such as `http://localhost:3600`.
+   - The remote machine does not need inbound `80`/`443`.
+   - The local Autopilot service can stay HTTP.
+   - This is the preferred path for Docker-on-host and Bun-on-3600 installs.
+
+2. External edge router terminates TLS.
+   - Caddy, Traefik, Nginx, CapRover, or another host-level router owns ports 80/443.
    - It forwards requests to the local Autopilot port.
    - It preserves `Host`, `X-Forwarded-Host`, and `X-Forwarded-Proto`.
-   - This is the likely first production path, especially on shared boxes or hosts where Autopilot is not bound directly to 80/443.
+   - This is still useful for public servers and CapRover-style deployments.
 
-2. Autopilot terminates TLS directly.
+3. Autopilot terminates TLS directly.
    - Autopilot would need ACME certificate issuance, renewal, storage, and validation handling.
    - This is more integrated but heavier and more failure-prone.
 
 Near-term preference: use a simple integrated Autopilot host router, but let the machine-level edge component handle public TLS and port 80/443 concerns when needed.
 
-Cloudflare SSL/TLS mode should normally be `Full (strict)` for proxied production traffic. That means the connection from Cloudflare to the origin edge is also HTTPS and the origin presents a certificate Cloudflare can validate for the requested hostname. Practical ways to satisfy that:
+Cloudflare SSL/TLS mode should normally be `Full (strict)` for proxied production traffic that uses a public origin edge. That means the connection from Cloudflare to the origin edge is also HTTPS and the origin presents a certificate Cloudflare can validate for the requested hostname. Practical ways to satisfy that:
 
 - Caddy/Traefik obtains public certificates for each branded hostname.
 - The edge uses Cloudflare Origin CA certificates for hostnames that will only be reached through Cloudflare.
@@ -189,27 +196,41 @@ Avoid `Flexible` SSL for app hosting. It leaves the Cloudflare-to-origin leg as 
 
 ## TLS Termination Model
 
-TLS has two different hops:
+TLS has two common shapes.
+
+Tunnel shape:
 
 ```txt
 Browser
   -> HTTPS to Cloudflare edge
-  -> HTTPS or tunnel transport to the remote origin edge
+  -> Cloudflare Tunnel transport
+  -> HTTP to Autopilot on localhost/container host port
+  -> HTTP inside the host to the app runtime port
+```
+
+Public origin edge shape:
+
+```txt
+Browser
+  -> HTTPS to Cloudflare edge
+  -> HTTPS to the remote origin edge
   -> HTTP inside the host/container to Autopilot
   -> HTTP inside the host to the app runtime port
 ```
 
 Cloudflare terminates visitor-facing TLS for `brandname.com`. Because the customer domain is managed in Cloudflare, Cloudflare can issue and serve the public edge certificate.
 
-For `Full (strict)`, Cloudflare also expects the origin edge to present a certificate valid for the requested hostname, for example `brandname.com`. This is true even if the DNS record is a CNAME to `rick.runwingman.com`: the visitor asked for `brandname.com`, so the origin edge must be ready for that host unless a Cloudflare feature explicitly overrides origin/SNI behavior.
+For a normal proxied public origin in `Full (strict)`, Cloudflare also expects the origin edge to present a certificate valid for the requested hostname, for example `brandname.com`. This is true even if the DNS record is a CNAME to `rick.runwingman.com`: the visitor asked for `brandname.com`, so the origin edge must be ready for that host unless a Cloudflare feature explicitly overrides origin/SNI behavior.
 
-The stable production model is:
+For Cloudflare Tunnel, the public hostname terminates at Cloudflare and the origin connection is the tunnel to `cloudflared`. The local Autopilot service can stay HTTP on `localhost:3600` or a Docker-published host port. There is no Caddy/Nginx origin certificate requirement in that path.
+
+The stable public-origin production model is:
 
 - Cloudflare edge certificate: automatic/public Cloudflare certificate for the branded hostname.
 - Origin edge certificate: Caddy/Traefik/CapRover/Cloudflare Origin CA certificate for the same branded hostname.
 - Internal Autopilot traffic: plain HTTP to `127.0.0.1:3600` or the container's internal `3600`.
 
-Cloudflare Tunnel is the exception: public TLS terminates at Cloudflare, and `cloudflared` carries traffic to local Autopilot. The local service can stay HTTP because it is not directly exposed as the public TLS origin.
+Cloudflare Tunnel is the default for local Docker/Bun installs: public TLS terminates at Cloudflare, and `cloudflared` carries traffic to local Autopilot. The local service can stay HTTP because it is not directly exposed as the public TLS origin, and the public-origin certificate requirement above does not apply to the local `http://127.0.0.1:3600` service.
 
 ## Records and Routing by Deployment
 
@@ -261,38 +282,40 @@ CapRover edge concerns:
 
 ### 2. Autopilot Running in Docker on a Host
 
-A host-level reverse proxy is the origin edge. Caddy is the simplest default because it can terminate TLS and reverse proxy by host. Traefik or Nginx are also fine.
+The preferred Docker setup uses `cloudflared` on the base machine, outside the Wingman container. The container publishes its internal `3600` to a host port such as `3600`, `3601`, or a provisioned `WINGMAN_HOST_PORT`; the tunnel maps public hostnames to that host port.
 
-Cloudflare records:
+Cloudflare public hostname / tunnel mappings:
 
 ```txt
-# Remote host public edge
-A      rick              203.0.113.10          Proxied
-A      origin-rick       203.0.113.10          DNS only
-
-# Branded app domain
-CNAME  @                 origin-rick.runwingman.com Proxied
-CNAME  www               brandname.com         Proxied
+# Existing Autopilot host
+rick.runwingman.com       -> http://localhost:3600
 
 # Optional generated app aliases
-CNAME  *.rick            rick.runwingman.com   Proxied
+*.rick.runwingman.com     -> http://localhost:3600
+
+# Branded app domain
+brandname.com             -> http://localhost:3600
+www.brandname.com         -> http://localhost:3600
 ```
+
+In Cloudflare DNS this is represented by tunnel-backed proxied hostnames, commonly CNAMEs to the tunnel target such as `<tunnel-id>.cfargotunnel.com`. The master Autopilot should treat this as a Cloudflare Tunnel public hostname registration, not as an A record to the server IP.
 
 Host setup:
 
 - Docker runs Autopilot with internal `PORT=3600`.
-- Autopilot's container port `3600` is reachable by the host reverse proxy, either through a Docker network or a host port bound to loopback.
-- Caddy/Traefik/Nginx listens on host `80`/`443`.
-- The reverse proxy has certificates for `brandname.com`, `www.brandname.com`, and any generated app alias wildcard that should work through `Full (strict)`.
+- Docker publishes the container port to a base-machine port, for example `localhost:3600`.
+- `cloudflared` runs on the base machine and points each public hostname at that local port.
+- Multiple Docker Autopilot instances can share one machine by using different host ports and tunnel hostname mappings.
+- Bundling `cloudflared` into the Wingman image is not the default plan.
 
 Request path:
 
 ```txt
 Browser https://brandname.com
   -> Cloudflare edge TLS for brandname.com
-  -> HTTPS to host reverse proxy for Host: brandname.com
-  -> reverse proxy TLS terminates and preserves Host
-  -> HTTP to Autopilot container on :3600
+  -> Cloudflare Tunnel public hostname route
+  -> cloudflared on base machine
+  -> HTTP to Docker-published Autopilot port, e.g. localhost:3600
   -> Autopilot maps brandname.com to appId
   -> Autopilot proxies to that app's runtime port
 ```
@@ -300,44 +323,44 @@ Browser https://brandname.com
 Docker edge concerns:
 
 - Do not expose app runtime ports publicly. They should be reachable only from Autopilot or the host network.
-- Bind Autopilot's host port to loopback or a private Docker network when possible.
-- The reverse proxy config should be a generic catch-all for registered hosts, not a redirect to one canonical host.
-- Certificate automation needs a way to learn new branded hostnames. Caddy can do this dynamically only with the right config/on-demand TLS controls; otherwise master Autopilot may need to update proxy config and reload it.
-- If Cloudflare is proxied and `Full (strict)` is enabled, origin cert coverage must include the branded hostname.
+- Bind the Docker-published Autopilot port to loopback where possible.
+- Public tunnel hostnames and wildcard app hostnames must be configured in Cloudflare Tunnel, not only in DNS.
+- Cloudflare edge certificates must cover each public hostname. A wildcard only covers one label, so `*.runwingman.com` does not cover `rare-zap-horn.rick.runwingman.com`; that needs `*.rick.runwingman.com`.
+- The tunnel must preserve the original `Host`; Autopilot uses that host to route custom domains.
+- A host-level reverse proxy remains an alternate deployment option, but it is not the Docker-first default.
 
 ### 3. Autopilot Running as a Bun Install on Port 3600
 
-Autopilot runs directly on the host as a Bun process, but it should still sit behind an origin edge on public `80`/`443`.
+Autopilot runs directly on the host as a Bun process. The preferred public exposure is a Cloudflare Tunnel public hostname that targets `http://127.0.0.1:3600`.
 
-Cloudflare records:
+Cloudflare public hostname / tunnel mappings:
 
 ```txt
-# Remote host public edge
-A      rick              203.0.113.10          Proxied
-A      origin-rick       203.0.113.10          DNS only
-
-# Branded app domain
-CNAME  @                 origin-rick.runwingman.com Proxied
-CNAME  www               brandname.com         Proxied
+# Existing Autopilot host
+rick.runwingman.com       -> http://127.0.0.1:3600
 
 # Optional generated app aliases
-CNAME  *.rick            rick.runwingman.com   Proxied
+*.rick.runwingman.com     -> http://127.0.0.1:3600
+
+# Branded app domain
+brandname.com             -> http://127.0.0.1:3600
+www.brandname.com         -> http://127.0.0.1:3600
 ```
 
 Host setup:
 
-- Bun Autopilot listens on `127.0.0.1:3600`, not public `0.0.0.0:3600`, where possible.
-- Caddy/Traefik/Nginx listens on `80`/`443`.
-- The reverse proxy forwards all registered branded hosts to `http://127.0.0.1:3600`.
-- The reverse proxy preserves `Host` and forwards WebSocket upgrades.
+- Bun Autopilot listens on `127.0.0.1:3600`.
+- `cloudflared` runs on the host and maps public hostnames to `http://127.0.0.1:3600`.
+- No local Nginx/Caddy reverse proxy is required for the primary tunnel path.
+- The master Autopilot can add tunnel public hostnames through Cloudflare; the production Bun Autopilot does not need Cloudflare API keys.
 
 Request path:
 
 ```txt
 Browser https://brandname.com
   -> Cloudflare edge TLS for brandname.com
-  -> HTTPS to host reverse proxy for Host: brandname.com
-  -> reverse proxy TLS terminates and preserves Host
+  -> Cloudflare Tunnel public hostname route
+  -> cloudflared on the Bun host
   -> HTTP to Bun Autopilot on 127.0.0.1:3600
   -> Autopilot maps brandname.com to appId
   -> Autopilot proxies to that app's runtime port
@@ -348,6 +371,7 @@ Bun install edge concerns:
 - Port `3600` is not a public web port for Cloudflare proxied traffic; visitors should never need `:3600` in the URL.
 - The host firewall should restrict direct access to `3600` and app runtime ports.
 - Running Autopilot directly on public `80`/`443` would require Autopilot to own TLS/cert automation, which is not the preferred near-term design.
+- Tunnel public hostnames must include both the Autopilot base host and any wildcard/custom app hostnames that should route to this Autopilot.
 - Process restarts should not be driven by agents inside Autopilot sessions; the operator should restart the service externally.
 
 ## Master-Controlled DNS Flow
@@ -389,6 +413,8 @@ Possible target kinds:
 - `ipv6`
 - `public-host`
 - `cloudflare-tunnel`
+
+For tunnel targets, the DNS record is usually managed as a Cloudflare Tunnel public hostname rather than a raw DNS record to an IP address. The business record should store the tunnel ID/name and service URL, for example `http://localhost:3600`, so the master can update the correct Cloudflare Tunnel route.
 
 The remote Autopilot should receive only the app routing registration:
 
@@ -446,6 +472,6 @@ Routing implementation must support WebSocket upgrades before real-domain app ho
 
 - Should the custom-domain registry live only in local Autopilot storage, or should Tower also know public app domains for Flight Deck launchers?
 - Should master Autopilot push domain registrations directly to remotes, or should remotes pull desired domain state from Tower/master?
-- Which edge router should be the default documented production path for shared boxes?
-- Do we need first-class Cloudflare Tunnel support for machines without direct inbound 80/443?
+- Should CapRover custom domains be updated by master Autopilot directly, or should CapRover continue to be configured separately from DNS?
+- Do we need first-class Cloudflare Tunnel API support for adding/removing public hostnames on Docker/Bun instances?
 - Should root domains and `www` be registered as separate explicit hostnames or grouped as one domain bundle in the UI?
