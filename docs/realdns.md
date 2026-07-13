@@ -436,12 +436,24 @@ Proposed flow:
 }
 ```
 
-5. Master or remote verifies DNS resolution points at the expected IP or public host.
+5. Master verifies the Cloudflare edge route is present and points at the expected target.
 6. Remote Autopilot marks the domain active and starts routing traffic.
 
 The production instance does not need the Cloudflare API token for any of this.
 
-For Cloudflare-managed domains, the master should store enough target metadata to choose the right DNS record:
+For Cloudflare-managed domains, the master should store enough target metadata to choose the right edge route. For the Docker/Bun tunnel-first path:
+
+```json
+{
+  "hostname": "brandname.com",
+  "targetKind": "cloudflare-tunnel",
+  "tunnelId": "remote-rick",
+  "serviceUrl": "http://localhost:3600",
+  "preserveHostHeader": true
+}
+```
+
+For a public-origin CapRover or reverse-proxy path:
 
 ```json
 {
@@ -461,6 +473,14 @@ Possible target kinds:
 
 For tunnel targets, the DNS record is usually managed as a Cloudflare Tunnel public hostname rather than a raw DNS record to an IP address. The business record should store the tunnel ID/name and service URL, for example `http://localhost:3600`, so the master can update the correct Cloudflare Tunnel route.
 
+A tunnel-backed hostname is active only when all of these are true:
+
+- Cloudflare has a Tunnel public hostname/ingress route for the hostname.
+- The route service URL points at the correct local Autopilot port.
+- The route does not override `httpHostHeader` to a fixed hostname.
+- The corresponding DNS CNAME to `<tunnel-id>.cfargotunnel.com` exists, or Cloudflare created it as part of the public hostname setup.
+- Cloudflare edge certificate coverage exists for the hostname or wildcard.
+
 The remote Autopilot should receive only the app routing registration:
 
 ```json
@@ -471,7 +491,7 @@ The remote Autopilot should receive only the app routing registration:
 }
 ```
 
-DNS verification should check the expected public outcome, not merely that any DNS record exists. For proxied Cloudflare records, public DNS queries return Cloudflare anycast addresses, so verification may need to use Cloudflare's API from the master side or compare CNAME/API state rather than expecting to see the origin IP in public DNS.
+DNS/route verification should check the expected public outcome, not merely that any DNS record exists. For proxied Cloudflare records, public DNS queries return Cloudflare anycast addresses, so verification may need to use Cloudflare's API from the master side or compare Tunnel public-hostname/CNAME/API state rather than expecting to see the origin IP in public DNS.
 
 ## Implementation Notes
 
@@ -511,6 +531,8 @@ Routing implementation must support WebSocket upgrades before real-domain app ho
 - SSL/TLS modes: https://developers.cloudflare.com/ssl/origin-configuration/ssl-modes/
 - Full strict SSL/TLS: https://developers.cloudflare.com/ssl/origin-configuration/ssl-modes/full-strict/
 - Cloudflare Tunnel public hostnames: https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/routing-to-tunnel/
+- Cloudflare Tunnel origin parameters: https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/configure-tunnels/origin-parameters/
+- Cloudflare HTTP headers: https://developers.cloudflare.com/fundamentals/reference/http-headers/
 - Error 1014 / cross-account CNAMEs: https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-1xxx-errors/error-1014/
 
 ## Open Questions
