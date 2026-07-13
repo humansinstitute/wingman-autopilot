@@ -28,6 +28,12 @@ mock.module("./app-alias-registry", () => ({
   },
 }));
 
+mock.module("./app-domain-registry", () => ({
+  appDomainRegistry: {
+    removeByAppId: async () => 0,
+  },
+}));
+
 const { AppRegistry } = await import("./app-registry");
 
 async function withRegistry(fn: (registry: InstanceType<typeof AppRegistry>, filePath: string) => Promise<void>): Promise<void> {

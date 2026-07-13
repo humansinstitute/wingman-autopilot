@@ -7,6 +7,7 @@ import { normaliseNpub } from "../identity/npub-utils";
 import { identityUserStore } from "../storage/identity-user-store";
 import { isPortAvailable } from "../utils/port-utils";
 import { appAliasRegistry } from "./app-alias-registry";
+import { appDomainRegistry } from "./app-domain-registry";
 import {
   hydrateAppEnv,
   normaliseAppEnvRecord,
@@ -324,6 +325,7 @@ export class AppRegistry {
     if (existed) {
       await this.persist();
       await appAliasRegistry.removeAlias(id);
+      await appDomainRegistry.removeByAppId(id);
     }
     return existed;
   }

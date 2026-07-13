@@ -104,6 +104,28 @@ function createContext(
     appAliasRegistry: {
       getByAppId: async () => undefined,
     },
+    appDomainRegistry: {
+      listByAppId: async () => [],
+      registerDomain: async ({ hostname, appId, status = 'pending_dns' }) => ({
+        hostname,
+        appId,
+        status,
+        createdAt: '2026-07-04T00:00:00.000Z',
+        updatedAt: '2026-07-04T00:00:00.000Z',
+        lastVerifiedAt: null,
+        error: null,
+      }),
+      updateDomain: async (hostname, { status = 'active', verified = false, error = null }) => ({
+        hostname,
+        appId: 'app-1',
+        status,
+        createdAt: '2026-07-04T00:00:00.000Z',
+        updatedAt: '2026-07-04T00:00:00.000Z',
+        lastVerifiedAt: verified ? '2026-07-04T00:00:00.000Z' : null,
+        error,
+      }),
+      removeDomain: async () => true,
+    },
     npubProjectStore: {
       getByPath: () => null,
       setAppId: () => undefined,
@@ -191,7 +213,12 @@ describe('handleAppsApi', () => {
           },
           updateApp: async (id, input) => {
             if (id !== app.id) throw new Error('unknown app');
-            app = { ...app, ...input, updatedAt: '2026-07-06T00:01:00.000Z' };
+            app = {
+              ...app,
+              ...input,
+              notes: input.notes === null ? undefined : input.notes ?? app.notes,
+              updatedAt: '2026-07-06T00:01:00.000Z',
+            };
             return app;
           },
           removeApp: async () => false,
@@ -216,5 +243,105 @@ describe('handleAppsApi', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  test('registers and verifies custom domains for web apps', async () => {
+    const app: AppRecord = {
+      id: 'app-1',
+      label: 'Web App',
+      root: '/workspace/web-app',
+      scripts: {},
+      tmuxSession: '',
+      ownerNpub: 'npub1viewer',
+      createdAt: '2026-07-04T00:00:00.000Z',
+      updatedAt: '2026-07-04T00:00:00.000Z',
+      webApp: true,
+      webAppPort: 4123,
+    };
+    const domains = new Map<string, Awaited<ReturnType<AppsApiContext['appDomainRegistry']['registerDomain']>>>();
+    const ctx = createContext({
+      appRegistry: {
+        listApps: async () => [app],
+        getApp: async (id) => id === app.id ? app : undefined,
+        discoverScripts: async () => ({}),
+        registerApp: async () => {
+          throw new Error('not implemented');
+        },
+        updateApp: async () => {
+          throw new Error('not implemented');
+        },
+        removeApp: async () => false,
+      },
+      appDomainRegistry: {
+        listByAppId: async (appId) => Array.from(domains.values()).filter((domain) => domain.appId === appId),
+        registerDomain: async ({ hostname, appId, status = 'pending_dns', error = null }) => {
+          const record = {
+            hostname,
+            appId,
+            status,
+            createdAt: '2026-07-04T00:00:00.000Z',
+            updatedAt: '2026-07-04T00:00:00.000Z',
+            lastVerifiedAt: null,
+            error,
+          };
+          domains.set(hostname, record);
+          return record;
+        },
+        updateDomain: async (hostname, { status, verified = false, error = null }) => {
+          const existing = domains.get(hostname);
+          if (!existing) throw new Error('missing domain');
+          const record = {
+            ...existing,
+            status: status ?? existing.status,
+            error,
+            lastVerifiedAt: verified ? '2026-07-04T00:01:00.000Z' : existing.lastVerifiedAt,
+            updatedAt: '2026-07-04T00:01:00.000Z',
+          };
+          domains.set(hostname, record);
+          return record;
+        },
+        removeDomain: async (hostname) => domains.delete(hostname),
+      },
+    });
+
+    const createRequest = new Request('http://localhost/api/apps/app-1/domains', {
+      method: 'POST',
+      body: JSON.stringify({ hostname: 'BrandName.com' }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const createResponse = await handleAppsApi(createRequest, new URL(createRequest.url), 'POST', authContext, ctx);
+    expect(createResponse?.status).toBe(201);
+    expect(await createResponse?.json()).toMatchObject({
+      domain: {
+        hostname: 'brandname.com',
+        status: 'pending_dns',
+      },
+    });
+
+    const verifyRequest = new Request('http://localhost/api/apps/app-1/domains/brandname.com/verify', {
+      method: 'POST',
+    });
+    const verifyResponse = await handleAppsApi(verifyRequest, new URL(verifyRequest.url), 'POST', authContext, ctx);
+    expect(verifyResponse?.status).toBe(200);
+    expect(await verifyResponse?.json()).toMatchObject({
+      domain: {
+        hostname: 'brandname.com',
+        status: 'active',
+        lastVerifiedAt: '2026-07-04T00:01:00.000Z',
+      },
+      verifiedBy: 'caller',
+    });
+
+    const listRequest = new Request('http://localhost/api/apps/app-1/domains');
+    const listResponse = await handleAppsApi(listRequest, new URL(listRequest.url), 'GET', authContext, ctx);
+    expect(listResponse?.status).toBe(200);
+    expect(await listResponse?.json()).toMatchObject({
+      domains: [
+        {
+          hostname: 'brandname.com',
+          status: 'active',
+        },
+      ],
+    });
   });
 });

@@ -1,4 +1,5 @@
 import { appAliasRegistry } from "../apps/app-alias-registry";
+import { appDomainRegistry, normalizeAppHostname } from "../apps/app-domain-registry";
 import { appRegistry } from "../apps/app-registry";
 import { appProcessManager } from "../apps/app-process-manager";
 import { isValidAppRuntimePort, runtimePortRegistry } from "../apps/runtime-port-registry";
@@ -36,7 +37,7 @@ export const extractSubdomainAlias = (
   }
 
   // Remove port if present
-  const hostWithoutPort = host.split(":")[0].toLowerCase();
+  const hostWithoutPort = (host.split(":")[0] ?? "").toLowerCase();
   const normalizedBase = baseDomain.toLowerCase();
 
   // Check if host ends with .baseDomain
@@ -60,6 +61,59 @@ export type ResolveAliasResult =
   | { success: true; port: number; appId: string }
   | { success: false; reason: "alias_not_found" | "app_not_found" | "app_not_running" | "port_not_registered" | "invalid_runtime_port"; alias: string; appId?: string; status?: string; port?: number };
 
+export type ResolveHostResult =
+  | { success: true; port: number; appId: string; routeKind: "custom_domain" | "subdomain_alias"; hostname?: string; alias?: string }
+  | {
+    success: false;
+    reason: "domain_not_active" | "app_not_found" | "app_not_running" | "port_not_registered" | "invalid_runtime_port" | "alias_not_found";
+    routeKind: "custom_domain" | "subdomain_alias";
+    hostname?: string;
+    alias?: string;
+    appId?: string;
+    status?: string;
+    port?: number;
+  };
+
+async function resolveAppIdToPort(
+  appId: string,
+  route: { routeKind: "custom_domain"; hostname: string } | { routeKind: "subdomain_alias"; alias: string },
+): Promise<ResolveHostResult> {
+  const app = await appRegistry.getApp(appId);
+  if (!app) {
+    logRouting(`FAIL: app not found in registry`, { ...route, appId });
+    return { success: false, reason: "app_not_found", ...route, appId };
+  }
+  logRouting(`app found`, { ...route, appId, label: app.label });
+
+  const status = await appProcessManager.getStatus(appId);
+  logRouting(`app status`, { ...route, appId, status: status.status });
+  if (status.status !== "running") {
+    logRouting(`FAIL: app not running`, { ...route, appId, status: status.status });
+    return { success: false, reason: "app_not_running", ...route, appId, status: status.status };
+  }
+
+  // Registered web apps have assigned ports. Prefer that stable contract over
+  // transient PM2 runtime data, which can report Autopilot's own server port.
+  const registeredPort = runtimePortRegistry.get(appId);
+  const assignedPort = app.webApp && typeof app.webAppPort === "number" && app.webAppPort > 0
+    ? app.webAppPort
+    : null;
+  const port = assignedPort ?? registeredPort;
+  logRouting(`runtime port lookup`, { ...route, appId, registeredPort, assignedPort, port });
+  if (port === null) {
+    logRouting(`FAIL: port not in runtime registry`, { ...route, appId });
+    return { success: false, reason: "port_not_registered", ...route, appId };
+  }
+  if (!isValidAppRuntimePort(port)) {
+    runtimePortRegistry.clear(appId);
+    logRouting(`FAIL: invalid app runtime port`, { ...route, appId, port });
+    return { success: false, reason: "invalid_runtime_port", ...route, appId, port };
+  }
+
+  logRouting(`SUCCESS: resolved route to port`, { ...route, appId, port });
+  return { success: true, port, appId, ...route };
+}
+
 /**
  * Resolve an alias to a running app's port.
  * Uses the runtime port registry which tracks dynamically detected ports.
@@ -79,41 +133,64 @@ export const resolveAliasToPort = async (
   }
   logRouting(`alias found`, { alias, appId: aliasRecord.appId });
 
-  const app = await appRegistry.getApp(aliasRecord.appId);
-  if (!app) {
-    logRouting(`FAIL: app not found in registry`, { alias, appId: aliasRecord.appId });
-    return { success: false, reason: "app_not_found", alias, appId: aliasRecord.appId };
+  const resolved = await resolveAppIdToPort(aliasRecord.appId, { routeKind: "subdomain_alias", alias });
+  if (!resolved.success) {
+    if (resolved.reason === "domain_not_active") {
+      return { success: false, reason: "app_not_found", alias, appId: aliasRecord.appId };
+    }
+    return {
+      success: false,
+      reason: resolved.reason,
+      alias,
+      appId: resolved.appId,
+      status: resolved.status,
+      port: resolved.port,
+    };
   }
-  logRouting(`app found`, { alias, appId: aliasRecord.appId, label: app.label });
+  return { success: true, port: resolved.port, appId: resolved.appId };
+};
 
-  // Check if app is actually running
-  const status = await appProcessManager.getStatus(aliasRecord.appId);
-  logRouting(`app status`, { alias, appId: aliasRecord.appId, status: status.status });
-  if (status.status !== "running") {
-    logRouting(`FAIL: app not running`, { alias, appId: aliasRecord.appId, status: status.status });
-    return { success: false, reason: "app_not_running", alias, appId: aliasRecord.appId, status: status.status };
-  }
-
-  // Registered web apps have assigned ports. Prefer that stable contract over
-  // transient PM2 runtime data, which can report Autopilot's own server port.
-  const registeredPort = runtimePortRegistry.get(aliasRecord.appId);
-  const assignedPort = app.webApp && typeof app.webAppPort === "number" && app.webAppPort > 0
-    ? app.webAppPort
-    : null;
-  const port = assignedPort ?? registeredPort;
-  logRouting(`runtime port lookup`, { alias, appId: aliasRecord.appId, registeredPort, assignedPort, port });
-  if (port === null) {
-    logRouting(`FAIL: port not in runtime registry`, { alias, appId: aliasRecord.appId });
-    return { success: false, reason: "port_not_registered", alias, appId: aliasRecord.appId };
-  }
-  if (!isValidAppRuntimePort(port)) {
-    runtimePortRegistry.clear(aliasRecord.appId);
-    logRouting(`FAIL: invalid app runtime port`, { alias, appId: aliasRecord.appId, port });
-    return { success: false, reason: "invalid_runtime_port", alias, appId: aliasRecord.appId, port };
+export const resolveHostToPort = async (
+  host: string | null,
+  config: SubdomainProxyConfig,
+): Promise<ResolveHostResult | null> => {
+  const hostname = normalizeAppHostname(host);
+  if (!hostname) {
+    return null;
   }
 
-  logRouting(`SUCCESS: resolved alias to port`, { alias, appId: aliasRecord.appId, port });
-  return { success: true, port, appId: aliasRecord.appId };
+  const domainRecord = await appDomainRegistry.getByHostname(hostname);
+  if (domainRecord) {
+    logRouting(`custom domain found`, { hostname, appId: domainRecord.appId, status: domainRecord.status });
+    if (domainRecord.status !== "active") {
+      return {
+        success: false,
+        reason: "domain_not_active",
+        routeKind: "custom_domain",
+        hostname,
+        appId: domainRecord.appId,
+        status: domainRecord.status,
+      };
+    }
+    return resolveAppIdToPort(domainRecord.appId, { routeKind: "custom_domain", hostname });
+  }
+
+  if (!config.enabled || !config.baseDomain) {
+    return null;
+  }
+
+  const alias = extractSubdomainAlias(host, config.baseDomain);
+  if (!alias) {
+    return null;
+  }
+
+  const aliasRecord = await appAliasRegistry.getByAlias(alias);
+  if (!aliasRecord) {
+    logRouting(`FAIL: alias not found in registry`, { alias });
+    return { success: false, reason: "alias_not_found", routeKind: "subdomain_alias", alias };
+  }
+
+  return resolveAppIdToPort(aliasRecord.appId, { routeKind: "subdomain_alias", alias });
 };
 
 /**
@@ -162,7 +239,6 @@ export const proxyRequestToApp = async (
       method: request.method,
       headers,
       body: request.body,
-      // @ts-expect-error - Bun supports duplex but types may not reflect it
       duplex: "half",
     });
 
@@ -316,5 +392,61 @@ export const handleSubdomainRequest = async (
   }
 
   // Proxy HTTP request
+  return proxyRequestToApp(request, resolved.port);
+};
+
+export const handleAppHostRequest = async (
+  request: Request,
+  config: SubdomainProxyConfig,
+): Promise<Response | null> => {
+  const host = request.headers.get("host");
+  logRouting(`handleAppHostRequest called`, { host, enabled: config.enabled, baseDomain: config.baseDomain });
+
+  const resolved = await resolveHostToPort(host, config);
+  if (!resolved) {
+    return null;
+  }
+
+  if (!resolved.success) {
+    const label = resolved.hostname ?? resolved.alias ?? host ?? "unknown";
+    const errorMessages: Record<ResolveHostResult extends infer T ? T extends { success: false; reason: infer R } ? R & string : never : never, string> = {
+      alias_not_found: `No app registered for alias "${resolved.alias}".`,
+      app_not_found: `App ID ${resolved.appId} not found in registry.`,
+      app_not_running: `App is not running (status: ${resolved.status}).`,
+      port_not_registered: `App is running but port not detected. Try restarting the app.`,
+      invalid_runtime_port: `App resolved to an invalid runtime port (${resolved.port}). Restart the app so its assigned port can be registered.`,
+      domain_not_active: `Domain "${resolved.hostname}" is registered but not active (status: ${resolved.status}).`,
+    };
+    console.warn(`[app-host-router] ${label}: ${resolved.reason}`, resolved);
+    return new Response(
+      JSON.stringify({
+        error: "App not available",
+        reason: resolved.reason,
+        message: errorMessages[resolved.reason],
+        hostname: resolved.hostname,
+        alias: resolved.alias,
+        appId: resolved.appId,
+      }),
+      {
+        status: 404,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  }
+
+  const upgradeHeader = request.headers.get("upgrade");
+  if (upgradeHeader?.toLowerCase() === "websocket") {
+    return new Response(
+      JSON.stringify({
+        error: "WebSocket not supported",
+        message: "WebSocket connections through app host routing are not yet fully supported.",
+      }),
+      {
+        status: 501,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  }
+
   return proxyRequestToApp(request, resolved.port);
 };

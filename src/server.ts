@@ -31,6 +31,7 @@ import {
 } from "./apps/app-registry";
 import { redactAppEnv } from "./apps/app-env";
 import { appAliasRegistry } from "./apps/app-alias-registry";
+import { appDomainRegistry, type AppDomainRecord } from "./apps/app-domain-registry";
 import {
   appProcessManager,
   type AppProcessStatus,
@@ -164,7 +165,7 @@ import {
   forwardedRequestUrl,
   redirectInsecurePublicRequest,
 } from "./server/request-url";
-import { handleSubdomainRequest, resolveAliasToPort, proxyRequestToApp, type SubdomainProxyConfig } from "./server/subdomain-proxy";
+import { handleAppHostRequest, resolveAliasToPort, proxyRequestToApp, type SubdomainProxyConfig } from "./server/subdomain-proxy";
 import { isAgentRuntimeStatus } from "./types/agent-status";
 import { scheduleCleanup } from "./uploads/cleanup";
 import { createSessionEventsHandler } from "./server/session-events";
@@ -421,7 +422,6 @@ const handlePathBasedAppRequest = async (
     method: request.method,
     headers: request.headers,
     body: request.body,
-    // @ts-expect-error - Bun supports duplex but types may not reflect it
     duplex: "half",
   });
 
@@ -1807,6 +1807,7 @@ const WEB_APP_PORT_PLACEHOLDER = "<port>";
 type BuildAppResponseOptions = {
   ownerAlias?: string | null;
   subdomainAlias?: string | null;
+  customDomains?: AppDomainRecord[];
 };
 
 const buildHostedWebAppUrl = (port: number | null): string | null => {
@@ -1951,9 +1952,21 @@ const buildAppResponse = (app: AppRecord, status: AppProcessStatus, options: Bui
     typeof app.webAppPort === "number" && Number.isFinite(app.webAppPort) ? Math.trunc(app.webAppPort) : null;
   const webAppAlias = options.ownerAlias ?? null;
   const subdomainAlias = options.subdomainAlias ?? null;
+  const customDomains = (options.customDomains ?? []).map((domain) => ({
+    hostname: domain.hostname,
+    appId: domain.appId,
+    status: domain.status,
+    url: `https://${domain.hostname}`,
+    createdAt: domain.createdAt,
+    updatedAt: domain.updatedAt,
+    lastVerifiedAt: domain.lastVerifiedAt,
+    error: domain.error,
+  }));
+  const activeCustomDomain = customDomains.find((domain) => domain.status === "active");
   // Use routing-mode-aware URL builder (path or subdomain based on APP_ROUTING)
   const subdomainUrl = app.webApp ? buildAppHostUrl(subdomainAlias) : null;
   const webAppUrl = app.webApp && webAppPort !== null && !subdomainUrl ? buildHostedWebAppUrl(webAppPort) : null;
+  const primaryUrl = app.webApp ? activeCustomDomain?.url ?? subdomainUrl ?? webAppUrl : null;
   return {
     id: app.id,
     label: app.label,
@@ -1974,6 +1987,8 @@ const buildAppResponse = (app: AppRecord, status: AppProcessStatus, options: Bui
     webAppUrl,
     subdomainAlias,
     subdomainUrl,
+    customDomains,
+    primaryUrl,
     status,
     availableScripts,
     logs: undefined as string[] | undefined,
@@ -1988,7 +2003,7 @@ const deriveDirectoryNameFromUrl = (url: string): string => {
   if (parts.length === 0) {
     return "";
   }
-  const last = parts[parts.length - 1];
+  const last = parts[parts.length - 1] ?? "";
   return last.replace(/\.git$/i, "");
 };
 
@@ -2788,6 +2803,7 @@ const handleApi = createApiRouteHandler({
       appRegistry,
       appProcessManager,
       appAliasRegistry,
+      appDomainRegistry,
       wappStore,
       npubProjectStore,
       createCaproverTargetClientsFromEnv,
@@ -2875,6 +2891,11 @@ const server = Bun.serve<TerminalWebSocketData>({
         return httpsRedirect;
       }
 
+      const appHostResponse = await handleAppHostRequest(request, subdomainProxyConfig);
+      if (appHostResponse) {
+        return appHostResponse;
+      }
+
       const terminalUpgradeResponse = await handleTerminalWebSocketUpgrade(
         request,
         url,
@@ -2889,50 +2910,6 @@ const server = Bun.serve<TerminalWebSocketData>({
       const webhookResponse = await handleWebhookRequest(request, url, authContext);
       if (webhookResponse) {
         return webhookResponse;
-      }
-
-      // Handle subdomain-based app routing (e.g., bold-gem-boat.apps.example.com)
-      // Check if this is a subdomain request FIRST - app subdomains should proxy all paths
-      const host = request.headers.get("host");
-      const hostWithoutPort = host?.split(":")[0]?.toLowerCase() ?? "";
-      const baseDomain = subdomainProxyConfig.baseDomain?.toLowerCase() ?? "";
-      const isAppSubdomain = subdomainProxyConfig.enabled &&
-        baseDomain &&
-        hostWithoutPort.endsWith(`.${baseDomain}`) &&
-        // Exclude numeric port subdomains (e.g., 30500.wmhost.app)
-        !hostWithoutPort.match(/^\d+\./);
-
-      if (isAppSubdomain) {
-        // For app subdomains, proxy ALL requests regardless of path
-        const subdomainResponse = await handleSubdomainRequest(request, subdomainProxyConfig);
-        if (subdomainResponse) {
-          return subdomainResponse;
-        }
-      }
-
-      // For non-subdomain requests, skip routing for Wingman's own API and UI paths
-      const isWingmanPath = pathname.startsWith("/api/") ||
-        pathname.startsWith("/home") ||
-        pathname.startsWith("/live") ||
-        pathname.startsWith("/terminal") ||
-        pathname.startsWith("/settings") ||
-        pathname.startsWith("/uploads/") ||
-        pathname.startsWith("/projects") ||
-        pathname.startsWith("/apps") ||
-        pathname.startsWith("/nightwatch") ||
-        pathname.startsWith("/scheduler") ||
-        pathname.startsWith("/triggers") ||
-        pathname.startsWith("/pipelines") ||
-        pathname.startsWith("/auth") ||
-        pathname === "/" ||
-        pathname === "/favicon.ico";
-
-      if (!isWingmanPath) {
-        // Handle any other subdomain patterns (numeric ports, etc.)
-        const subdomainResponse = await handleSubdomainRequest(request, subdomainProxyConfig);
-        if (subdomainResponse) {
-          return subdomainResponse;
-        }
       }
 
       // Handle path-based app routing (/host/<alias> and /host/<alias>/*)

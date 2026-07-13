@@ -5,6 +5,8 @@ import type { RequestAuthContext } from '../auth/request-context';
 import type { AccessAction } from '../auth/access-control';
 import type { WorkspaceScope } from '../workspaces/workspace-scope';
 import type { TreeNode } from '../apps/app-detector';
+import type { AppDomainRecord, AppDomainStatus } from '../apps/app-domain-registry';
+import { AppDomainConflictError, normalizeAppHostname } from '../apps/app-domain-registry';
 import type { AppLifecycleAction, AppLifecycleScripts, AppRecord } from '../apps/app-registry';
 import type { AppProcessStatus } from '../apps/app-process-manager';
 import { parseAppEnvInput, type AppEnvironmentVariables } from '../apps/app-env';
@@ -16,6 +18,7 @@ import type { WappRecord } from '../wapps/types';
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS' | 'HEAD';
 
 const CAPTAIN_DEFINITION_FILES = ['captain-definition', 'captain-definition.json'] as const;
+const APP_DOMAIN_STATUSES: AppDomainStatus[] = ['pending_dns', 'active', 'disabled', 'error'];
 
 async function readCaptainDefinition(appRoot: string): Promise<{ fileName: string; content: string } | null> {
   for (const fileName of CAPTAIN_DEFINITION_FILES) {
@@ -45,6 +48,37 @@ function normaliseCaproverAppName(value: unknown): string | null {
   const normalized = value.trim().toLowerCase();
   if (!/^[a-z][a-z0-9-]*$/.test(normalized)) return null;
   return normalized.length <= 50 ? normalized : null;
+}
+
+function serializeAppDomain(record: AppDomainRecord): Record<string, unknown> {
+  return {
+    hostname: record.hostname,
+    appId: record.appId,
+    status: record.status,
+    url: `https://${record.hostname}`,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    lastVerifiedAt: record.lastVerifiedAt,
+    error: record.error,
+  };
+}
+
+function normalizeAppDomainStatus(value: unknown): AppDomainStatus | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  return APP_DOMAIN_STATUSES.includes(normalized as AppDomainStatus)
+    ? (normalized as AppDomainStatus)
+    : null;
+}
+
+async function buildAppResponseWithDomains(
+  ctx: AppsApiContext,
+  app: AppRecord,
+  status: AppProcessStatus,
+  options: { ownerAlias?: string | null; subdomainAlias?: string | null } = {},
+): Promise<Record<string, unknown>> {
+  const customDomains = await ctx.appDomainRegistry.listByAppId(app.id);
+  return ctx.buildAppResponse(app, status, { ...options, customDomains });
 }
 
 function resolveCaproverTargets(
@@ -112,7 +146,7 @@ export interface AppsApiContext {
   buildAppResponse: (
     app: AppRecord,
     status: AppProcessStatus,
-    options?: { ownerAlias?: string | null; subdomainAlias?: string | null },
+    options?: { ownerAlias?: string | null; subdomainAlias?: string | null; customDomains?: AppDomainRecord[] },
   ) => Record<string, unknown>;
 
   appRegistry: {
@@ -164,6 +198,13 @@ export interface AppsApiContext {
 
   appAliasRegistry: {
     getByAppId: (id: string) => Promise<{ alias: string } | undefined>;
+  };
+
+  appDomainRegistry: {
+    listByAppId: (appId: string) => Promise<AppDomainRecord[]>;
+    registerDomain: (input: { hostname: string; appId: string; status?: AppDomainStatus; error?: string | null }) => Promise<AppDomainRecord>;
+    updateDomain: (hostname: string, input: { status?: AppDomainStatus; error?: string | null; verified?: boolean }) => Promise<AppDomainRecord>;
+    removeDomain: (hostname: string) => Promise<boolean>;
   };
 
   wappStore?: {
@@ -560,7 +601,7 @@ export async function handleAppsApi(
           const subdomainAlias = aliasRecord?.alias ?? null;
           const record = withWappAssignments(
             withCaproverDeploymentInfo(
-              ctx.buildAppResponse(app, status, { ownerAlias, subdomainAlias }),
+              await buildAppResponseWithDomains(ctx, app, status, { ownerAlias, subdomainAlias }),
               app.id,
               ctx.caproverStore,
             ),
@@ -693,7 +734,7 @@ export async function handleAppsApi(
       return Response.json(
         {
           app: withCaproverDeploymentInfo(
-            ctx.buildAppResponse(app, status, { subdomainAlias }),
+            await buildAppResponseWithDomains(ctx, app, status, { subdomainAlias }),
             app.id,
             ctx.caproverStore,
           ),
@@ -737,6 +778,126 @@ export async function handleAppsApi(
       return Response.json({ error: 'Not found' }, { status: 404 });
     }
 
+    if (parts[4] === 'domains') {
+      const app = await ctx.appRegistry.getApp(id);
+      if (!app) {
+        return Response.json({ error: 'Not found' }, { status: 404 });
+      }
+      if (!ctx.canAccessApp(app)) {
+        return Response.json({ error: 'Not found' }, { status: 404 });
+      }
+      if (!app.webApp) {
+        return Response.json({ error: 'Only web apps can have custom domains' }, { status: 400 });
+      }
+
+      if (method === 'GET' && parts.length === 5) {
+        const domains = await ctx.appDomainRegistry.listByAppId(id);
+        return Response.json({ domains: domains.map(serializeAppDomain) });
+      }
+
+      if (method === 'POST' && parts.length === 5) {
+        let payload: unknown;
+        try {
+          payload = await request.json();
+        } catch {
+          return Response.json({ error: 'Invalid JSON payload' }, { status: 400 });
+        }
+        if (!payload || typeof payload !== 'object') {
+          return Response.json({ error: 'Invalid JSON payload' }, { status: 400 });
+        }
+
+        const record = payload as Record<string, unknown>;
+        const hostname = normalizeAppHostname(typeof record.hostname === 'string' ? record.hostname : null);
+        if (!hostname) {
+          return Response.json({ error: 'A valid hostname is required' }, { status: 400 });
+        }
+        let status: AppDomainStatus | undefined;
+        if (record.status !== undefined) {
+          const parsedStatus = normalizeAppDomainStatus(record.status);
+          if (!parsedStatus) {
+            return Response.json({ error: 'Invalid domain status' }, { status: 400 });
+          }
+          status = parsedStatus;
+        }
+        const error = typeof record.error === 'string' && record.error.trim()
+          ? record.error.trim()
+          : record.error === null
+            ? null
+            : undefined;
+
+        try {
+          const domain = await ctx.appDomainRegistry.registerDomain({
+            hostname,
+            appId: id,
+            status,
+            error,
+          });
+          return Response.json({ domain: serializeAppDomain(domain) }, { status: 201 });
+        } catch (error) {
+          if (error instanceof AppDomainConflictError) {
+            return Response.json({ error: error.message, existingAppId: error.existingAppId }, { status: 409 });
+          }
+          return Response.json({ error: (error as Error).message }, { status: 400 });
+        }
+      }
+
+      const hostname = parts.length >= 6 ? normalizeAppHostname(decodeURIComponent(parts[5] ?? '')) : null;
+      if (!hostname) {
+        return Response.json({ error: 'A valid hostname is required' }, { status: 400 });
+      }
+      const currentDomain = await ctx.appDomainRegistry.listByAppId(id).then((domains) =>
+        domains.find((domain) => domain.hostname === hostname),
+      );
+      if (!currentDomain) {
+        return Response.json({ error: 'Domain not found' }, { status: 404 });
+      }
+
+      if (method === 'PATCH' && parts.length === 6) {
+        let payload: unknown;
+        try {
+          payload = await request.json();
+        } catch {
+          return Response.json({ error: 'Invalid JSON payload' }, { status: 400 });
+        }
+        if (!payload || typeof payload !== 'object') {
+          return Response.json({ error: 'Invalid JSON payload' }, { status: 400 });
+        }
+        const record = payload as Record<string, unknown>;
+        let status: AppDomainStatus | undefined;
+        if (record.status !== undefined) {
+          const parsedStatus = normalizeAppDomainStatus(record.status);
+          if (!parsedStatus) {
+            return Response.json({ error: 'Invalid domain status' }, { status: 400 });
+          }
+          status = parsedStatus;
+        }
+        const error = typeof record.error === 'string' && record.error.trim()
+          ? record.error.trim()
+          : record.error === null
+            ? null
+            : undefined;
+        const verified = typeof record.verified === 'boolean' ? record.verified : undefined;
+        const domain = await ctx.appDomainRegistry.updateDomain(hostname, { status, error, verified });
+        return Response.json({ domain: serializeAppDomain(domain) });
+      }
+
+      if (method === 'POST' && parts.length === 7 && parts[6] === 'verify') {
+        const domain = await ctx.appDomainRegistry.updateDomain(hostname, {
+          status: 'active',
+          error: null,
+          verified: true,
+        });
+        return Response.json({ domain: serializeAppDomain(domain), verifiedBy: 'caller' });
+      }
+
+      if (method === 'DELETE' && parts.length === 6) {
+        await ctx.appDomainRegistry.removeDomain(hostname);
+        return Response.json({ hostname, deleted: true });
+      }
+
+      return Response.json({ error: 'Not found' }, { status: 404 });
+    }
+
     if (method === 'GET' && parts.length === 4) {
       const app = await ctx.appRegistry.getApp(id);
       if (!app) {
@@ -750,7 +911,7 @@ export async function handleAppsApi(
       const subdomainAlias = aliasRecord?.alias ?? null;
       const appResponse = withWappAssignments(
         withCaproverDeploymentInfo(
-          ctx.buildAppResponse(app, status, { subdomainAlias }),
+          await buildAppResponseWithDomains(ctx, app, status, { subdomainAlias }),
           app.id,
           ctx.caproverStore,
         ),
@@ -879,7 +1040,7 @@ export async function handleAppsApi(
         return Response.json({
           app: withWappAssignments(
             withCaproverDeploymentInfo(
-              ctx.buildAppResponse(updated, status, { subdomainAlias }),
+              await buildAppResponseWithDomains(ctx, updated, status, { subdomainAlias }),
               updated.id,
               ctx.caproverStore,
             ),
@@ -937,7 +1098,7 @@ export async function handleAppsApi(
           },
           app: withWappAssignments(
             withCaproverDeploymentInfo(
-              ctx.buildAppResponse(updated, status, { subdomainAlias }),
+              await buildAppResponseWithDomains(ctx, updated, status, { subdomainAlias }),
               updated.id,
               ctx.caproverStore,
             ),
@@ -1036,7 +1197,7 @@ export async function handleAppsApi(
           const subdomainAlias = aliasRecord?.alias ?? null;
           const appResponse = withWappAssignments(
             withCaproverDeploymentInfo(
-              ctx.buildAppResponse(app, status, { subdomainAlias }),
+              await buildAppResponseWithDomains(ctx, app, status, { subdomainAlias }),
               app.id,
               ctx.caproverStore,
             ),
@@ -1080,7 +1241,7 @@ export async function handleAppsApi(
         const subdomainAlias = aliasRecord?.alias ?? null;
         const appResponse = withWappAssignments(
           withCaproverDeploymentInfo(
-            ctx.buildAppResponse(app, status, { subdomainAlias }),
+            await buildAppResponseWithDomains(ctx, app, status, { subdomainAlias }),
             app.id,
             ctx.caproverStore,
           ),
@@ -1205,7 +1366,7 @@ export async function handleAppsApi(
           success: true,
           target: { name: target.name, serverUrl: target.serverUrl },
           app: withCaproverDeploymentInfo(
-            ctx.buildAppResponse(app, await ctx.appProcessManager.getStatus(id)),
+            await buildAppResponseWithDomains(ctx, app, await ctx.appProcessManager.getStatus(id)),
             id,
             ctx.caproverStore,
           ),
@@ -1291,7 +1452,7 @@ export async function handleAppsApi(
           target: { name: target.name, serverUrl: target.serverUrl },
           webhookUrl: buildCaproverWebhookUrl(target, remoteApp),
           app: withCaproverDeploymentInfo(
-            ctx.buildAppResponse(app, await ctx.appProcessManager.getStatus(id)),
+            await buildAppResponseWithDomains(ctx, app, await ctx.appProcessManager.getStatus(id)),
             id,
             ctx.caproverStore,
           ),
@@ -1394,7 +1555,7 @@ export async function handleAppsApi(
             : 'Config replicated, but the source app does not have Git deploy settings to build future versions.',
           sslError,
           app: withCaproverDeploymentInfo(
-            ctx.buildAppResponse(app, await ctx.appProcessManager.getStatus(id)),
+            await buildAppResponseWithDomains(ctx, app, await ctx.appProcessManager.getStatus(id)),
             id,
             ctx.caproverStore,
           ),
