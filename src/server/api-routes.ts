@@ -40,6 +40,10 @@ import {
   handleRemoteInstructApi,
   type RemoteInstructRoutesContext,
 } from "./remote-instruct-routes";
+import {
+  handleCloudflareTunnelApi,
+  type CloudflareTunnelRoutesContext,
+} from "./cloudflare-tunnel-routes";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "HEAD";
 
@@ -111,6 +115,7 @@ export interface ApiRoutesContext {
   terminalRoutesContext?: TerminalRoutesContext;
   userSettingsRoutesContext: UserSettingsRoutesContext;
   remoteInstructRoutesContext: RemoteInstructRoutesContext;
+  cloudflareTunnelRoutesContext?: CloudflareTunnelRoutesContext;
   workspaceDelegationStore: WorkspaceDelegationStore;
 
   // Stores accessed directly by handleApi
@@ -274,6 +279,23 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
     const billingApiResponse = await handleBillingApi(request, url, method, authContext, ctx.billingApiContext);
     if (billingApiResponse) {
       return billingApiResponse;
+    }
+
+    if (pathname.startsWith("/api/cloudflare/tunnel-hostnames")) {
+      if (!ctx.cloudflareTunnelRoutesContext) {
+        return Response.json({ error: "cloudflare-tunnel-unavailable" }, { status: 503 });
+      }
+      const response = await handleCloudflareTunnelApi(
+        request,
+        url,
+        method,
+        authContext,
+        ctx.cloudflareTunnelRoutesContext,
+      );
+      if (response) {
+        return response;
+      }
+      return Response.json({ error: "Not found" }, { status: 404 });
     }
 
     if (pathname.startsWith("/api/pipelines") && ctx.pipelineApiContext) {

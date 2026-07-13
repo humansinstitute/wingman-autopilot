@@ -71,6 +71,7 @@ import {
   createCaproverTargetClientsFromEnv,
   createAppTarball,
 } from "./caprover";
+import { createCloudflareTunnelClientFromEnv } from "./cloudflare/tunnel-hostnames";
 import { NightWatchStore } from "./nightwatch/nightwatch-store";
 import { maybeTriggerNightWatch, NIGHTWATCH_FEATURE_FLAG_KEY } from "./nightwatch/nightwatch-engine";
 import { CODEX_NATIVE_SDK_FLAG, OPENCODE_NATIVE_SDK_FLAG } from "./agents/agent-adapter";
@@ -2716,6 +2717,11 @@ const handleApi = createApiRouteHandler({
     AccessActions,
   },
   remoteInstructRoutesContext,
+  cloudflareTunnelRoutesContext: {
+    AccessActions,
+    ensureApiAccess,
+    getClient: createCloudflareTunnelClientFromEnv,
+  },
   workspaceDelegationStore,
 
   // Stores accessed directly
