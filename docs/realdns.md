@@ -232,6 +232,51 @@ The stable public-origin production model is:
 
 Cloudflare Tunnel is the default for local Docker/Bun installs: public TLS terminates at Cloudflare, and `cloudflared` carries traffic to local Autopilot. The local service can stay HTTP because it is not directly exposed as the public TLS origin, and the public-origin certificate requirement above does not apply to the local `http://127.0.0.1:3600` service.
 
+## Tunnel TLS and Host Routing Feasibility
+
+Yes, the tunnel-first setup is workable for real domains as long as Autopilot treats Cloudflare Tunnel as the public edge and requires host-preserving routes.
+
+For each hostname, Cloudflare Tunnel needs a published application route:
+
+```txt
+brandname.com             -> http://127.0.0.1:3600
+www.brandname.com         -> http://127.0.0.1:3600
+*.rick.runwingman.com     -> http://127.0.0.1:3600
+```
+
+For Docker, replace `127.0.0.1:3600` with the Docker-published base-machine port, for example `localhost:3601`.
+
+TLS behavior:
+
+- Browser TLS terminates at Cloudflare for `brandname.com`.
+- Cloudflare presents the public certificate for the branded hostname.
+- `cloudflared` carries the request to the local HTTP service.
+- Autopilot does not need a local TLS certificate for `brandname.com` in the tunnel path.
+
+Routing behavior:
+
+- Cloudflare must route every branded hostname and relevant wildcard hostname to the same Autopilot service URL.
+- The request that reaches Autopilot must preserve the visitor-facing `Host`, for example `brandname.com`.
+- Do not set a fixed Cloudflare Tunnel `httpHostHeader` such as `rick.runwingman.com` for these routes, because that would hide the branded hostname from Autopilot.
+- Autopilot then resolves `Host` through its custom-domain registry first, generated app aliases second, and its own UI/API last.
+
+This means the master Autopilot can safely automate:
+
+1. Add/verify the domain in the managed Cloudflare account.
+2. Add a Tunnel public hostname route for `brandname.com` to the remote Autopilot local service URL.
+3. Add a Tunnel public hostname route for `www.brandname.com` if requested.
+4. Register `brandname.com` and `www.brandname.com` against the target app in the remote Autopilot custom-domain registry.
+
+The remote production Autopilot still does not need Cloudflare API keys. It only needs the app-domain route registration.
+
+Primary setup risks:
+
+- Host header rewrite: a fixed `httpHostHeader` breaks Autopilot domain routing.
+- Missing public hostname route: DNS alone is not enough for Tunnel-backed apps; the Tunnel route must exist.
+- Wildcard depth: `*.rick.runwingman.com` covers one label only; deeper generated names need matching wildcard coverage.
+- WebSockets: Cloudflare Tunnel can carry WebSockets, but Autopilot's app proxy still needs upgrade forwarding for app WebSockets.
+- Multiple Autopilots on one machine: each public hostname must map to the correct local port.
+
 ## Records and Routing by Deployment
 
 ### 1. Autopilot Running in CapRover
