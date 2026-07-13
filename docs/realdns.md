@@ -87,17 +87,28 @@ CNAME  @      rick.runwingman.com   Proxied
 CNAME  www    brandname.com         Proxied
 ```
 
+In implementation, `rick.runwingman.com` can be the human/operator name for the remote box, but Cloudflare should avoid origin ambiguity. If `rick.runwingman.com` itself is proxied, the master may choose to create branded records directly to the server IP instead, or maintain a DNS-only origin hostname such as `origin-rick.runwingman.com` and point proxied branded CNAMEs there:
+
+```txt
+A      origin-rick  203.0.113.10                DNS only
+CNAME  @            origin-rick.runwingman.com  Proxied
+```
+
+The product can still display the target as `rick.runwingman.com`; internally the DNS writer can resolve that target to the safest Cloudflare record shape for the deployment.
+
+A DNS-only origin helper is not an origin-hiding security boundary because anyone who knows the helper hostname can resolve it. If origin hiding matters, prefer direct proxied A/AAAA records for branded domains plus an origin firewall that only allows Cloudflare source ranges, or use Cloudflare Tunnel.
+
 Cloudflare supports CNAME flattening at the zone apex, so `brandname.com` can be represented as a CNAME to a public Wingman hostname even though ordinary DNS does not allow a raw apex CNAME. For a subdomain app, use a normal CNAME:
 
 ```txt
 CNAME  portal  rick.runwingman.com  Proxied
 ```
 
-Important Cloudflare account boundary: CNAMEs to another hostname that is also on Cloudflare can trigger Cloudflare's `1014 CNAME Cross-User Banned` error when the source and target zones are in different Cloudflare accounts. The simple `brandname.com -> rick.runwingman.com` CNAME model is best when the master Autopilot manages both zones in the same Cloudflare account. If customers keep their own separate Cloudflare accounts and CNAME to Wingman, we may need Cloudflare for SaaS/custom-hostname support or a different target pattern such as explicit A/AAAA records.
+Assumption: managed domains and Wingman public hostnames are in the same Cloudflare account. That avoids Cloudflare's cross-account CNAME restriction for this first implementation. If customers later keep their own separate Cloudflare accounts and CNAME to Wingman, we may need Cloudflare for SaaS/custom-hostname support or a different target pattern such as explicit A/AAAA records.
 
 The proxied/orange-cloud setting should be the default for HTTP apps. It gives Cloudflare edge TLS, DDoS protection, WebSocket proxying, and hides the origin address. DNS-only/grey-cloud should be reserved for debugging or non-HTTP use cases; in DNS-only mode, browsers connect directly to the returned origin and Cloudflare is no longer the HTTP reverse proxy.
 
-Cloudflare's proxied HTTP service only accepts traffic on supported HTTP/HTTPS ports. For branded domains, users should not have to type a port, so the remote host needs a public edge on `80` and `443` or a Cloudflare Tunnel public hostname. Autopilot itself can still run on `3600` or another internal port.
+Cloudflare's proxied HTTP service only accepts traffic on supported HTTP/HTTPS ports. For branded domains, users should not have to type a port, so the remote host needs a public edge on `80` and `443`, another Cloudflare-supported HTTPS origin port such as `8443`, or a Cloudflare Tunnel public hostname. Autopilot itself can still run on `3600` or another internal port.
 
 ## Remote Edge Patterns
 
@@ -175,6 +186,169 @@ Cloudflare SSL/TLS mode should normally be `Full (strict)` for proxied productio
 - Cloudflare Tunnel terminates the public hostname at Cloudflare and carries traffic through the tunnel to the local service.
 
 Avoid `Flexible` SSL for app hosting. It leaves the Cloudflare-to-origin leg as plain HTTP and tends to create redirect/cookie/security edge cases.
+
+## TLS Termination Model
+
+TLS has two different hops:
+
+```txt
+Browser
+  -> HTTPS to Cloudflare edge
+  -> HTTPS or tunnel transport to the remote origin edge
+  -> HTTP inside the host/container to Autopilot
+  -> HTTP inside the host to the app runtime port
+```
+
+Cloudflare terminates visitor-facing TLS for `brandname.com`. Because the customer domain is managed in Cloudflare, Cloudflare can issue and serve the public edge certificate.
+
+For `Full (strict)`, Cloudflare also expects the origin edge to present a certificate valid for the requested hostname, for example `brandname.com`. This is true even if the DNS record is a CNAME to `rick.runwingman.com`: the visitor asked for `brandname.com`, so the origin edge must be ready for that host unless a Cloudflare feature explicitly overrides origin/SNI behavior.
+
+The stable production model is:
+
+- Cloudflare edge certificate: automatic/public Cloudflare certificate for the branded hostname.
+- Origin edge certificate: Caddy/Traefik/CapRover/Cloudflare Origin CA certificate for the same branded hostname.
+- Internal Autopilot traffic: plain HTTP to `127.0.0.1:3600` or the container's internal `3600`.
+
+Cloudflare Tunnel is the exception: public TLS terminates at Cloudflare, and `cloudflared` carries traffic to local Autopilot. The local service can stay HTTP because it is not directly exposed as the public TLS origin.
+
+## Records and Routing by Deployment
+
+### 1. Autopilot Running in CapRover
+
+CapRover is the origin edge. It owns public `80`/`443`, terminates origin TLS, and forwards to the Autopilot container's HTTP port `3600`.
+
+Cloudflare records:
+
+```txt
+# Remote host / CapRover box
+A      rick              203.0.113.10          Proxied
+A      origin-rick       203.0.113.10          DNS only
+
+# Branded app domain
+CNAME  @                 origin-rick.runwingman.com Proxied
+CNAME  www               brandname.com         Proxied
+
+# Optional generated app aliases
+CNAME  *.rick            rick.runwingman.com   Proxied
+```
+
+CapRover setup:
+
+- Autopilot is a CapRover web app with container HTTP port `3600`.
+- WebSocket support is enabled for the CapRover app.
+- `brandname.com` and `www.brandname.com` are added as custom domains on the Autopilot CapRover app.
+- HTTPS is enabled for those custom domains, or the CapRover edge has an origin certificate covering them.
+- CapRover forwards the original `Host` header to the Autopilot container.
+
+Request path:
+
+```txt
+Browser https://brandname.com
+  -> Cloudflare edge TLS for brandname.com
+  -> HTTPS to CapRover for Host: brandname.com
+  -> CapRover TLS terminates and routes Host: brandname.com to Autopilot app
+  -> HTTP to Autopilot container on :3600
+  -> Autopilot custom-domain registry maps brandname.com to appId
+  -> Autopilot proxies to that app's runtime port
+```
+
+CapRover edge concerns:
+
+- CapRover generally needs every branded hostname registered on the Autopilot app, unless there is a deliberate catch-all/wildcard configuration.
+- Let's Encrypt issuance can be sensitive to DNS/proxy state; Cloudflare Origin CA certificates may be simpler when traffic always stays behind Cloudflare.
+- CapRover must not redirect or canonicalize `brandname.com` to `rick.runwingman.com`; Autopilot needs to receive the branded `Host`.
+- App WebSockets require both CapRover WebSocket support and Autopilot's app proxy to support upgrade forwarding.
+
+### 2. Autopilot Running in Docker on a Host
+
+A host-level reverse proxy is the origin edge. Caddy is the simplest default because it can terminate TLS and reverse proxy by host. Traefik or Nginx are also fine.
+
+Cloudflare records:
+
+```txt
+# Remote host public edge
+A      rick              203.0.113.10          Proxied
+A      origin-rick       203.0.113.10          DNS only
+
+# Branded app domain
+CNAME  @                 origin-rick.runwingman.com Proxied
+CNAME  www               brandname.com         Proxied
+
+# Optional generated app aliases
+CNAME  *.rick            rick.runwingman.com   Proxied
+```
+
+Host setup:
+
+- Docker runs Autopilot with internal `PORT=3600`.
+- Autopilot's container port `3600` is reachable by the host reverse proxy, either through a Docker network or a host port bound to loopback.
+- Caddy/Traefik/Nginx listens on host `80`/`443`.
+- The reverse proxy has certificates for `brandname.com`, `www.brandname.com`, and any generated app alias wildcard that should work through `Full (strict)`.
+
+Request path:
+
+```txt
+Browser https://brandname.com
+  -> Cloudflare edge TLS for brandname.com
+  -> HTTPS to host reverse proxy for Host: brandname.com
+  -> reverse proxy TLS terminates and preserves Host
+  -> HTTP to Autopilot container on :3600
+  -> Autopilot maps brandname.com to appId
+  -> Autopilot proxies to that app's runtime port
+```
+
+Docker edge concerns:
+
+- Do not expose app runtime ports publicly. They should be reachable only from Autopilot or the host network.
+- Bind Autopilot's host port to loopback or a private Docker network when possible.
+- The reverse proxy config should be a generic catch-all for registered hosts, not a redirect to one canonical host.
+- Certificate automation needs a way to learn new branded hostnames. Caddy can do this dynamically only with the right config/on-demand TLS controls; otherwise master Autopilot may need to update proxy config and reload it.
+- If Cloudflare is proxied and `Full (strict)` is enabled, origin cert coverage must include the branded hostname.
+
+### 3. Autopilot Running as a Bun Install on Port 3600
+
+Autopilot runs directly on the host as a Bun process, but it should still sit behind an origin edge on public `80`/`443`.
+
+Cloudflare records:
+
+```txt
+# Remote host public edge
+A      rick              203.0.113.10          Proxied
+A      origin-rick       203.0.113.10          DNS only
+
+# Branded app domain
+CNAME  @                 origin-rick.runwingman.com Proxied
+CNAME  www               brandname.com         Proxied
+
+# Optional generated app aliases
+CNAME  *.rick            rick.runwingman.com   Proxied
+```
+
+Host setup:
+
+- Bun Autopilot listens on `127.0.0.1:3600`, not public `0.0.0.0:3600`, where possible.
+- Caddy/Traefik/Nginx listens on `80`/`443`.
+- The reverse proxy forwards all registered branded hosts to `http://127.0.0.1:3600`.
+- The reverse proxy preserves `Host` and forwards WebSocket upgrades.
+
+Request path:
+
+```txt
+Browser https://brandname.com
+  -> Cloudflare edge TLS for brandname.com
+  -> HTTPS to host reverse proxy for Host: brandname.com
+  -> reverse proxy TLS terminates and preserves Host
+  -> HTTP to Bun Autopilot on 127.0.0.1:3600
+  -> Autopilot maps brandname.com to appId
+  -> Autopilot proxies to that app's runtime port
+```
+
+Bun install edge concerns:
+
+- Port `3600` is not a public web port for Cloudflare proxied traffic; visitors should never need `:3600` in the URL.
+- The host firewall should restrict direct access to `3600` and app runtime ports.
+- Running Autopilot directly on public `80`/`443` would require Autopilot to own TLS/cert automation, which is not the preferred near-term design.
+- Process restarts should not be driven by agents inside Autopilot sessions; the operator should restart the service externally.
 
 ## Master-Controlled DNS Flow
 
