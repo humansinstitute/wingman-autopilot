@@ -493,33 +493,71 @@ The remote Autopilot should receive only the app routing registration:
 
 DNS/route verification should check the expected public outcome, not merely that any DNS record exists. For proxied Cloudflare records, public DNS queries return Cloudflare anycast addresses, so verification may need to use Cloudflare's API from the master side or compare Tunnel public-hostname/CNAME/API state rather than expecting to see the origin IP in public DNS.
 
-## Implementation Notes
+## Implemented Surface
 
-Likely code additions:
+Autopilot now has a local app-domain registry in `src/apps/app-domain-registry.ts`. It persists to `data/app-domains.json`, stores exact hostnames mapped to app IDs, validates hostnames, rejects conflicts, and removes an app's domains when that app is unregistered.
 
-- `src/apps/app-domain-registry.ts`
-  - exact hostname to app ID registry
-  - hostname normalization and validation
-  - duplicate/conflict detection
+Host routing now resolves app requests in this order:
 
-- focused app domain API routes
-  - list domains for app
-  - add domain
-  - remove domain
-  - verify domain
-  - mark active/inactive
+1. exact custom-domain match
+2. generated app subdomain alias
+3. normal Autopilot UI/API handling
 
-- generalized app host routing
-  - custom domains first
-  - generated aliases second
-  - existing Autopilot routes last
+Registered app-domain hosts own their full request path, including `/api` and static assets for the hosted app. App WebSocket upgrades are also proxied through Autopilot to the selected app runtime port.
 
-- app response fields
-  - `customDomains`
-  - `primaryUrl`
-  - generated fallback URL retained
+App API endpoints:
 
-Routing implementation must support WebSocket upgrades before real-domain app hosting can be considered complete. Cloudflare supports proxied WebSockets, and Caddy/Traefik/Nginx can pass them through, but the current Autopilot app proxy path also needs to carry upgrade requests to the selected app runtime.
+```txt
+GET    /api/apps/:appId/domains
+POST   /api/apps/:appId/domains
+PATCH  /api/apps/:appId/domains/:hostname
+POST   /api/apps/:appId/domains/:hostname/verify
+DELETE /api/apps/:appId/domains/:hostname
+```
+
+App responses now include:
+
+- `customDomains`
+- `primaryUrl`
+- the generated fallback URL
+
+Cloudflare Tunnel API endpoints are available for master Autopilot instances that hold Cloudflare credentials:
+
+```txt
+GET    /api/cloudflare/tunnel-hostnames?hostname=brandname.com&serviceUrl=http://localhost:3600
+POST   /api/cloudflare/tunnel-hostnames
+DELETE /api/cloudflare/tunnel-hostnames/:hostname
+```
+
+Required Cloudflare environment variables for those endpoints:
+
+```txt
+CLOUDFLARE_API_TOKEN
+CLOUDFLARE_ACCOUNT_ID
+CLOUDFLARE_TUNNEL_ID
+CLOUDFLARE_ZONE_ID
+```
+
+The Cloudflare integration updates the Tunnel ingress configuration, inserts hostname routes before the catch-all `http_status:404` rule, avoids setting `originRequest.httpHostHeader`, and creates a proxied CNAME to `<tunnel-id>.cfargotunnel.com`.
+
+Operator CLI commands:
+
+```txt
+bun clis/appctl.ts domains <app-id>
+bun clis/appctl.ts domain-add <app-id> <hostname>
+bun clis/appctl.ts domain-verify <app-id> <hostname>
+bun clis/appctl.ts domain-remove <app-id> <hostname>
+bun clis/appctl.ts cf-tunnel-upsert <hostname> <service-url>
+bun clis/appctl.ts cf-tunnel-verify <hostname> <service-url>
+bun clis/appctl.ts cf-tunnel-remove <hostname> [--delete-dns]
+```
+
+For a tunnel-backed Bun install on port `3600`, the setup sequence is:
+
+1. Master Autopilot runs `cf-tunnel-upsert brandname.com http://127.0.0.1:3600`.
+2. Master or remote Autopilot runs `domain-add <app-id> brandname.com`.
+3. Master verifies Cloudflare tunnel/DNS state with `cf-tunnel-verify`.
+4. Remote Autopilot marks the app domain active with `domain-verify`.
 
 ## Cloudflare References
 
@@ -540,5 +578,4 @@ Routing implementation must support WebSocket upgrades before real-domain app ho
 - Should the custom-domain registry live only in local Autopilot storage, or should Tower also know public app domains for Flight Deck launchers?
 - Should master Autopilot push domain registrations directly to remotes, or should remotes pull desired domain state from Tower/master?
 - Should CapRover custom domains be updated by master Autopilot directly, or should CapRover continue to be configured separately from DNS?
-- Do we need first-class Cloudflare Tunnel API support for adding/removing public hostnames on Docker/Bun instances?
 - Should root domains and `www` be registered as separate explicit hostnames or grouped as one domain bundle in the UI?

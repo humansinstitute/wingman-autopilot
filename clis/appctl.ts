@@ -4,12 +4,14 @@
  * Wingman app lifecycle CLI (NIP-98 authenticated).
  *
  * Commands: list, status, start, stop, restart, build, setup, register, unregister,
- *           clone, starters, starters-create, starters-delete
+ *           clone, starters, starters-create, starters-delete, domains, domain-add,
+ *           domain-verify, domain-remove
  */
 
 import { parseCommonFlags, buildConfig, requestJson, requestJsonBotCrypto, resolveBaseUrl } from "./lib/auth";
 
 type AppAction = "start" | "stop" | "restart" | "build" | "setup";
+type DomainStatus = "pending_dns" | "active" | "disabled" | "error";
 type Command =
   | "list"
   | "status"
@@ -23,6 +25,13 @@ type Command =
   | "tower-bindings"
   | "tower-binding-create"
   | "tower-binding-default"
+  | "domains"
+  | "domain-add"
+  | "domain-verify"
+  | "domain-remove"
+  | "cf-tunnel-upsert"
+  | "cf-tunnel-verify"
+  | "cf-tunnel-remove"
   | "help";
 
 const USAGE = `Wingman app lifecycle CLI (NIP-98)
@@ -47,6 +56,19 @@ Commands:
   tower-bindings       List WApp Tower bindings
   tower-binding-create Create WApp Tower binding (requires --name, --tower-url, --workspace-owner-npub)
   tower-binding-default <id> Select default WApp Tower binding
+  domains <app-id>     List real DNS names registered for an app
+  domain-add <app-id> <hostname>
+                       Register a real DNS name for an app
+  domain-verify <app-id> <hostname>
+                       Mark a real DNS name verified and active
+  domain-remove <app-id> <hostname>
+                       Remove a real DNS name from an app
+  cf-tunnel-upsert <hostname> <service-url>
+                       Configure Cloudflare Tunnel public hostname and DNS
+  cf-tunnel-verify <hostname> <service-url>
+                       Verify Cloudflare Tunnel public hostname and DNS
+  cf-tunnel-remove <hostname>
+                       Remove Cloudflare Tunnel public hostname
 
 Options:
   --url <url>          Wingman URL (env: WINGMAN_URL, default: http://localhost:3000)
@@ -57,8 +79,11 @@ Options:
   --tower-url <url>    Tower base URL (for tower-binding-create)
   --workspace-owner-npub <npub> Workspace owner npub (for tower-binding-create)
   --user-alias <alias> User alias to inject into Tower-backed WApps
+  --service-url <url>  Tunnel origin service URL (for cf-tunnel-upsert/verify)
+  --status <status>    Domain status for domain-add: pending_dns, active, disabled, error
   --default            Mark created WApp Tower binding as default
   --web-app            Mark as a web app (for register and starters-create)
+  --delete-dns         Delete Cloudflare DNS record when removing tunnel hostname
   --bot-crypto         Sign via bot-crypto API (for agent sessions)
   --json               Print raw JSON response
   -h, --help           Show help
@@ -69,7 +94,9 @@ Examples:
   bun clis/appctl.ts start my-app --url http://localhost:3600
   bun clis/appctl.ts clone https://github.com/org/repo.git --directory my-project
   bun clis/appctl.ts starters
-  bun clis/appctl.ts starters-create --name "My Template" --git-url https://github.com/org/repo`;
+  bun clis/appctl.ts starters-create --name "My Template" --git-url https://github.com/org/repo
+  bun clis/appctl.ts domain-add my-app brandname.com
+  bun clis/appctl.ts cf-tunnel-upsert brandname.com http://localhost:3600`;
 
 function resolveAppStatus(app: Record<string, unknown> | undefined): { status: string; running: boolean } {
   if (!app) return { status: "unknown", running: false };
@@ -109,6 +136,29 @@ function printList(payload: { apps?: Array<Record<string, unknown>> }) {
   }
 }
 
+function parseDomainStatus(value: string | undefined): DomainStatus | undefined {
+  if (!value) return undefined;
+  if (value === "pending_dns" || value === "active" || value === "disabled" || value === "error") {
+    return value;
+  }
+  throw new Error("--status must be one of: pending_dns, active, disabled, error");
+}
+
+function printDomains(payload: { domains?: Array<Record<string, unknown>> }) {
+  const domains = Array.isArray(payload.domains) ? payload.domains : [];
+  if (domains.length === 0) {
+    console.log("No real DNS names registered.");
+    return;
+  }
+  for (const domain of domains) {
+    const hostname = String(domain.hostname ?? "");
+    const status = String(domain.status ?? "unknown");
+    const verified = domain.verified ? "yes" : "no";
+    const error = typeof domain.error === "string" && domain.error ? `\terror=${domain.error}` : "";
+    console.log(`${hostname}\t${status}\tverified=${verified}${error}`);
+  }
+}
+
 async function run() {
   const { args, urlInput, keyInput, asJson, help, botCrypto } = parseCommonFlags(Bun.argv.slice(2));
 
@@ -119,8 +169,11 @@ async function run() {
   let towerUrl: string | undefined;
   let workspaceOwnerNpub: string | undefined;
   let userAlias: string | undefined;
+  let serviceUrl: string | undefined;
+  let domainStatus: DomainStatus | undefined;
   let makeDefault = false;
   let webApp = false;
+  let deleteDns = false;
   const filteredArgs: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const flag = args[i]!;
@@ -142,10 +195,17 @@ async function run() {
     } else if (flag === "--user-alias") {
       userAlias = args[++i];
       if (!userAlias) throw new Error("--user-alias requires a value");
+    } else if (flag === "--service-url") {
+      serviceUrl = args[++i];
+      if (!serviceUrl) throw new Error("--service-url requires a value");
+    } else if (flag === "--status") {
+      domainStatus = parseDomainStatus(args[++i]);
     } else if (flag === "--default") {
       makeDefault = true;
     } else if (flag === "--web-app") {
       webApp = true;
+    } else if (flag === "--delete-dns") {
+      deleteDns = true;
     } else {
       filteredArgs.push(flag);
     }
@@ -156,13 +216,16 @@ async function run() {
   const validCommands = [
     "list", "status", "start", "stop", "restart", "build", "setup",
     "register", "unregister", "clone", "starters", "starters-create", "starters-delete",
-    "tower-bindings", "tower-binding-create", "tower-binding-default", "help",
+    "tower-bindings", "tower-binding-create", "tower-binding-default",
+    "domains", "domain-add", "domain-verify", "domain-remove",
+    "cf-tunnel-upsert", "cf-tunnel-verify", "cf-tunnel-remove", "help",
   ];
   if (!validCommands.includes(commandStr)) {
     throw new Error(`Unknown command: ${commandStr}`);
   }
   const command = (help ? "help" : commandStr) as Command;
   const appId = filteredArgs[1];
+  const secondArg = filteredArgs[2];
 
   if (command === "help") {
     console.log(USAGE);
@@ -290,6 +353,60 @@ async function run() {
     return;
   }
 
+  if (command === "cf-tunnel-upsert") {
+    const hostname = appId;
+    const targetServiceUrl = serviceUrl ?? secondArg;
+    if (!hostname) throw new Error("cf-tunnel-upsert requires <hostname>");
+    if (!targetServiceUrl) throw new Error("cf-tunnel-upsert requires <service-url>");
+    const payload = await req<Record<string, unknown>>(
+      "POST",
+      "/api/cloudflare/tunnel-hostnames",
+      { hostname, serviceUrl: targetServiceUrl },
+    );
+    if (asJson) {
+      console.log(JSON.stringify(payload, null, 2));
+    } else {
+      console.log(`Cloudflare Tunnel hostname configured: ${hostname} -> ${targetServiceUrl}`);
+    }
+    return;
+  }
+
+  if (command === "cf-tunnel-verify") {
+    const hostname = appId;
+    const targetServiceUrl = serviceUrl ?? secondArg;
+    if (!hostname) throw new Error("cf-tunnel-verify requires <hostname>");
+    if (!targetServiceUrl) throw new Error("cf-tunnel-verify requires <service-url>");
+    const query = new URLSearchParams({ hostname, serviceUrl: targetServiceUrl });
+    const payload = await req<Record<string, unknown>>(
+      "GET",
+      `/api/cloudflare/tunnel-hostnames?${query.toString()}`,
+    );
+    if (asJson) {
+      console.log(JSON.stringify(payload, null, 2));
+    } else {
+      const verification = payload.verification as Record<string, unknown> | undefined;
+      const ok = verification?.ok ? "ok" : "not-ok";
+      console.log(`Cloudflare Tunnel hostname verification: ${hostname} ${ok}`);
+    }
+    return;
+  }
+
+  if (command === "cf-tunnel-remove") {
+    const hostname = appId;
+    if (!hostname) throw new Error("cf-tunnel-remove requires <hostname>");
+    const query = new URLSearchParams({ deleteDns: deleteDns ? "true" : "false" });
+    const payload = await req<Record<string, unknown>>(
+      "DELETE",
+      `/api/cloudflare/tunnel-hostnames/${encodeURIComponent(hostname)}?${query.toString()}`,
+    );
+    if (asJson) {
+      console.log(JSON.stringify(payload, null, 2));
+    } else {
+      console.log(`Cloudflare Tunnel hostname removed: ${hostname}`);
+    }
+    return;
+  }
+
   if (!appId) throw new Error(`Command "${command}" requires <app-id>`);
 
   if (command === "starters-delete") {
@@ -317,6 +434,66 @@ async function run() {
       "GET", `/api/apps/${encodeURIComponent(appId)}`,
     );
     console.log(JSON.stringify(payload, null, 2));
+    return;
+  }
+
+  if (command === "domains") {
+    const payload = await req<{ domains?: Array<Record<string, unknown>> }>(
+      "GET", `/api/apps/${encodeURIComponent(appId)}/domains`,
+    );
+    if (asJson) {
+      console.log(JSON.stringify(payload, null, 2));
+    } else {
+      printDomains(payload);
+    }
+    return;
+  }
+
+  if (command === "domain-add") {
+    const hostname = secondArg;
+    if (!hostname) throw new Error("domain-add requires <hostname>");
+    const body: Record<string, unknown> = { hostname };
+    if (domainStatus) body.status = domainStatus;
+    const payload = await req<Record<string, unknown>>(
+      "POST",
+      `/api/apps/${encodeURIComponent(appId)}/domains`,
+      body,
+    );
+    if (asJson) {
+      console.log(JSON.stringify(payload, null, 2));
+    } else {
+      console.log(`Registered real DNS name: ${hostname} -> ${appId}`);
+    }
+    return;
+  }
+
+  if (command === "domain-verify") {
+    const hostname = secondArg;
+    if (!hostname) throw new Error("domain-verify requires <hostname>");
+    const payload = await req<Record<string, unknown>>(
+      "POST",
+      `/api/apps/${encodeURIComponent(appId)}/domains/${encodeURIComponent(hostname)}/verify`,
+    );
+    if (asJson) {
+      console.log(JSON.stringify(payload, null, 2));
+    } else {
+      console.log(`Verified real DNS name: ${hostname} -> ${appId}`);
+    }
+    return;
+  }
+
+  if (command === "domain-remove") {
+    const hostname = secondArg;
+    if (!hostname) throw new Error("domain-remove requires <hostname>");
+    const payload = await req<Record<string, unknown>>(
+      "DELETE",
+      `/api/apps/${encodeURIComponent(appId)}/domains/${encodeURIComponent(hostname)}`,
+    );
+    if (asJson) {
+      console.log(JSON.stringify(payload, null, 2));
+    } else {
+      console.log(`Removed real DNS name: ${hostname} -> ${appId}`);
+    }
     return;
   }
 
