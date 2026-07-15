@@ -106,8 +106,9 @@ export function createTiptapFilePanel(sessionId, targetFile, deps = {}) {
           },
         }),
       },
-      onUpdate() {
-        rawContent = proseMirrorDocToMarkdown(editor.getJSON());
+      onUpdate({ editor: activeEditor }) {
+        if (!activeEditor || destroyed) return;
+        rawContent = proseMirrorDocToMarkdown(activeEditor.getJSON());
         syncDirtyState();
       },
       onFocus() {

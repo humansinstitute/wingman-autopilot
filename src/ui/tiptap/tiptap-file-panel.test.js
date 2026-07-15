@@ -11,4 +11,10 @@ describe("tiptap-file-panel comments", () => {
     expect(source).toContain("onSelectThread: selectCommentThread");
     expect(source).toContain("activeThreadId: activeCommentThreadId");
   });
+
+  test("uses the TipTap callback editor during update events", () => {
+    const onUpdateBlock = source.match(/onUpdate\(\{ editor: activeEditor \}\) \{[\s\S]*?\n      \},/);
+    expect(onUpdateBlock?.[0]).toContain("activeEditor.getJSON()");
+    expect(onUpdateBlock?.[0]).not.toContain("editor.getJSON()");
+  });
 });
