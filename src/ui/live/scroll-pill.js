@@ -239,6 +239,10 @@ function updateLastPromptPillVisibility(state) {
   }
 }
 
+function isLastPromptPillVisible() {
+  return Boolean(lastPromptPillState.pillEl && lastPromptPillState.pillEl.style.display !== "none");
+}
+
 function updateBottomPillVisibility(state) {
   if (!state || !state.pillEl || !state.scrollTarget) return;
   state.conversationElement = resolveConversationElement(state.scrollTarget, state.conversationElement);
@@ -247,7 +251,7 @@ function updateBottomPillVisibility(state) {
   const latestMessageBelowView = latestMessage
     ? isMessageRectBelowView(latestMessage.getBoundingClientRect(), visibleRect)
     : false;
-  const shouldShow = !checkNearBottom(state.scrollTarget) || latestMessageBelowView;
+  const shouldShow = isLastPromptPillVisible() || !checkNearBottom(state.scrollTarget) || latestMessageBelowView;
   state.pillEl.style.display = shouldShow ? "" : "none";
 }
 

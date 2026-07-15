@@ -76,12 +76,14 @@ describe("last prompt pill visibility helpers", () => {
     expect(source).toContain("function updateBottomPillVisibility(state)");
     expect(source).toContain("getVisibleScrollRect(state.scrollTarget, state.anchorElement)");
     expect(source).toContain("isMessageRectBelowView(latestMessage.getBoundingClientRect(), visibleRect)");
+    expect(source).toContain("isLastPromptPillVisible() || !checkNearBottom(state.scrollTarget) || latestMessageBelowView");
     expect(source).toContain("updateBottomPillVisibility(bottomPillState);");
   });
 
   test("shows the bottom pill alongside the last prompt pill", () => {
     expect(source).toContain("if (shouldShow && bottomPillState.pillEl)");
     expect(source).toContain('bottomPillState.pillEl.style.display = "";');
+    expect(source).toContain("function isLastPromptPillVisible()");
   });
 
   test("centers the two pills in the left and right halves", () => {
