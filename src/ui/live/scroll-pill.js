@@ -203,6 +203,11 @@ function updateLastPromptPillVisibility(state) {
   state.pillEl.style.display = shouldShow ? "" : "none";
 }
 
+function updateBottomPillVisibility(state) {
+  if (!state || !state.pillEl || !state.scrollTarget) return;
+  state.pillEl.style.display = checkNearBottom(state.scrollTarget) ? "none" : "";
+}
+
 /**
  * Create (or re-use) the floating pill and attach it to a parent container.
  * The parent should be position:sticky or position:relative so the pill can
@@ -240,11 +245,12 @@ export function attachScrollPill(parent, scrollElement) {
 
   bottomPillState.scrollListener = () => {
     if (!bottomPillState.scrollTarget || !bottomPillState.pillEl) return;
-    if (checkNearBottom(bottomPillState.scrollTarget)) hide();
+    updateBottomPillVisibility(bottomPillState);
   };
   bottomPillState.scrollListenerTarget = resolveListenerTarget(scrollElement);
   bottomPillState.scrollListenerTarget.addEventListener("scroll", bottomPillState.scrollListener, { passive: true });
 
+  updateBottomPillVisibility(bottomPillState);
   bottomPillState.pillEl = button;
 }
 

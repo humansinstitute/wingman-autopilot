@@ -5555,6 +5555,7 @@ body[data-keyboard-open="true"] .wm-composer-shell {
 .wm-scroll-pill {
   position: absolute;
   bottom: 100%;
+  max-width: calc(50% - 1.5rem);
   margin-bottom: 0.5rem;
   padding: 0.3rem 1rem;
   font-size: 0.8rem;
@@ -5568,15 +5569,19 @@ body[data-keyboard-open="true"] .wm-composer-shell {
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   transition: opacity 0.15s ease;
 }
 
 .wm-scroll-pill--last-prompt {
-  left: 1rem;
+  left: 25%;
+  transform: translateX(-50%);
 }
 
 .wm-scroll-pill--scroll-bottom {
-  right: 1rem;
+  left: 75%;
+  transform: translateX(-50%);
 }
 
 .wm-scroll-pill:hover {

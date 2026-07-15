@@ -7,6 +7,7 @@ import {
 } from "./scroll-pill.js";
 
 const source = readFileSync(new URL("./scroll-pill.js", import.meta.url), "utf8");
+const styles = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
 
 describe("last prompt pill visibility helpers", () => {
   const scrollRect = {
@@ -53,5 +54,20 @@ describe("last prompt pill visibility helpers", () => {
   test("assigns left and right dock classes to scroll pills", () => {
     expect(source).toContain('button.className = "wm-scroll-pill wm-scroll-pill--last-prompt";');
     expect(source).toContain('button.className = "wm-scroll-pill wm-scroll-pill--scroll-bottom";');
+  });
+
+  test("updates the bottom pill from scroll position", () => {
+    expect(source).toContain("function updateBottomPillVisibility(state)");
+    expect(source).toContain("updateBottomPillVisibility(bottomPillState);");
+  });
+
+  test("centers the two pills in the left and right halves", () => {
+    const lastPromptRule = styles.match(/\.wm-scroll-pill--last-prompt\s*\{(?<body>[^}]+)\}/);
+    const scrollBottomRule = styles.match(/\.wm-scroll-pill--scroll-bottom\s*\{(?<body>[^}]+)\}/);
+
+    expect(lastPromptRule?.groups?.body).toContain("left: 25%;");
+    expect(lastPromptRule?.groups?.body).toContain("transform: translateX(-50%);");
+    expect(scrollBottomRule?.groups?.body).toContain("left: 75%;");
+    expect(scrollBottomRule?.groups?.body).toContain("transform: translateX(-50%);");
   });
 });
