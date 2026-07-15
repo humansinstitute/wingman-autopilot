@@ -79,6 +79,11 @@ describe("last prompt pill visibility helpers", () => {
     expect(source).toContain("updateBottomPillVisibility(bottomPillState);");
   });
 
+  test("shows the bottom pill alongside the last prompt pill", () => {
+    expect(source).toContain("if (shouldShow && bottomPillState.pillEl)");
+    expect(source).toContain('bottomPillState.pillEl.style.display = "";');
+  });
+
   test("centers the two pills in the left and right halves", () => {
     const lastPromptRule = styles.match(/\.wm-scroll-pill--last-prompt\s*\{(?<body>[^}]+)\}/);
     const scrollBottomRule = styles.match(/\.wm-scroll-pill--scroll-bottom\s*\{(?<body>[^}]+)\}/);

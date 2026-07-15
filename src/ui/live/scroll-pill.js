@@ -234,6 +234,9 @@ function updateLastPromptPillVisibility(state) {
   const shouldShow = !isMessageInView(latestMessage, state.scrollTarget)
     && isMessageAboveView(latestMessage, state.scrollTarget);
   state.pillEl.style.display = shouldShow ? "" : "none";
+  if (shouldShow && bottomPillState.pillEl) {
+    bottomPillState.pillEl.style.display = "";
+  }
 }
 
 function updateBottomPillVisibility(state) {
