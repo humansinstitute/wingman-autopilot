@@ -69,10 +69,13 @@ export function createTiptapFilePanel(sessionId, targetFile, deps = {}) {
     status.dataset.type = statusType;
     status.hidden = !statusMessage;
   }
+  function getEditorMarkdown(activeEditor = editor) {
+    if (!activeEditor) return rawContent;
+    return proseMirrorDocToMarkdown(activeEditor.getJSON());
+  }
   function getCurrentMarkdown() {
     if (mode === "source") return sourceEditor?.value ?? rawContent;
-    if (!editor) return rawContent;
-    return proseMirrorDocToMarkdown(editor.getJSON());
+    return getEditorMarkdown();
   }
   function getCurrentDocumentMarkdown() {
     return combineMarkdownAndComments(getCurrentMarkdown(), commentThreads);
@@ -108,7 +111,7 @@ export function createTiptapFilePanel(sessionId, targetFile, deps = {}) {
       },
       onUpdate({ editor: activeEditor }) {
         if (!activeEditor || destroyed) return;
-        rawContent = proseMirrorDocToMarkdown(activeEditor.getJSON());
+        rawContent = getEditorMarkdown(activeEditor);
         syncDirtyState();
       },
       onFocus() {

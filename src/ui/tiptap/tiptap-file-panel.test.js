@@ -14,7 +14,9 @@ describe("tiptap-file-panel comments", () => {
 
   test("uses the TipTap callback editor during update events", () => {
     const onUpdateBlock = source.match(/onUpdate\(\{ editor: activeEditor \}\) \{[\s\S]*?\n      \},/);
-    expect(onUpdateBlock?.[0]).toContain("activeEditor.getJSON()");
+    expect(source).toContain("function getEditorMarkdown(activeEditor = editor)");
+    expect(source).toContain("activeEditor.getJSON()");
+    expect(onUpdateBlock?.[0]).toContain("getEditorMarkdown(activeEditor)");
     expect(onUpdateBlock?.[0]).not.toContain("editor.getJSON()");
   });
 });
