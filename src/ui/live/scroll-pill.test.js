@@ -3,10 +3,12 @@ import { readFileSync } from "node:fs";
 
 import {
   isMessageRectAboveView,
+  isMessageRectBelowView,
   isMessageRectInView,
 } from "./scroll-pill.js";
 
 const source = readFileSync(new URL("./scroll-pill.js", import.meta.url), "utf8");
+const liveViewSource = readFileSync(new URL("../views/live-view.js", import.meta.url), "utf8");
 const styles = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
 
 describe("last prompt pill visibility helpers", () => {
@@ -45,6 +47,15 @@ describe("last prompt pill visibility helpers", () => {
     expect(isMessageRectAboveView(visiblePromptRect, scrollRect, 12)).toBe(false);
   });
 
+  test("identifies the latest message hidden below the visual viewport", () => {
+    const latestMessageRect = {
+      top: 620,
+      bottom: 820,
+    };
+
+    expect(isMessageRectBelowView(latestMessageRect, scrollRect)).toBe(true);
+  });
+
   test("mounts the last prompt pill in the composer control row", () => {
     expect(source).toContain("const pillParent = parent;");
     expect(source).toContain("pillParent.appendChild(button);");
@@ -56,8 +67,15 @@ describe("last prompt pill visibility helpers", () => {
     expect(source).toContain('button.className = "wm-scroll-pill wm-scroll-pill--scroll-bottom";');
   });
 
+  test("passes the conversation element to both pill attachments", () => {
+    expect(liveViewSource).toContain("scrollPill.attachScrollPill(composerEl, scrollTarget, conversationEl);");
+    expect(liveViewSource).toContain("scrollPill.attachLastPromptPill(composerEl, scrollTarget, conversationEl);");
+  });
+
   test("updates the bottom pill from scroll position", () => {
     expect(source).toContain("function updateBottomPillVisibility(state)");
+    expect(source).toContain("getVisibleScrollRect(state.scrollTarget, state.anchorElement)");
+    expect(source).toContain("isMessageRectBelowView(latestMessage.getBoundingClientRect(), visibleRect)");
     expect(source).toContain("updateBottomPillVisibility(bottomPillState);");
   });
 

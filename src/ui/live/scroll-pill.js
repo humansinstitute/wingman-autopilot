@@ -7,6 +7,7 @@
 
 const THRESHOLD = 50;
 const USER_MESSAGE_SELECTOR = '.wm-message[data-role="user"]';
+const MESSAGE_SELECTOR = '.wm-message';
 const HEADER_OFFSET_FALLBACK = 12;
 
 function isDocumentScrollTarget(el) {
@@ -69,6 +70,7 @@ function createPillState() {
     resizeListener: null,
     mutationObserver: null,
     lastMessageElement: null,
+    anchorElement: null,
   };
 }
 
@@ -92,6 +94,21 @@ function getScrollContainerRect(el) {
     };
   }
   return el.getBoundingClientRect();
+}
+
+function getVisibleScrollRect(scrollElement, anchorElement = null) {
+  const scrollRect = getScrollContainerRect(scrollElement);
+  if (!(anchorElement instanceof Element)) {
+    return scrollRect;
+  }
+  const anchorRect = anchorElement.getBoundingClientRect();
+  if (anchorRect.top > scrollRect.top && anchorRect.top < scrollRect.bottom) {
+    return {
+      ...scrollRect,
+      bottom: anchorRect.top,
+    };
+  }
+  return scrollRect;
 }
 
 function checkNearBottom(el) {
@@ -123,6 +140,7 @@ function cleanupPillState(state) {
   state.scrollListenerTarget = null;
   state.resizeListener = null;
   state.lastMessageElement = null;
+  state.anchorElement = null;
 }
 
 function resolveConversationElement(scrollElement, conversationElement) {
@@ -158,6 +176,17 @@ function getLatestUserMessage(conversationElement) {
   return messages[messages.length - 1] || null;
 }
 
+function getLatestMessage(conversationElement) {
+  if (!(conversationElement instanceof Element)) {
+    return null;
+  }
+  const messages = conversationElement.querySelectorAll(MESSAGE_SELECTOR);
+  if (!messages.length) {
+    return null;
+  }
+  return messages[messages.length - 1] || null;
+}
+
 export function isMessageRectInView(messageRect, scrollRect, headerInset = 0) {
   return (
     messageRect.top >= scrollRect.top + headerInset &&
@@ -167,6 +196,10 @@ export function isMessageRectInView(messageRect, scrollRect, headerInset = 0) {
 
 export function isMessageRectAboveView(messageRect, scrollRect, headerInset = 0) {
   return messageRect.bottom < scrollRect.top + headerInset;
+}
+
+export function isMessageRectBelowView(messageRect, scrollRect) {
+  return messageRect.bottom > scrollRect.bottom;
 }
 
 function isMessageInView(messageElement, scrollElement) {
@@ -205,7 +238,14 @@ function updateLastPromptPillVisibility(state) {
 
 function updateBottomPillVisibility(state) {
   if (!state || !state.pillEl || !state.scrollTarget) return;
-  state.pillEl.style.display = checkNearBottom(state.scrollTarget) ? "none" : "";
+  state.conversationElement = resolveConversationElement(state.scrollTarget, state.conversationElement);
+  const latestMessage = getLatestMessage(state.conversationElement);
+  const visibleRect = getVisibleScrollRect(state.scrollTarget, state.anchorElement);
+  const latestMessageBelowView = latestMessage
+    ? isMessageRectBelowView(latestMessage.getBoundingClientRect(), visibleRect)
+    : false;
+  const shouldShow = !checkNearBottom(state.scrollTarget) || latestMessageBelowView;
+  state.pillEl.style.display = shouldShow ? "" : "none";
 }
 
 /**
@@ -215,13 +255,16 @@ function updateBottomPillVisibility(state) {
  *
  * @param {HTMLElement} parent  - element to append the pill into (e.g. composer-shell)
  * @param {HTMLElement} scrollElement - the scrollable element to watch & scroll
+ * @param {HTMLElement} conversationElement - optional conversation wrapper
  */
-export function attachScrollPill(parent, scrollElement) {
+export function attachScrollPill(parent, scrollElement, conversationElement = null) {
   cleanupPillState(bottomPillState);
 
   if (!parent || !scrollElement) return;
 
   bottomPillState.scrollTarget = scrollElement;
+  bottomPillState.conversationElement = resolveConversationElement(scrollElement, conversationElement);
+  bottomPillState.anchorElement = parent;
 
   const button = document.createElement("button");
   button.className = "wm-scroll-pill wm-scroll-pill--scroll-bottom";
