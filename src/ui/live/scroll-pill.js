@@ -1,17 +1,13 @@
 /**
- * Floating "scroll to bottom" pill indicator.
+ * Floating chat scroll pill indicators.
  *
- * Shows a small pill above the composer when new content arrives and the user
- * is scrolled up. Clicking it smooth-scrolls to the bottom.
- *
- * Also includes a second pill ("last prompt") that appears near the top of the
- * visible chat area and jumps to the latest user message.
+ * Shows small pills above the composer for jumping to the latest user prompt
+ * and scrolling back to the bottom.
  */
 
 const THRESHOLD = 50;
 const USER_MESSAGE_SELECTOR = '.wm-message[data-role="user"]';
 const HEADER_OFFSET_FALLBACK = 12;
-const LAST_PROMPT_TOP_CLEARANCE = 56;
 
 function isDocumentScrollTarget(el) {
   return (
@@ -193,23 +189,6 @@ function isMessageAboveView(messageElement, scrollElement) {
   return isMessageRectAboveView(messageRect, scrollRect, headerInset);
 }
 
-export function getLastPromptPillPosition(scrollRect, headerInset = 0) {
-  return {
-    top: scrollRect.top + headerInset + LAST_PROMPT_TOP_CLEARANCE,
-    left: scrollRect.left + ((scrollRect.right - scrollRect.left) / 2),
-  };
-}
-
-function positionLastPromptPill(state) {
-  if (!state?.pillEl || !state.scrollTarget) {
-    return;
-  }
-  const scrollRect = getScrollContainerRect(state.scrollTarget);
-  const position = getLastPromptPillPosition(scrollRect, getHeaderInset(state.scrollTarget));
-  state.pillEl.style.top = `${position.top}px`;
-  state.pillEl.style.left = `${position.left}px`;
-}
-
 function updateLastPromptPillVisibility(state) {
   if (!state || !state.pillEl) return;
   state.conversationElement = resolveConversationElement(state.scrollTarget, state.conversationElement);
@@ -222,9 +201,6 @@ function updateLastPromptPillVisibility(state) {
   const shouldShow = !isMessageInView(latestMessage, state.scrollTarget)
     && isMessageAboveView(latestMessage, state.scrollTarget);
   state.pillEl.style.display = shouldShow ? "" : "none";
-  if (shouldShow) {
-    positionLastPromptPill(state);
-  }
 }
 
 /**
@@ -243,9 +219,10 @@ export function attachScrollPill(parent, scrollElement) {
   bottomPillState.scrollTarget = scrollElement;
 
   const button = document.createElement("button");
-  button.className = "wm-scroll-pill";
+  button.className = "wm-scroll-pill wm-scroll-pill--scroll-bottom";
   button.textContent = "scroll to bottom";
   button.setAttribute("aria-label", "Scroll to bottom");
+  button.dataset.testid = "scroll-to-bottom";
   button.style.display = "none";
 
   button.addEventListener("click", () => {
@@ -272,7 +249,7 @@ export function attachScrollPill(parent, scrollElement) {
 }
 
 /**
- * Create and attach a "last prompt" pill near the top of the visible chat area.
+ * Create and attach a "last prompt" pill next to the bottom scroll pill.
  *
  * @param {HTMLElement} parent  - fallback element to append the pill into
  * @param {HTMLElement} scrollElement - the scrollable element to watch
@@ -307,7 +284,7 @@ export function attachLastPromptPill(parent, scrollElement, conversationElement 
     hideLastPromptPill();
   });
 
-  const pillParent = document.body || parent;
+  const pillParent = parent;
   pillParent.appendChild(button);
   lastPromptPillState.pillEl = button;
 

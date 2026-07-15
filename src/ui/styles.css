@@ -5555,8 +5555,6 @@ body[data-keyboard-open="true"] .wm-composer-shell {
 .wm-scroll-pill {
   position: absolute;
   bottom: 100%;
-  left: 50%;
-  transform: translateX(-50%);
   margin-bottom: 0.5rem;
   padding: 0.3rem 1rem;
   font-size: 0.8rem;
@@ -5573,19 +5571,17 @@ body[data-keyboard-open="true"] .wm-composer-shell {
   transition: opacity 0.15s ease;
 }
 
+.wm-scroll-pill--last-prompt {
+  left: 1rem;
+}
+
+.wm-scroll-pill--scroll-bottom {
+  right: 1rem;
+}
+
 .wm-scroll-pill:hover {
   color: var(--text-primary);
   background: var(--bg-tertiary, rgba(80, 80, 80, 0.9));
-}
-
-.wm-scroll-pill.wm-scroll-pill--last-prompt {
-  position: fixed;
-  top: 0.75rem;
-  bottom: auto;
-  left: 50%;
-  transform: translateX(-50%);
-  margin: 0;
-  z-index: 8;
 }
 
 /* Archived session view styles */

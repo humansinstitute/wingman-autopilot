@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
 import {
-  getLastPromptPillPosition,
   isMessageRectAboveView,
   isMessageRectInView,
 } from "./scroll-pill.js";
@@ -45,21 +44,14 @@ describe("last prompt pill visibility helpers", () => {
     expect(isMessageRectAboveView(visiblePromptRect, scrollRect, 12)).toBe(false);
   });
 
-  test("positions the last prompt pill from the visible scroll container", () => {
-    expect(getLastPromptPillPosition({
-      top: 80,
-      bottom: 720,
-      left: 40,
-      right: 1040,
-    }, 16)).toEqual({
-      top: 152,
-      left: 540,
-    });
+  test("mounts the last prompt pill in the composer control row", () => {
+    expect(source).toContain("const pillParent = parent;");
+    expect(source).toContain("pillParent.appendChild(button);");
+    expect(source).not.toContain("const pillParent = document.body || parent;");
   });
 
-  test("mounts the last prompt pill outside scroll flow", () => {
-    expect(source).toContain("const pillParent = document.body || parent;");
-    expect(source).toContain("pillParent.appendChild(button);");
-    expect(source).not.toContain("pillParent.insertBefore(button");
+  test("assigns left and right dock classes to scroll pills", () => {
+    expect(source).toContain('button.className = "wm-scroll-pill wm-scroll-pill--last-prompt";');
+    expect(source).toContain('button.className = "wm-scroll-pill wm-scroll-pill--scroll-bottom";');
   });
 });
