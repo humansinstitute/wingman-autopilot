@@ -4,6 +4,20 @@ This document describes the target design for moving most Autopilot environment
 variables into app-managed settings while keeping setup simple, secure, and
 Docker-compatible.
 
+## Accepted Decisions
+
+- `IDENTITY_SESSION_SECRET` remains the required bootstrap secret for phase one.
+- Autopilot auto-detects existing environment values.
+- Autopilot may auto-import missing app settings only when the mapping is known,
+  valid, unambiguous, and non-destructive.
+- Autopilot never deletes or rewrites `.env` without explicit admin action.
+- Once an app-managed setting exists, it wins over environment values.
+- Environment values are used only when the app-managed setting is missing.
+- Conflicts between app-managed settings and environment values are surfaced in
+  Settings.
+- Docker cleanup follows read-only semantics unless `WINGMAN_ENV_FILE` points to
+  a writable mounted env file.
+
 ## Goals
 
 - Make a new Autopilot instance easier to set up by managing most runtime
@@ -34,10 +48,13 @@ configuration. These values are needed before the settings database can be read,
 or they describe container/runtime wiring that the app cannot safely change from
 inside itself.
 
-Recommended bootstrap-only variables:
+Required phase-one bootstrap variables:
 
 - `IDENTITY_SESSION_SECRET`: required encryption/session root for encrypted
   settings and browser sessions.
+
+Supported bootstrap/runtime variables:
+
 - `PORT`: process listen port.
 - `WINGMAN_ENV_FILE`: optional path to a writable env file for local migration
   cleanup.
@@ -47,12 +64,14 @@ Recommended bootstrap-only variables:
 
 For phase one, `IDENTITY_SESSION_SECRET` should remain the required root secret.
 The existing setting encryption path already derives an AES-GCM key from it.
-Longer term, Autopilot may split this into:
+Do not introduce `WINGMAN_MASTER_KEY` in the first implementation pass.
+
+Longer term, Autopilot may split the bootstrap root into:
 
 - `WINGMAN_MASTER_KEY`: encrypts app-managed secrets and settings.
 - `IDENTITY_SESSION_SECRET`: signs/verifies browser identity sessions.
 
-That split is useful, but not required for the first migration.
+That split is deferred until the phase-one settings migration is stable.
 
 ## Storage Model
 
@@ -67,6 +86,7 @@ CREATE TABLE IF NOT EXISTS instance_settings (
   value TEXT NOT NULL,
   value_kind TEXT NOT NULL DEFAULT 'string',
   source TEXT NOT NULL DEFAULT 'app',
+  source_detail TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -80,6 +100,14 @@ AES-256-GCM with a key derived from `IDENTITY_SESSION_SECRET`.
 If `IDENTITY_SESSION_SECRET` is missing, weak, or changed such that settings
 cannot be decrypted, Autopilot should fail clearly. It should not silently
 discard encrypted settings or fall back to defaults for required secrets.
+
+Suggested source values:
+
+- `app`: set directly through Settings or an admin API.
+- `env_auto_import`: automatically imported because a known missing setting had
+  a valid env value.
+- `env_manual_import`: explicitly imported by an admin.
+- `migration`: written by a one-off migration.
 
 ## Settings Registry
 
@@ -97,6 +125,7 @@ Each setting definition should include:
 - validation function
 - whether the value requires restart
 - whether it can be cleaned up from `.env`
+- whether it is eligible for automatic import
 - compatibility env name for child process injection, if needed
 
 Example categories:
@@ -127,14 +156,34 @@ app setting after migration.
 Autopilot should detect existing environment values and offer an explicit
 migration workflow in Settings.
 
+On startup, Autopilot should also auto-import a missing setting when all of the
+following are true:
+
+- the env key maps to exactly one registry setting
+- the setting is marked `autoImport: true`
+- no app-managed value exists for that setting
+- the value passes the setting validator
+- the setting is not bootstrap-only
+- the env value does not conflict with another alias for the same setting
+- importing the value does not require deleting or rewriting an env file
+
+Automatic import must write encrypted SQLite state and record
+`source = 'env_auto_import'`. Automatic import must not remove, comment out, or
+rewrite `.env`.
+
+If any of those conditions fail, Autopilot should leave the value in env-only
+fallback mode and surface it in the migration panel.
+
 The import panel should show:
 
 - known env values found from `process.env`
 - known values found in a writable `.env` file, when available
 - whether each value is already imported
+- whether a value was auto-imported
 - whether the setting is secret
 - whether the app value differs from the env value
 - whether the setting requires restart
+- whether the env value is blocked from auto-import and why
 
 Admin actions:
 
@@ -149,6 +198,9 @@ Admin actions:
 Secrets must be masked in the UI, API responses, logs, and reports. Use presence
 and short fingerprints rather than plaintext values when comparing conflicts.
 
+Manual import may replace an existing app setting only after explicit
+confirmation. Manual import must record `source = 'env_manual_import'`.
+
 ## `.env` Backup and Cleanup
 
 Local `.env` cleanup is allowed only after explicit admin confirmation.
@@ -156,7 +208,7 @@ Local `.env` cleanup is allowed only after explicit admin confirmation.
 Rules:
 
 - Create `.env.backup` or `.env.backup.<timestamp>` before rewriting.
-- Add `.env.backup`, `.env.backup.*`, and `.env.migrated.*` to `.gitignore`.
+- Ensure `.env.backup`, `.env.backup.*`, and `.env.migrated.*` are gitignored.
 - Preserve comments and ordering where practical.
 - Remove only selected, known keys that were imported successfully.
 - Never remove bootstrap-only keys.
@@ -182,6 +234,13 @@ Docker rules:
   other host config after restart.
 - Host-only variables such as published ports and bind mounts remain outside
   app-managed settings.
+
+Docker cleanup responses should distinguish:
+
+- `cleanupUnavailable`: no writable env file is configured.
+- `cleanupReadOnly`: `WINGMAN_ENV_FILE` exists but cannot be written.
+- `cleanupSupported`: `WINGMAN_ENV_FILE` exists, is writable, and can be backed
+  up before rewrite.
 
 ## Runtime Env Injection
 
@@ -218,6 +277,11 @@ APIs that return settings should avoid plaintext secrets by default. Plaintext
 secret reads should be rare, admin-only, auditable, and used only for explicit
 reveal or runtime injection paths.
 
+Secret reveal should not be part of the first implementation. Phase one should
+support replacing and deleting secrets, plus runtime-only secret retrieval for
+server-side injection paths. A later implementation can add explicit reveal with
+audit logging if there is a product need.
+
 ## Settings UI
 
 Add an admin settings section for environment and runtime settings.
@@ -243,6 +307,7 @@ All interactive controls should have accessible labels and stable test IDs.
 - Add the instance settings store.
 - Add the settings registry.
 - Add admin APIs for settings metadata and env import preview.
+- Add startup auto-import for valid, missing, `autoImport: true` settings.
 - Add tests for encryption, masking, validation, and precedence.
 
 ### Phase 2: Import Workflow
@@ -288,18 +353,39 @@ Minimum tests:
 - app setting wins over env after import
 - env value is used only when setting is missing
 - import masks secrets in API responses
+- startup auto-import imports only eligible missing settings
+- startup auto-import records `env_auto_import`
+- startup auto-import skips ambiguous aliases and reports the reason
 - `.env` backup is created before rewrite
 - cleanup removes only selected known keys
 - cleanup refuses bootstrap-only keys
 - Docker/read-only mode returns guidance instead of attempting rewrite
 - runtime env injection uses app-managed values
 
-## Open Decisions
+## Implementation Defaults
 
-- Whether to introduce `WINGMAN_MASTER_KEY` in phase one or defer it.
-- Whether import should happen automatically for missing settings on startup, or
-  only after explicit admin action. The safer default is explicit admin action.
-- Which settings require restart versus can be hot-reloaded.
-- Whether secret reveal should be supported at all, or only replace/delete.
-- Whether each setting change should be audited in SQLite with admin npub,
-  timestamp, and old/new fingerprints.
+- Defer `WINGMAN_MASTER_KEY`; use `IDENTITY_SESSION_SECRET` in phase one.
+- Enable startup auto-import only for registry entries explicitly marked
+  `autoImport: true`.
+- Treat unknown restart behavior as `requiresRestart: true` until proven
+  hot-reloadable.
+- Do not support secret reveal in phase one. Support replace/delete and
+  server-side runtime injection.
+- Add audit logging for manual admin changes in the first implementation if it
+  fits the existing auth/session context cleanly. If not, keep the API shape
+  ready for audit fields and add the audit table in the next implementation
+  slice.
+
+## Implementation Order
+
+1. Add the encrypted instance settings store and tests.
+2. Add the settings registry with bootstrap-only, auto-import, and restart
+   metadata.
+3. Add the config resolver that implements app-setting, env, default precedence.
+4. Add env detection and startup auto-import for eligible missing settings.
+5. Add admin APIs for masked settings, import preview, manual import, replace,
+   delete, backup, cleanup, and migration report.
+6. Add the Settings UI panel.
+7. Move low-risk config consumers to the resolver.
+8. Move secret consumers and add runtime env injection.
+9. Reduce docs and `.env.example` once compatibility aliases are in place.
