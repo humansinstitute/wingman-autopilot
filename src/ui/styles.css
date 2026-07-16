@@ -5572,6 +5572,13 @@ body[data-keyboard-open="true"] .wm-composer-shell {
   overflow: hidden;
   text-overflow: ellipsis;
   transition: opacity 0.15s ease;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.wm-scroll-pill[data-visible="true"] {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .wm-scroll-pill--last-prompt {

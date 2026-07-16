@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
 import {
+  findPreviousPromptRectIndex,
   isMessageRectAboveView,
   isMessageRectBelowView,
   isMessageRectInView,
@@ -56,6 +57,26 @@ describe("last prompt pill visibility helpers", () => {
     expect(isMessageRectBelowView(latestMessageRect, scrollRect)).toBe(true);
   });
 
+  test("finds the nearest prompt above the current scroll anchor", () => {
+    const promptRects = [
+      { top: -820, bottom: -760 },
+      { top: -220, bottom: -160 },
+      { top: 132, bottom: 190 },
+      { top: 460, bottom: 520 },
+    ];
+
+    expect(findPreviousPromptRectIndex(promptRects, 150)).toBe(2);
+  });
+
+  test("does not select the prompt already aligned to the scroll anchor", () => {
+    const promptRects = [
+      { top: -300, bottom: -240 },
+      { top: 142, bottom: 210 },
+    ];
+
+    expect(findPreviousPromptRectIndex(promptRects, 150)).toBe(0);
+  });
+
   test("mounts the last prompt pill in the composer control row", () => {
     expect(source).toContain("const pillParent = parent;");
     expect(source).toContain("pillParent.appendChild(button);");
@@ -67,23 +88,29 @@ describe("last prompt pill visibility helpers", () => {
     expect(source).toContain('button.className = "wm-scroll-pill wm-scroll-pill--scroll-bottom";');
   });
 
+  test("uses title-case labels for the two scroll pills", () => {
+    expect(source).toContain('button.textContent = "Last Prompt";');
+    expect(source).toContain('button.textContent = "Scroll to End";');
+  });
+
   test("passes the conversation element to both pill attachments", () => {
     expect(liveViewSource).toContain("scrollPill.attachScrollPill(composerEl, scrollTarget, conversationEl);");
     expect(liveViewSource).toContain("scrollPill.attachLastPromptPill(composerEl, scrollTarget, conversationEl);");
   });
 
-  test("updates the bottom pill from scroll position", () => {
-    expect(source).toContain("function updateBottomPillVisibility(state)");
-    expect(source).toContain("getVisibleScrollRect(state.scrollTarget, state.anchorElement)");
-    expect(source).toContain("isMessageRectBelowView(latestMessage.getBoundingClientRect(), visibleRect)");
-    expect(source).toContain("isLastPromptPillVisible() || !checkNearBottom(state.scrollTarget) || latestMessageBelowView");
-    expect(source).toContain("updateBottomPillVisibility(bottomPillState);");
+  test("reveals both scroll pills for three seconds after scroll activity", () => {
+    expect(source).toContain("const PILL_VISIBLE_DURATION_MS = 3000;");
+    expect(source).toContain("function revealScrollPillsForDuration()");
+    expect(source).toContain("function handleScrollActivity()");
+    expect(source).toContain("setTimeout(() =>");
+    expect(source).toContain("}, PILL_VISIBLE_DURATION_MS);");
   });
 
-  test("shows the bottom pill alongside the last prompt pill", () => {
-    expect(source).toContain("if (shouldShow && bottomPillState.pillEl)");
-    expect(source).toContain('bottomPillState.pillEl.style.display = "";');
-    expect(source).toContain("function isLastPromptPillVisible()");
+  test("last prompt click targets the previous prompt above the viewport", () => {
+    expect(source).toContain("function getPreviousUserMessageAboveScroll(conversationElement, scrollElement)");
+    expect(source).toContain("findPreviousPromptRectIndex(");
+    expect(source).toContain("scrollToElementAtTop(lastPromptPillState.scrollTarget, previousMessage);");
+    expect(source).not.toContain("scrollToElementAtTop(lastPromptPillState.scrollTarget, latestMessage);");
   });
 
   test("centers the two pills in the left and right halves", () => {
@@ -94,5 +121,13 @@ describe("last prompt pill visibility helpers", () => {
     expect(lastPromptRule?.groups?.body).toContain("transform: translateX(-50%);");
     expect(scrollBottomRule?.groups?.body).toContain("left: 75%;");
     expect(scrollBottomRule?.groups?.body).toContain("transform: translateX(-50%);");
+  });
+
+  test("fades scroll pills through data-visible state", () => {
+    expect(styles).toContain('.wm-scroll-pill[data-visible="true"]');
+    expect(styles).toContain("opacity: 0;");
+    expect(styles).toContain("opacity: 1;");
+    expect(styles).toContain("pointer-events: none;");
+    expect(styles).toContain("pointer-events: auto;");
   });
 });

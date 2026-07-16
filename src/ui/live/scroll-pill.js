@@ -1,13 +1,14 @@
 /**
  * Floating chat scroll pill indicators.
  *
- * Shows small pills above the composer for jumping to the latest user prompt
+ * Shows small pills above the composer for jumping to the previous user prompt
  * and scrolling back to the bottom.
  */
 
 const THRESHOLD = 50;
+const PILL_VISIBLE_DURATION_MS = 3000;
+const PROMPT_SCROLL_GAP_PX = 8;
 const USER_MESSAGE_SELECTOR = '.wm-message[data-role="user"]';
-const MESSAGE_SELECTOR = '.wm-message';
 const HEADER_OFFSET_FALLBACK = 12;
 
 function isDocumentScrollTarget(el) {
@@ -69,8 +70,7 @@ function createPillState() {
     scrollListenerTarget: null,
     resizeListener: null,
     mutationObserver: null,
-    lastMessageElement: null,
-    anchorElement: null,
+    visibilityTimer: null,
   };
 }
 
@@ -96,21 +96,6 @@ function getScrollContainerRect(el) {
   return el.getBoundingClientRect();
 }
 
-function getVisibleScrollRect(scrollElement, anchorElement = null) {
-  const scrollRect = getScrollContainerRect(scrollElement);
-  if (!(anchorElement instanceof Element)) {
-    return scrollRect;
-  }
-  const anchorRect = anchorElement.getBoundingClientRect();
-  if (anchorRect.top > scrollRect.top && anchorRect.top < scrollRect.bottom) {
-    return {
-      ...scrollRect,
-      bottom: anchorRect.top,
-    };
-  }
-  return scrollRect;
-}
-
 function checkNearBottom(el) {
   if (!el) return true;
   if (el === document.body || el === document.documentElement || el === document.scrollingElement) {
@@ -121,6 +106,9 @@ function checkNearBottom(el) {
 }
 
 function cleanupPillState(state) {
+  if (state.visibilityTimer) {
+    clearTimeout(state.visibilityTimer);
+  }
   if (state.scrollListenerTarget && state.scrollListener) {
     state.scrollListenerTarget.removeEventListener("scroll", state.scrollListener);
   }
@@ -139,8 +127,7 @@ function cleanupPillState(state) {
   state.scrollListener = null;
   state.scrollListenerTarget = null;
   state.resizeListener = null;
-  state.lastMessageElement = null;
-  state.anchorElement = null;
+  state.visibilityTimer = null;
 }
 
 function resolveConversationElement(scrollElement, conversationElement) {
@@ -165,26 +152,11 @@ function resolveConversationElement(scrollElement, conversationElement) {
   return null;
 }
 
-function getLatestUserMessage(conversationElement) {
+function getUserMessages(conversationElement) {
   if (!(conversationElement instanceof Element)) {
-    return null;
+    return [];
   }
-  const messages = conversationElement.querySelectorAll(USER_MESSAGE_SELECTOR);
-  if (!messages.length) {
-    return null;
-  }
-  return messages[messages.length - 1] || null;
-}
-
-function getLatestMessage(conversationElement) {
-  if (!(conversationElement instanceof Element)) {
-    return null;
-  }
-  const messages = conversationElement.querySelectorAll(MESSAGE_SELECTOR);
-  if (!messages.length) {
-    return null;
-  }
-  return messages[messages.length - 1] || null;
+  return Array.from(conversationElement.querySelectorAll(USER_MESSAGE_SELECTOR));
 }
 
 export function isMessageRectInView(messageRect, scrollRect, headerInset = 0) {
@@ -202,57 +174,80 @@ export function isMessageRectBelowView(messageRect, scrollRect) {
   return messageRect.bottom > scrollRect.bottom;
 }
 
-function isMessageInView(messageElement, scrollElement) {
-  if (!(messageElement instanceof Element) || !scrollElement) {
-    return true;
+export function findPreviousPromptRectIndex(messageRects, scrollAnchorTop, gapPx = PROMPT_SCROLL_GAP_PX) {
+  if (!Array.isArray(messageRects) || !Number.isFinite(scrollAnchorTop)) {
+    return -1;
   }
-  const headerInset = getHeaderInset(scrollElement);
+  const boundaryTop = scrollAnchorTop - gapPx;
+  for (let index = messageRects.length - 1; index >= 0; index -= 1) {
+    const top = Number(messageRects[index]?.top);
+    if (Number.isFinite(top) && top < boundaryTop) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function getScrollAnchorTop(scrollElement) {
+  if (!scrollElement) {
+    return Number.NaN;
+  }
   const scrollRect = getScrollContainerRect(scrollElement);
-  const messageRect = messageElement.getBoundingClientRect();
-  return isMessageRectInView(messageRect, scrollRect, headerInset);
+  return scrollRect.top + getHeaderInset(scrollElement);
 }
 
-function isMessageAboveView(messageElement, scrollElement) {
-  if (!(messageElement instanceof Element) || !scrollElement) {
-    return false;
+function getPreviousUserMessageAboveScroll(conversationElement, scrollElement) {
+  const messages = getUserMessages(conversationElement);
+  if (!messages.length || !scrollElement) {
+    return null;
   }
-  const headerInset = getHeaderInset(scrollElement);
-  const scrollRect = getScrollContainerRect(scrollElement);
-  const messageRect = messageElement.getBoundingClientRect();
-  return isMessageRectAboveView(messageRect, scrollRect, headerInset);
+  const targetIndex = findPreviousPromptRectIndex(
+    messages.map((message) => message.getBoundingClientRect()),
+    getScrollAnchorTop(scrollElement),
+  );
+  return targetIndex >= 0 ? messages[targetIndex] : null;
 }
 
-function updateLastPromptPillVisibility(state) {
-  if (!state || !state.pillEl) return;
+function setPillVisible(state, visible) {
+  if (!state?.pillEl) return;
+  state.pillEl.dataset.visible = visible ? "true" : "false";
+  state.pillEl.setAttribute("aria-hidden", visible ? "false" : "true");
+  state.pillEl.tabIndex = visible ? 0 : -1;
+}
+
+function revealPillForDuration(state) {
+  if (!state?.pillEl) return;
+  if (state.visibilityTimer) {
+    clearTimeout(state.visibilityTimer);
+  }
+  setPillVisible(state, true);
+  state.visibilityTimer = setTimeout(() => {
+    setPillVisible(state, false);
+    state.visibilityTimer = null;
+  }, PILL_VISIBLE_DURATION_MS);
+}
+
+function hasAnyUserMessage(state) {
   state.conversationElement = resolveConversationElement(state.scrollTarget, state.conversationElement);
-  const latestMessage = getLatestUserMessage(state.conversationElement);
-  state.lastMessageElement = latestMessage;
-  if (!latestMessage) {
-    state.pillEl.style.display = "none";
-    return;
-  }
-  const shouldShow = !isMessageInView(latestMessage, state.scrollTarget)
-    && isMessageAboveView(latestMessage, state.scrollTarget);
-  state.pillEl.style.display = shouldShow ? "" : "none";
-  if (shouldShow && bottomPillState.pillEl) {
-    bottomPillState.pillEl.style.display = "";
+  return getUserMessages(state.conversationElement).length > 0;
+}
+
+function revealScrollPillsForDuration() {
+  revealPillForDuration(bottomPillState);
+  if (hasAnyUserMessage(lastPromptPillState)) {
+    revealPillForDuration(lastPromptPillState);
+  } else {
+    setPillVisible(lastPromptPillState, false);
   }
 }
 
-function isLastPromptPillVisible() {
-  return Boolean(lastPromptPillState.pillEl && lastPromptPillState.pillEl.style.display !== "none");
+function fadeScrollPills() {
+  setPillVisible(bottomPillState, false);
+  setPillVisible(lastPromptPillState, false);
 }
 
-function updateBottomPillVisibility(state) {
-  if (!state || !state.pillEl || !state.scrollTarget) return;
-  state.conversationElement = resolveConversationElement(state.scrollTarget, state.conversationElement);
-  const latestMessage = getLatestMessage(state.conversationElement);
-  const visibleRect = getVisibleScrollRect(state.scrollTarget, state.anchorElement);
-  const latestMessageBelowView = latestMessage
-    ? isMessageRectBelowView(latestMessage.getBoundingClientRect(), visibleRect)
-    : false;
-  const shouldShow = isLastPromptPillVisible() || !checkNearBottom(state.scrollTarget) || latestMessageBelowView;
-  state.pillEl.style.display = shouldShow ? "" : "none";
+function handleScrollActivity() {
+  revealScrollPillsForDuration();
 }
 
 /**
@@ -271,14 +266,15 @@ export function attachScrollPill(parent, scrollElement, conversationElement = nu
 
   bottomPillState.scrollTarget = scrollElement;
   bottomPillState.conversationElement = resolveConversationElement(scrollElement, conversationElement);
-  bottomPillState.anchorElement = parent;
 
   const button = document.createElement("button");
   button.className = "wm-scroll-pill wm-scroll-pill--scroll-bottom";
-  button.textContent = "scroll to bottom";
-  button.setAttribute("aria-label", "Scroll to bottom");
+  button.textContent = "Scroll to End";
+  button.setAttribute("aria-label", "Scroll to end");
   button.dataset.testid = "scroll-to-bottom";
-  button.style.display = "none";
+  button.dataset.visible = "false";
+  button.setAttribute("aria-hidden", "true");
+  button.tabIndex = -1;
 
   button.addEventListener("click", () => {
     if (!bottomPillState.scrollTarget) return;
@@ -295,12 +291,11 @@ export function attachScrollPill(parent, scrollElement, conversationElement = nu
 
   bottomPillState.scrollListener = () => {
     if (!bottomPillState.scrollTarget || !bottomPillState.pillEl) return;
-    updateBottomPillVisibility(bottomPillState);
+    handleScrollActivity();
   };
   bottomPillState.scrollListenerTarget = resolveListenerTarget(scrollElement);
   bottomPillState.scrollListenerTarget.addEventListener("scroll", bottomPillState.scrollListener, { passive: true });
 
-  updateBottomPillVisibility(bottomPillState);
   bottomPillState.pillEl = button;
 }
 
@@ -321,23 +316,27 @@ export function attachLastPromptPill(parent, scrollElement, conversationElement 
 
   const button = document.createElement("button");
   button.className = "wm-scroll-pill wm-scroll-pill--last-prompt";
-  button.textContent = "last prompt";
+  button.textContent = "Last Prompt";
   button.setAttribute("aria-label", "Scroll to last prompt");
   button.dataset.testid = "scroll-to-last-prompt";
-  button.style.display = "none";
+  button.dataset.visible = "false";
+  button.setAttribute("aria-hidden", "true");
+  button.tabIndex = -1;
 
   button.addEventListener("click", () => {
     lastPromptPillState.conversationElement = resolveConversationElement(
       lastPromptPillState.scrollTarget,
       lastPromptPillState.conversationElement,
     );
-    const latestMessage = getLatestUserMessage(lastPromptPillState.conversationElement);
-    if (!latestMessage) {
-      hideLastPromptPill();
+    const previousMessage = getPreviousUserMessageAboveScroll(
+      lastPromptPillState.conversationElement,
+      lastPromptPillState.scrollTarget,
+    );
+    if (!previousMessage) {
       return;
     }
-    scrollToElementAtTop(lastPromptPillState.scrollTarget, latestMessage);
-    hideLastPromptPill();
+    scrollToElementAtTop(lastPromptPillState.scrollTarget, previousMessage);
+    revealScrollPillsForDuration();
   });
 
   const pillParent = parent;
@@ -346,19 +345,21 @@ export function attachLastPromptPill(parent, scrollElement, conversationElement 
 
   lastPromptPillState.scrollListener = () => {
     if (!lastPromptPillState.scrollTarget || !lastPromptPillState.pillEl) return;
-    updateLastPromptPillVisibility(lastPromptPillState);
+    handleScrollActivity();
   };
   lastPromptPillState.scrollListenerTarget = resolveListenerTarget(scrollElement);
   lastPromptPillState.scrollListenerTarget.addEventListener("scroll", lastPromptPillState.scrollListener, { passive: true });
   lastPromptPillState.resizeListener = () => {
-    updateLastPromptPillVisibility(lastPromptPillState);
+    fadeScrollPills();
   };
   window.addEventListener("resize", lastPromptPillState.resizeListener, { passive: true });
 
   if (typeof MutationObserver === "function" && lastPromptPillState.conversationElement) {
     lastPromptPillState.mutationObserver = new MutationObserver(() => {
       if (!lastPromptPillState.pillEl) return;
-      updateLastPromptPillVisibility(lastPromptPillState);
+      if (!hasAnyUserMessage(lastPromptPillState)) {
+        setPillVisible(lastPromptPillState, false);
+      }
     });
     lastPromptPillState.mutationObserver.observe(lastPromptPillState.conversationElement, {
       childList: true,
@@ -366,22 +367,21 @@ export function attachLastPromptPill(parent, scrollElement, conversationElement 
     });
   }
 
-  updateLastPromptPillVisibility(lastPromptPillState);
   lastPromptPillState.pillEl = button;
 }
 
-/** Show the bottom pill (call when new content arrives and user is scrolled up). */
+/** Show the scroll pills temporarily (call when new content arrives and user is scrolled up). */
 export function show() {
-  if (bottomPillState.pillEl) bottomPillState.pillEl.style.display = "";
+  revealScrollPillsForDuration();
 }
 
-/** Hide the bottom pill. */
+/** Hide both scroll pills. */
 export function hide() {
-  if (bottomPillState.pillEl) bottomPillState.pillEl.style.display = "none";
+  fadeScrollPills();
 }
 
 export function hideLastPromptPill() {
-  if (lastPromptPillState.pillEl) lastPromptPillState.pillEl.style.display = "none";
+  setPillVisible(lastPromptPillState, false);
 }
 
 /** Returns true if the scroll target is near the bottom. */
@@ -391,11 +391,11 @@ export function isNearBottom() {
 
 export function scrollLastMessageToTop(scrollElement, conversationElement) {
   const activeConversation = resolveConversationElement(scrollElement, conversationElement);
-  const latestMessage = getLatestUserMessage(activeConversation);
-  if (!latestMessage || !scrollElement) {
+  const previousMessage = getPreviousUserMessageAboveScroll(activeConversation, scrollElement);
+  if (!previousMessage || !scrollElement) {
     return;
   }
-  scrollToElementAtTop(scrollElement, latestMessage);
+  scrollToElementAtTop(scrollElement, previousMessage);
 }
 
 /** Remove listeners and elements. Call on view teardown. */
