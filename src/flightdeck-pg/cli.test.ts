@@ -362,6 +362,145 @@ describe('flightdeck pg cli', () => {
     expect(requests.some((request) => request.url === 'http://tower.test/api/v4/flightdeck-pg/workspaces/workspace-1/channels/channel-1/files' && request.method === 'POST')).toBe(true);
     expect(requests.some((request) => request.url === 'http://tower.test/api/v4/flightdeck-pg/workspaces/workspace-1/channels/channel-1/audio-notes' && request.method === 'POST')).toBe(true);
   });
+
+  test('covers workroom events, links, and production merge approvals', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'flightdeck-cli-workroom-'));
+    const eventPayload = join(tempDir, 'event.json');
+    const linkMetadata = join(tempDir, 'link.json');
+    const approvalMetadata = join(tempDir, 'approval.json');
+    writeFileSync(eventPayload, JSON.stringify({ pr_url: 'https://github.com/pete/example/pull/42' }), 'utf8');
+    writeFileSync(linkMetadata, JSON.stringify({ head_sha: 'head123' }), 'utf8');
+    writeFileSync(approvalMetadata, JSON.stringify({ integration_autopilot_npub: 'npub1integrator' }), 'utf8');
+    const { router, requests } = makeFlightDeckRouter();
+    globalThis.fetch = router as typeof fetch;
+    const common = [
+      '--workspace',
+      'workspace-1',
+      '--json',
+      '--key',
+      testKey,
+      '--app-npub',
+      'npub1app',
+      '--tower-url',
+      'http://tower.test',
+    ];
+
+    try {
+      expect((await runFlightDeckPgCli(['workrooms', 'list', '--channel', 'channel-1', ...common], { fetchImpl: router as typeof fetch })).exitCode).toBe(0);
+      expect((await runFlightDeckPgCli(['workrooms', 'search', '--query', 'flight deck', ...common], { fetchImpl: router as typeof fetch })).exitCode).toBe(0);
+      expect((await runFlightDeckPgCli(['workroom', 'show', 'room-1', ...common], { fetchImpl: router as typeof fetch })).exitCode).toBe(0);
+      expect((await runFlightDeckPgCli(['workroom', 'events', 'room-1', ...common], { fetchImpl: router as typeof fetch })).exitCode).toBe(0);
+      expect((await runFlightDeckPgCli([
+        'workroom',
+        'event',
+        'room-1',
+        '--type',
+        'pr_ready',
+        '--title',
+        'PR ready',
+        '--target-type',
+        'pull_request',
+        '--target-ref',
+        'https://github.com/pete/example/pull/42',
+        '--payload-file',
+        eventPayload,
+        ...common,
+      ], { fetchImpl: router as typeof fetch })).exitCode).toBe(0);
+      expect((await runFlightDeckPgCli(['workroom', 'links', 'room-1', ...common], { fetchImpl: router as typeof fetch })).exitCode).toBe(0);
+      expect((await runFlightDeckPgCli([
+        'workroom',
+        'link',
+        'room-1',
+        '--link-type',
+        'pull_request',
+        '--target-type',
+        'pull_request',
+        '--external-url',
+        'https://github.com/pete/example/pull/42',
+        '--label',
+        'PR 42',
+        '--metadata-file',
+        linkMetadata,
+        ...common,
+      ], { fetchImpl: router as typeof fetch })).exitCode).toBe(0);
+      expect((await runFlightDeckPgCli([
+        'workroom',
+        'approval-request',
+        'room-1',
+        '--repo',
+        'pete/example',
+        '--from-branch',
+        'main',
+        '--to-branch',
+        'deployed',
+        '--commit',
+        'merge123',
+        '--preview-url',
+        'https://preview.example',
+        '--validation',
+        'bun test,bun run build',
+        '--metadata-file',
+        approvalMetadata,
+        ...common,
+      ], { fetchImpl: router as typeof fetch })).exitCode).toBe(0);
+      expect((await runFlightDeckPgCli([
+        'workroom',
+        'production-merge-check',
+        'room-1',
+        '--repo',
+        'pete/example',
+        '--to-branch',
+        'deployed',
+        '--commit',
+        'merge123',
+        ...common,
+      ], { fetchImpl: router as typeof fetch })).exitCode).toBe(0);
+      expect((await runFlightDeckPgCli(['approvals', 'list', '--target-type', 'workroom', '--target-id', 'room-1', ...common], { fetchImpl: router as typeof fetch })).exitCode).toBe(0);
+      expect((await runFlightDeckPgCli(['approval', 'show', 'approval-1', ...common], { fetchImpl: router as typeof fetch })).exitCode).toBe(0);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+
+    expect(requests.some((request) => {
+      const url = new URL(request.url);
+      return request.method === 'GET'
+        && url.pathname === '/api/v4/flightdeck-pg/workspaces/workspace-1/workrooms'
+        && url.searchParams.get('channel_id') === 'channel-1';
+    })).toBe(true);
+    expect(requests.some((request) => {
+      const url = new URL(request.url);
+      return request.method === 'GET'
+        && url.pathname === '/api/v4/flightdeck-pg/workspaces/workspace-1/workrooms/search'
+        && url.searchParams.get('q') === 'flight deck';
+    })).toBe(true);
+    const eventRequest = requests.find((request) => request.url === 'http://tower.test/api/v4/flightdeck-pg/workspaces/workspace-1/workrooms/room-1/events' && request.method === 'POST');
+    expect(eventRequest).toBeTruthy();
+    await expect(eventRequest?.json()).resolves.toMatchObject({
+      event_type: 'pr_ready',
+      target_type: 'pull_request',
+      payload: { pr_url: 'https://github.com/pete/example/pull/42' },
+    });
+    const linkRequest = requests.find((request) => request.url === 'http://tower.test/api/v4/flightdeck-pg/workspaces/workspace-1/workrooms/room-1/links' && request.method === 'POST');
+    expect(linkRequest).toBeTruthy();
+    await expect(linkRequest?.json()).resolves.toMatchObject({
+      link_type: 'pull_request',
+      external_url: 'https://github.com/pete/example/pull/42',
+      metadata: { head_sha: 'head123' },
+    });
+    const approvalRequest = requests.find((request) => request.url === 'http://tower.test/api/v4/flightdeck-pg/workspaces/workspace-1/workrooms/room-1/approvals' && request.method === 'POST');
+    expect(approvalRequest).toBeTruthy();
+    await expect(approvalRequest?.json()).resolves.toMatchObject({
+      action: 'production_merge',
+      metadata: {
+        repo: 'pete/example',
+        from_branch: 'main',
+        to_branch: 'deployed',
+        commit: 'merge123',
+        validation_evidence: ['bun test', 'bun run build'],
+        integration_autopilot_npub: 'npub1integrator',
+      },
+    });
+  });
 });
 
 function makeFlightDeckRouter(): {
@@ -508,6 +647,39 @@ function makeFlightDeckRouter(): {
       return new Response(new Uint8Array([1, 2, 3]), {
         headers: { 'content-type': 'image/png' },
       });
+    }
+    if (url.pathname === '/api/v4/flightdeck-pg/workspaces/workspace-1/workrooms' && method === 'GET') {
+      return Response.json({ workrooms: [{ id: 'room-1' }], next_cursor: null });
+    }
+    if (url.pathname === '/api/v4/flightdeck-pg/workspaces/workspace-1/workrooms/search' && method === 'GET') {
+      return Response.json({ workrooms: [{ id: 'room-1' }], next_cursor: null });
+    }
+    if (url.pathname === '/api/v4/flightdeck-pg/workspaces/workspace-1/workrooms/room-1' && method === 'GET') {
+      return Response.json({ workroom: { id: 'room-1', title: 'Room' }, participants: [], events: [], links: [] });
+    }
+    if (url.pathname === '/api/v4/flightdeck-pg/workspaces/workspace-1/workrooms/room-1/events' && method === 'GET') {
+      return Response.json({ events: [{ id: 'event-1' }], next_cursor: null });
+    }
+    if (url.pathname === '/api/v4/flightdeck-pg/workspaces/workspace-1/workrooms/room-1/events' && method === 'POST') {
+      return Response.json({ event: { id: 'event-2' } }, { status: 201 });
+    }
+    if (url.pathname === '/api/v4/flightdeck-pg/workspaces/workspace-1/workrooms/room-1/links' && method === 'GET') {
+      return Response.json({ links: [{ id: 'link-1' }], next_cursor: null });
+    }
+    if (url.pathname === '/api/v4/flightdeck-pg/workspaces/workspace-1/workrooms/room-1/links' && method === 'POST') {
+      return Response.json({ link: { id: 'link-2' } }, { status: 201 });
+    }
+    if (url.pathname === '/api/v4/flightdeck-pg/workspaces/workspace-1/workrooms/room-1/approvals' && method === 'POST') {
+      return Response.json({ approval: { id: 'approval-1' }, event: { id: 'event-approval' } }, { status: 201 });
+    }
+    if (url.pathname === '/api/v4/flightdeck-pg/workspaces/workspace-1/workrooms/room-1/production-merge/check' && method === 'POST') {
+      return Response.json({ approved: true });
+    }
+    if (url.pathname === '/api/v4/flightdeck-pg/workspaces/workspace-1/approvals' && method === 'GET') {
+      return Response.json({ approvals: [{ id: 'approval-1' }], next_cursor: null });
+    }
+    if (url.pathname === '/api/v4/flightdeck-pg/workspaces/workspace-1/approvals/approval-1' && method === 'GET') {
+      return Response.json({ approval: { id: 'approval-1', status: 'requested' } });
     }
 
     return Response.json({ error: `${method} ${url.pathname} was not mocked` }, { status: 404 });

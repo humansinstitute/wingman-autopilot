@@ -112,4 +112,154 @@ describe("GitHubApiClient", () => {
       authenticatedLogin: "pete",
     })).rejects.toBeInstanceOf(GitHubApiError);
   });
+
+  test("reads repository, branch, pull request, checks, status, and compare state", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      calls.push({ url, init });
+      if (url.endsWith("/repos/pete/example")) {
+        return Response.json({
+          name: "example",
+          owner: { login: "pete" },
+          clone_url: "https://github.com/pete/example.git",
+          html_url: "https://github.com/pete/example",
+          private: false,
+          default_branch: "main",
+        });
+      }
+      if (url.endsWith("/repos/pete/example/branches/main")) {
+        return Response.json({ name: "main", protected: true, commit: { sha: "base123" } });
+      }
+      if (url.includes("/pulls?")) {
+        expect(url).toContain("state=open");
+        expect(url).toContain("base=main");
+        return Response.json([
+          {
+            number: 42,
+            title: "Add importer",
+            state: "open",
+            html_url: "https://github.com/pete/example/pull/42",
+            draft: false,
+            mergeable: true,
+            mergeable_state: "clean",
+            base: { ref: "main" },
+            head: { ref: "agent/importer", sha: "head123", repo: { full_name: "pete/example" } },
+            user: { login: "wm21" },
+          },
+        ]);
+      }
+      if (url.endsWith("/pulls/42")) {
+        return Response.json({
+          number: 42,
+          title: "Add importer",
+          state: "open",
+          html_url: "https://github.com/pete/example/pull/42",
+          base: { ref: "main" },
+          head: { ref: "agent/importer", sha: "head123", repo: { full_name: "pete/example" } },
+        });
+      }
+      if (url.includes("/check-runs")) {
+        return Response.json({
+          total_count: 1,
+          check_runs: [{ name: "test", status: "completed", conclusion: "success", html_url: "https://checks.example" }],
+        });
+      }
+      if (url.endsWith("/commits/head123/status")) {
+        return Response.json({
+          state: "success",
+          total_count: 1,
+          statuses: [{ context: "ci", state: "success", target_url: "https://ci.example", description: "passed" }],
+        });
+      }
+      if (url.endsWith("/compare/main...agent%2Fimporter")) {
+        return Response.json({ status: "ahead", ahead_by: 2, behind_by: 0, total_commits: 2, html_url: "https://compare.example" });
+      }
+      return Response.json({ message: "not found" }, { status: 404 });
+    }) as typeof fetch;
+
+    const client = new GitHubApiClient("ghp_secret");
+    await expect(client.getRepository({ owner: "pete", repo: "example" })).resolves.toMatchObject({
+      owner: "pete",
+      name: "example",
+      defaultBranch: "main",
+    });
+    await expect(client.getBranch({ owner: "pete", repo: "example", branch: "main" })).resolves.toEqual({
+      name: "main",
+      protected: true,
+      sha: "base123",
+    });
+    await expect(client.listPullRequests({ owner: "pete", repo: "example", base: "main" })).resolves.toEqual([
+      expect.objectContaining({
+        number: 42,
+        baseBranch: "main",
+        headBranch: "agent/importer",
+        headSha: "head123",
+        mergeable: true,
+      }),
+    ]);
+    await expect(client.getPullRequest({ owner: "pete", repo: "example", number: 42 })).resolves.toMatchObject({ number: 42, headSha: "head123" });
+    await expect(client.getPullRequestChecks({ owner: "pete", repo: "example", ref: "head123" })).resolves.toEqual({
+      totalCount: 1,
+      checkRuns: [{ name: "test", status: "completed", conclusion: "success", htmlUrl: "https://checks.example" }],
+    });
+    await expect(client.getCombinedStatus({ owner: "pete", repo: "example", ref: "head123" })).resolves.toMatchObject({
+      state: "success",
+      totalCount: 1,
+    });
+    await expect(client.getCompare({ owner: "pete", repo: "example", base: "main", head: "agent/importer" })).resolves.toEqual({
+      status: "ahead",
+      aheadBy: 2,
+      behindBy: 0,
+      totalCommits: 2,
+      htmlUrl: "https://compare.example",
+    });
+
+    expect(calls.map((call) => call.init?.method)).toEqual(["GET", "GET", "GET", "GET", "GET", "GET", "GET"]);
+  });
+
+  test("merges pull requests and updates branch refs with explicit payloads", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      calls.push({ url, init });
+      if (url.endsWith("/pulls/42/merge")) {
+        expect(init?.method).toBe("PUT");
+        expect(JSON.parse(String(init?.body))).toEqual({
+          sha: "head123",
+          merge_method: "squash",
+          commit_title: "Merge PR 42",
+        });
+        return Response.json({ merged: true, sha: "merge123", message: "Pull Request successfully merged" });
+      }
+      if (url.endsWith("/git/refs/heads/deployed")) {
+        expect(init?.method).toBe("PATCH");
+        expect(JSON.parse(String(init?.body))).toEqual({ sha: "merge123", force: false });
+        return Response.json({ ref: "refs/heads/deployed", object: { sha: "merge123" } });
+      }
+      return Response.json({ message: "not found" }, { status: 404 });
+    }) as typeof fetch;
+
+    const client = new GitHubApiClient("ghp_secret");
+    await expect(client.mergePullRequest({
+      owner: "pete",
+      repo: "example",
+      number: 42,
+      sha: "head123",
+      mergeMethod: "squash",
+      commitTitle: "Merge PR 42",
+    })).resolves.toEqual({
+      merged: true,
+      sha: "merge123",
+      message: "Pull Request successfully merged",
+    });
+    await expect(client.updateBranchRef({
+      owner: "pete",
+      repo: "example",
+      branch: "deployed",
+      sha: "merge123",
+    })).resolves.toEqual({ ref: "refs/heads/deployed", sha: "merge123" });
+
+    expect(calls).toHaveLength(2);
+  });
 });

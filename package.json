@@ -12,6 +12,7 @@
     "cli:delegate-sessions": "bun clis/delegate-sessions.ts",
     "cli:sessions": "bun clis/sessions.ts",
     "cli:session-tags": "bun clis/session-tags.ts",
+    "cli:workroom-integrator": "bun clis/workroom-integrator.ts",
     "cli:sign": "bun clis/wingman-sign.ts",
     "cli:wingman": "bun clis/wingman.ts",
     "cli:export-bot-key": "bun clis/export-bot-key.ts",

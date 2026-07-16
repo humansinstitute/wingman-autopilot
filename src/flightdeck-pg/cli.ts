@@ -106,6 +106,64 @@ async function dispatch(client: FlightDeckPgClient, args: string[], flags: FlagM
   if (area === 'reactions' && action === 'create') return await client.createReaction(workspaceId, requiredFlag(flags, '--target', 'target'), requiredFlag(flags, '--emoji', 'emoji'));
   if (area === 'events' && action === 'poll') return await client.pollEvents(workspaceId, stringFlag(flags, '--since'), limit);
   if (area === 'members' && action === 'list') return await client.listMembers(workspaceId);
+  if (area === 'workrooms' && action === 'list') return await client.listWorkrooms(workspaceId, {
+    scopeId: valueFromFlagOrDefault(flags, defaults, '--scope'),
+    channelId: valueFromFlagOrDefault(flags, defaults, '--channel'),
+    status: stringFlag(flags, '--status'),
+    limit,
+  });
+  if (area === 'workrooms' && action === 'search') return await client.searchWorkrooms(workspaceId, {
+    query: requiredFlag(flags, '--query', 'query'),
+    scopeId: valueFromFlagOrDefault(flags, defaults, '--scope'),
+    channelId: valueFromFlagOrDefault(flags, defaults, '--channel'),
+    limit,
+  });
+  if (area === 'workroom' && action === 'show') return await client.showWorkroom(workspaceId, requiredArg(id, 'workroom id'), limit);
+  if (area === 'workroom' && action === 'events') return await client.listWorkroomEvents(workspaceId, requiredArg(id, 'workroom id'), limit);
+  if (area === 'workroom' && action === 'event') return await client.appendWorkroomEvent(workspaceId, requiredArg(id, 'workroom id'), {
+    eventType: requiredFlag(flags, '--type', 'event type'),
+    title: stringFlag(flags, '--title'),
+    body: stringFlag(flags, '--body'),
+    targetType: stringFlag(flags, '--target-type'),
+    targetRef: stringFlag(flags, '--target-ref'),
+    visibility: stringFlag(flags, '--visibility'),
+    payload: readOptionalJsonFile(flags, '--payload-file'),
+  });
+  if (area === 'workroom' && action === 'links') return await client.listWorkroomLinks(workspaceId, requiredArg(id, 'workroom id'), limit);
+  if (area === 'workroom' && action === 'link') return await client.appendWorkroomLink(workspaceId, requiredArg(id, 'workroom id'), {
+    linkType: requiredFlag(flags, '--link-type', 'link type'),
+    targetType: requiredFlag(flags, '--target-type', 'target type'),
+    targetId: stringFlag(flags, '--target-id'),
+    externalUrl: stringFlag(flags, '--external-url'),
+    label: stringFlag(flags, '--label'),
+    status: stringFlag(flags, '--status'),
+    metadata: readOptionalJsonFile(flags, '--metadata-file'),
+  });
+  if (area === 'workroom' && action === 'approval-request') return await client.requestProductionMergeApproval(workspaceId, requiredArg(id, 'workroom id'), {
+    repo: stringFlag(flags, '--repo'),
+    fromBranch: stringFlag(flags, '--from-branch'),
+    toBranch: requiredFlag(flags, '--to-branch', 'production branch'),
+    commit: requiredFlag(flags, '--commit', 'commit'),
+    previewUrl: stringFlag(flags, '--preview-url'),
+    validationEvidence: commaListFlag(flags, '--validation'),
+    title: stringFlag(flags, '--title'),
+    summary: stringFlag(flags, '--summary'),
+    reviewerNpub: stringFlag(flags, '--reviewer-npub'),
+    metadata: readOptionalJsonFile(flags, '--metadata-file'),
+  });
+  if (area === 'workroom' && action === 'production-merge-check') return await client.checkProductionMergeApproval(workspaceId, requiredArg(id, 'workroom id'), {
+    repo: stringFlag(flags, '--repo'),
+    toBranch: requiredFlag(flags, '--to-branch', 'production branch'),
+    commit: requiredFlag(flags, '--commit', 'commit'),
+  });
+  if (area === 'approvals' && action === 'list') return await client.listApprovals(workspaceId, {
+    targetType: stringFlag(flags, '--target-type'),
+    targetId: stringFlag(flags, '--target-id'),
+    action: stringFlag(flags, '--action'),
+    status: stringFlag(flags, '--status'),
+    limit,
+  });
+  if (area === 'approval' && action === 'show') return await client.showApproval(workspaceId, requiredArg(id, 'approval id'));
   throw new Error(`Unknown flightdeck command: ${[area, action, id].filter(Boolean).join(' ')}`);
 }
 
@@ -148,6 +206,17 @@ function commandUsesDispatchContext(args: string[]): boolean {
     'reactions:create',
     'events:poll',
     'members:list',
+    'workrooms:list',
+    'workrooms:search',
+    'workroom:show',
+    'workroom:events',
+    'workroom:event',
+    'workroom:links',
+    'workroom:link',
+    'workroom:approval-request',
+    'workroom:production-merge-check',
+    'approvals:list',
+    'approval:show',
   ].includes(`${area}:${action}`);
 }
 
@@ -162,6 +231,7 @@ function hasAllRequiredDispatchFlags(args: string[], flags: FlagMap): boolean {
   if (['doc:download'].includes(`${area}:${action}`)) return Boolean(id);
   if (area === 'doc-download') return Boolean(action);
   if (['task:create', 'doc:create', 'file:upload', 'audio:create'].includes(`${area}:${action}`)) return Boolean(stringFlag(flags, '--channel'));
+  if (['workroom:show', 'workroom:events', 'workroom:event', 'workroom:links', 'workroom:link', 'workroom:approval-request', 'workroom:production-merge-check', 'approval:show'].includes(`${area}:${action}`)) return Boolean(id);
   return true;
 }
 
@@ -252,6 +322,17 @@ function readJsonFile(path: string): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
+function readOptionalJsonFile(flags: FlagMap, name: string): Record<string, unknown> | null {
+  const path = stringFlag(flags, name);
+  return path ? readJsonFile(path) : null;
+}
+
+function commaListFlag(flags: FlagMap, name: string): string[] {
+  const value = stringFlag(flags, name);
+  if (!value) return [];
+  return value.split(',').map((entry) => entry.trim()).filter(Boolean);
+}
+
 function readTextFile(path: string): string {
   return readFileSync(path, 'utf8');
 }
@@ -291,5 +372,9 @@ Usage:
   bun clis/wingman.ts flightdeck chat reply --workspace <workspace-id> --channel <channel-id> --thread <thread-id> --body "..." --json
   bun clis/wingman.ts flightdeck doc create --workspace <workspace-id> --channel <channel-id> --title "..." --body-file file.md --json
   bun clis/wingman.ts flightdeck doc download <doc-ref> --workspace <workspace-id> --out ./tmp/design.md --json
-  bun clis/wingman.ts flightdeck file upload --workspace <workspace-id> --channel <channel-id> --path ./artifact.png --json`;
+  bun clis/wingman.ts flightdeck file upload --workspace <workspace-id> --channel <channel-id> --path ./artifact.png --json
+  bun clis/wingman.ts flightdeck workroom show <workroom-id> --workspace <workspace-id> --json
+  bun clis/wingman.ts flightdeck workroom event <workroom-id> --workspace <workspace-id> --type pr_ready --title "PR ready" --json
+  bun clis/wingman.ts flightdeck workroom link <workroom-id> --workspace <workspace-id> --link-type pull_request --target-type pull_request --external-url https://github.com/org/repo/pull/1 --json
+  bun clis/wingman.ts flightdeck workroom approval-request <workroom-id> --workspace <workspace-id> --repo org/repo --to-branch deployed --commit abc123 --json`;
 }

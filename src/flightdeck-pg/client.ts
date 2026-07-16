@@ -367,6 +367,128 @@ export class FlightDeckPgClient {
     return await fetchFlightDeckPgWorkspaceMembers(this.base({ workspaceId }));
   }
 
+  async listWorkrooms(workspaceId: string, input: { scopeId?: string | null; channelId?: string | null; status?: string | null; limit?: number } = {}) {
+    return await this.signedJson('GET', `/api/v4/flightdeck-pg/workspaces/${encodeURIComponent(workspaceId)}/workrooms`, {
+      scope_id: input.scopeId,
+      channel_id: input.channelId,
+      status: input.status,
+      limit: input.limit,
+    });
+  }
+
+  async searchWorkrooms(workspaceId: string, input: { query?: string | null; scopeId?: string | null; channelId?: string | null; limit?: number } = {}) {
+    return await this.signedJson('GET', `/api/v4/flightdeck-pg/workspaces/${encodeURIComponent(workspaceId)}/workrooms/search`, {
+      q: input.query,
+      scope_id: input.scopeId,
+      channel_id: input.channelId,
+      limit: input.limit,
+    });
+  }
+
+  async showWorkroom(workspaceId: string, workroomId: string, limit?: number) {
+    return await this.signedJson('GET', `/api/v4/flightdeck-pg/workspaces/${encodeURIComponent(workspaceId)}/workrooms/${encodeURIComponent(workroomId)}`, { limit });
+  }
+
+  async listWorkroomEvents(workspaceId: string, workroomId: string, limit?: number) {
+    return await this.signedJson('GET', `/api/v4/flightdeck-pg/workspaces/${encodeURIComponent(workspaceId)}/workrooms/${encodeURIComponent(workroomId)}/events`, { limit });
+  }
+
+  async appendWorkroomEvent(workspaceId: string, workroomId: string, input: {
+    eventType: string;
+    title?: string | null;
+    body?: string | null;
+    targetType?: string | null;
+    targetRef?: string | null;
+    visibility?: string | null;
+    payload?: Record<string, unknown> | null;
+  }) {
+    return await this.signedJson('POST', `/api/v4/flightdeck-pg/workspaces/${encodeURIComponent(workspaceId)}/workrooms/${encodeURIComponent(workroomId)}/events`, undefined, {
+      event_type: input.eventType,
+      ...(input.title ? { title: input.title } : {}),
+      ...(input.body ? { body: input.body } : {}),
+      ...(input.targetType ? { target_type: input.targetType } : {}),
+      ...(input.targetRef ? { target_ref: input.targetRef } : {}),
+      ...(input.visibility ? { visibility: input.visibility } : {}),
+      ...(input.payload ? { payload: input.payload } : {}),
+    });
+  }
+
+  async listWorkroomLinks(workspaceId: string, workroomId: string, limit?: number) {
+    return await this.signedJson('GET', `/api/v4/flightdeck-pg/workspaces/${encodeURIComponent(workspaceId)}/workrooms/${encodeURIComponent(workroomId)}/links`, { limit });
+  }
+
+  async appendWorkroomLink(workspaceId: string, workroomId: string, input: {
+    linkType: string;
+    targetType: string;
+    targetId?: string | null;
+    externalUrl?: string | null;
+    label?: string | null;
+    status?: string | null;
+    metadata?: Record<string, unknown> | null;
+  }) {
+    return await this.signedJson('POST', `/api/v4/flightdeck-pg/workspaces/${encodeURIComponent(workspaceId)}/workrooms/${encodeURIComponent(workroomId)}/links`, undefined, {
+      link_type: input.linkType,
+      target_type: input.targetType,
+      ...(input.targetId ? { target_id: input.targetId } : {}),
+      ...(input.externalUrl ? { external_url: input.externalUrl } : {}),
+      ...(input.label ? { label: input.label } : {}),
+      ...(input.status ? { status: input.status } : {}),
+      ...(input.metadata ? { metadata: input.metadata } : {}),
+    });
+  }
+
+  async listApprovals(workspaceId: string, input: { targetType?: string | null; targetId?: string | null; action?: string | null; status?: string | null; limit?: number } = {}) {
+    return await this.signedJson('GET', `/api/v4/flightdeck-pg/workspaces/${encodeURIComponent(workspaceId)}/approvals`, {
+      target_type: input.targetType,
+      target_id: input.targetId,
+      action: input.action,
+      status: input.status,
+      limit: input.limit,
+    });
+  }
+
+  async showApproval(workspaceId: string, approvalId: string) {
+    return await this.signedJson('GET', `/api/v4/flightdeck-pg/workspaces/${encodeURIComponent(workspaceId)}/approvals/${encodeURIComponent(approvalId)}`);
+  }
+
+  async requestProductionMergeApproval(workspaceId: string, workroomId: string, input: {
+    repo?: string | null;
+    fromBranch?: string | null;
+    toBranch: string;
+    commit: string;
+    previewUrl?: string | null;
+    validationEvidence?: string[];
+    title?: string | null;
+    summary?: string | null;
+    reviewerNpub?: string | null;
+    metadata?: Record<string, unknown> | null;
+  }) {
+    const metadata = {
+      ...(input.metadata ?? {}),
+      ...(input.repo ? { repo: input.repo } : {}),
+      ...(input.fromBranch ? { from_branch: input.fromBranch } : {}),
+      to_branch: input.toBranch,
+      commit: input.commit,
+      ...(input.previewUrl ? { preview_url: input.previewUrl } : {}),
+      ...(input.validationEvidence?.length ? { validation_evidence: input.validationEvidence } : {}),
+    };
+    return await this.signedJson('POST', `/api/v4/flightdeck-pg/workspaces/${encodeURIComponent(workspaceId)}/workrooms/${encodeURIComponent(workroomId)}/approvals`, undefined, {
+      action: 'production_merge',
+      ...(input.title ? { title: input.title } : {}),
+      ...(input.summary ? { summary: input.summary } : {}),
+      ...(input.reviewerNpub ? { reviewer_npub: input.reviewerNpub } : {}),
+      metadata,
+    });
+  }
+
+  async checkProductionMergeApproval(workspaceId: string, workroomId: string, input: { repo?: string | null; toBranch: string; commit: string }) {
+    return await this.signedJson('POST', `/api/v4/flightdeck-pg/workspaces/${encodeURIComponent(workspaceId)}/workrooms/${encodeURIComponent(workroomId)}/production-merge/check`, undefined, {
+      ...(input.repo ? { repo: input.repo } : {}),
+      to_branch: input.toBranch,
+      commit: input.commit,
+    });
+  }
+
   private base(extra: { workspaceId: string; taskId?: string }) {
     return {
       backendBaseUrl: this.config.towerUrl,
