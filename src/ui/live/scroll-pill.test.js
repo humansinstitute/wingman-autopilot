@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
 import {
+  findNextPromptRectIndex,
   findPreviousPromptRectIndex,
   isMessageRectAboveView,
   isMessageRectBelowView,
@@ -77,30 +78,55 @@ describe("last prompt pill visibility helpers", () => {
     expect(findPreviousPromptRectIndex(promptRects, 150)).toBe(0);
   });
 
+  test("finds the nearest prompt below the current scroll anchor", () => {
+    const promptRects = [
+      { top: -300, bottom: -240 },
+      { top: 142, bottom: 210 },
+      { top: 430, bottom: 500 },
+      { top: 900, bottom: 970 },
+    ];
+
+    expect(findNextPromptRectIndex(promptRects, 150)).toBe(2);
+  });
+
+  test("does not select the next prompt already aligned to the scroll anchor", () => {
+    const promptRects = [
+      { top: 150, bottom: 210 },
+      { top: 420, bottom: 480 },
+    ];
+
+    expect(findNextPromptRectIndex(promptRects, 150)).toBe(1);
+  });
+
   test("mounts the last prompt pill in the composer control row", () => {
     expect(source).toContain("const pillParent = parent;");
     expect(source).toContain("pillParent.appendChild(button);");
     expect(source).not.toContain("const pillParent = document.body || parent;");
   });
 
-  test("assigns left and right dock classes to scroll pills", () => {
-    expect(source).toContain('button.className = "wm-scroll-pill wm-scroll-pill--last-prompt";');
-    expect(source).toContain('button.className = "wm-scroll-pill wm-scroll-pill--scroll-bottom";');
+  test("assigns dock classes to scroll pills", () => {
+    expect(source).toContain('className: "wm-scroll-pill wm-scroll-pill--last-prompt"');
+    expect(source).toContain('className: "wm-scroll-pill wm-scroll-pill--next-prompt"');
+    expect(source).toContain('className: "wm-scroll-pill wm-scroll-pill--scroll-bottom"');
   });
 
-  test("uses title-case labels for the two scroll pills", () => {
-    expect(source).toContain('button.textContent = "Last Prompt";');
-    expect(source).toContain('button.textContent = "Scroll to End";');
+  test("uses title-case labels for the scroll pills", () => {
+    expect(source).toContain('text: "Last Prompt"');
+    expect(source).toContain('text: "Next Prompt"');
+    expect(source).toContain('text: "Scroll to End"');
   });
 
-  test("passes the conversation element to both pill attachments", () => {
+  test("passes the conversation element to all pill attachments in display order", () => {
+    expect(liveViewSource).toContain("scrollPill.attachLastPromptPill(composerEl, scrollTarget, conversationEl);\n      scrollPill.attachNextPromptPill(composerEl, scrollTarget, conversationEl);\n      scrollPill.attachScrollPill(composerEl, scrollTarget, conversationEl);");
+    expect(liveViewSource).toContain("scrollPill.attachNextPromptPill(composerEl, scrollTarget, conversationEl);");
     expect(liveViewSource).toContain("scrollPill.attachScrollPill(composerEl, scrollTarget, conversationEl);");
     expect(liveViewSource).toContain("scrollPill.attachLastPromptPill(composerEl, scrollTarget, conversationEl);");
   });
 
-  test("reveals both scroll pills for three seconds after scroll activity", () => {
+  test("reveals scroll pills for three seconds after scroll activity", () => {
     expect(source).toContain("const PILL_VISIBLE_DURATION_MS = 3000;");
     expect(source).toContain("function revealScrollPillsForDuration()");
+    expect(source).toContain("revealPillForDuration(nextPromptPillState);");
     expect(source).toContain("function handleScrollActivity()");
     expect(source).toContain("setTimeout(() =>");
     expect(source).toContain("}, PILL_VISIBLE_DURATION_MS);");
@@ -113,12 +139,21 @@ describe("last prompt pill visibility helpers", () => {
     expect(source).not.toContain("scrollToElementAtTop(lastPromptPillState.scrollTarget, latestMessage);");
   });
 
-  test("centers the two pills in the left and right halves", () => {
+  test("next prompt click targets the next prompt below the viewport", () => {
+    expect(source).toContain("function getNextUserMessageBelowScroll(conversationElement, scrollElement)");
+    expect(source).toContain("findNextPromptRectIndex(");
+    expect(source).toContain("scrollToElementAtTop(nextPromptPillState.scrollTarget, nextMessage);");
+  });
+
+  test("keeps last and scroll pills in place with next prompt centered", () => {
     const lastPromptRule = styles.match(/\.wm-scroll-pill--last-prompt\s*\{(?<body>[^}]+)\}/);
+    const nextPromptRule = styles.match(/\.wm-scroll-pill--next-prompt\s*\{(?<body>[^}]+)\}/);
     const scrollBottomRule = styles.match(/\.wm-scroll-pill--scroll-bottom\s*\{(?<body>[^}]+)\}/);
 
     expect(lastPromptRule?.groups?.body).toContain("left: 25%;");
     expect(lastPromptRule?.groups?.body).toContain("transform: translateX(-50%);");
+    expect(nextPromptRule?.groups?.body).toContain("left: 50%;");
+    expect(nextPromptRule?.groups?.body).toContain("transform: translateX(-50%);");
     expect(scrollBottomRule?.groups?.body).toContain("left: 75%;");
     expect(scrollBottomRule?.groups?.body).toContain("transform: translateX(-50%);");
   });

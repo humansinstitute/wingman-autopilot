@@ -1,8 +1,8 @@
 /**
  * Floating chat scroll pill indicators.
  *
- * Shows small pills above the composer for jumping to the previous user prompt
- * and scrolling back to the bottom.
+ * Shows small pills above the composer for jumping between user prompts and
+ * scrolling back to the bottom.
  */
 
 const THRESHOLD = 50;
@@ -76,6 +76,7 @@ function createPillState() {
 
 const bottomPillState = createPillState();
 const lastPromptPillState = createPillState();
+const nextPromptPillState = createPillState();
 
 function resolveListenerTarget(el) {
   if (el === document.body || el === document.documentElement || el === document.scrollingElement) {
@@ -188,6 +189,20 @@ export function findPreviousPromptRectIndex(messageRects, scrollAnchorTop, gapPx
   return -1;
 }
 
+export function findNextPromptRectIndex(messageRects, scrollAnchorTop, gapPx = PROMPT_SCROLL_GAP_PX) {
+  if (!Array.isArray(messageRects) || !Number.isFinite(scrollAnchorTop)) {
+    return -1;
+  }
+  const boundaryTop = scrollAnchorTop + gapPx;
+  for (let index = 0; index < messageRects.length; index += 1) {
+    const top = Number(messageRects[index]?.top);
+    if (Number.isFinite(top) && top > boundaryTop) {
+      return index;
+    }
+  }
+  return -1;
+}
+
 function getScrollAnchorTop(scrollElement) {
   if (!scrollElement) {
     return Number.NaN;
@@ -202,6 +217,18 @@ function getPreviousUserMessageAboveScroll(conversationElement, scrollElement) {
     return null;
   }
   const targetIndex = findPreviousPromptRectIndex(
+    messages.map((message) => message.getBoundingClientRect()),
+    getScrollAnchorTop(scrollElement),
+  );
+  return targetIndex >= 0 ? messages[targetIndex] : null;
+}
+
+function getNextUserMessageBelowScroll(conversationElement, scrollElement) {
+  const messages = getUserMessages(conversationElement);
+  if (!messages.length || !scrollElement) {
+    return null;
+  }
+  const targetIndex = findNextPromptRectIndex(
     messages.map((message) => message.getBoundingClientRect()),
     getScrollAnchorTop(scrollElement),
   );
@@ -236,18 +263,33 @@ function revealScrollPillsForDuration() {
   revealPillForDuration(bottomPillState);
   if (hasAnyUserMessage(lastPromptPillState)) {
     revealPillForDuration(lastPromptPillState);
+    revealPillForDuration(nextPromptPillState);
   } else {
     setPillVisible(lastPromptPillState, false);
+    setPillVisible(nextPromptPillState, false);
   }
 }
 
 function fadeScrollPills() {
   setPillVisible(bottomPillState, false);
   setPillVisible(lastPromptPillState, false);
+  setPillVisible(nextPromptPillState, false);
 }
 
 function handleScrollActivity() {
   revealScrollPillsForDuration();
+}
+
+function createPillButton({ className, text, ariaLabel, testId }) {
+  const button = document.createElement("button");
+  button.className = className;
+  button.textContent = text;
+  button.setAttribute("aria-label", ariaLabel);
+  button.dataset.testid = testId;
+  button.dataset.visible = "false";
+  button.setAttribute("aria-hidden", "true");
+  button.tabIndex = -1;
+  return button;
 }
 
 /**
@@ -267,14 +309,12 @@ export function attachScrollPill(parent, scrollElement, conversationElement = nu
   bottomPillState.scrollTarget = scrollElement;
   bottomPillState.conversationElement = resolveConversationElement(scrollElement, conversationElement);
 
-  const button = document.createElement("button");
-  button.className = "wm-scroll-pill wm-scroll-pill--scroll-bottom";
-  button.textContent = "Scroll to End";
-  button.setAttribute("aria-label", "Scroll to end");
-  button.dataset.testid = "scroll-to-bottom";
-  button.dataset.visible = "false";
-  button.setAttribute("aria-hidden", "true");
-  button.tabIndex = -1;
+  const button = createPillButton({
+    className: "wm-scroll-pill wm-scroll-pill--scroll-bottom",
+    text: "Scroll to End",
+    ariaLabel: "Scroll to end",
+    testId: "scroll-to-bottom",
+  });
 
   button.addEventListener("click", () => {
     if (!bottomPillState.scrollTarget) return;
@@ -314,14 +354,12 @@ export function attachLastPromptPill(parent, scrollElement, conversationElement 
   lastPromptPillState.scrollTarget = scrollElement;
   lastPromptPillState.conversationElement = resolveConversationElement(scrollElement, conversationElement);
 
-  const button = document.createElement("button");
-  button.className = "wm-scroll-pill wm-scroll-pill--last-prompt";
-  button.textContent = "Last Prompt";
-  button.setAttribute("aria-label", "Scroll to last prompt");
-  button.dataset.testid = "scroll-to-last-prompt";
-  button.dataset.visible = "false";
-  button.setAttribute("aria-hidden", "true");
-  button.tabIndex = -1;
+  const button = createPillButton({
+    className: "wm-scroll-pill wm-scroll-pill--last-prompt",
+    text: "Last Prompt",
+    ariaLabel: "Scroll to last prompt",
+    testId: "scroll-to-last-prompt",
+  });
 
   button.addEventListener("click", () => {
     lastPromptPillState.conversationElement = resolveConversationElement(
@@ -359,6 +397,7 @@ export function attachLastPromptPill(parent, scrollElement, conversationElement 
       if (!lastPromptPillState.pillEl) return;
       if (!hasAnyUserMessage(lastPromptPillState)) {
         setPillVisible(lastPromptPillState, false);
+        setPillVisible(nextPromptPillState, false);
       }
     });
     lastPromptPillState.mutationObserver.observe(lastPromptPillState.conversationElement, {
@@ -370,12 +409,64 @@ export function attachLastPromptPill(parent, scrollElement, conversationElement 
   lastPromptPillState.pillEl = button;
 }
 
+/**
+ * Create and attach a "next prompt" pill between the prompt and bottom pills.
+ *
+ * @param {HTMLElement} parent  - fallback element to append the pill into
+ * @param {HTMLElement} scrollElement - the scrollable element to watch
+ * @param {HTMLElement} conversationElement - optional conversation wrapper
+ */
+export function attachNextPromptPill(parent, scrollElement, conversationElement = null) {
+  cleanupPillState(nextPromptPillState);
+
+  if (!parent || !scrollElement) return;
+
+  nextPromptPillState.scrollTarget = scrollElement;
+  nextPromptPillState.conversationElement = resolveConversationElement(scrollElement, conversationElement);
+
+  const button = createPillButton({
+    className: "wm-scroll-pill wm-scroll-pill--next-prompt",
+    text: "Next Prompt",
+    ariaLabel: "Scroll to next prompt",
+    testId: "scroll-to-next-prompt",
+  });
+
+  button.addEventListener("click", () => {
+    nextPromptPillState.conversationElement = resolveConversationElement(
+      nextPromptPillState.scrollTarget,
+      nextPromptPillState.conversationElement,
+    );
+    const nextMessage = getNextUserMessageBelowScroll(
+      nextPromptPillState.conversationElement,
+      nextPromptPillState.scrollTarget,
+    );
+    if (!nextMessage) {
+      return;
+    }
+    scrollToElementAtTop(nextPromptPillState.scrollTarget, nextMessage);
+    revealScrollPillsForDuration();
+  });
+
+  const pillParent = parent;
+  pillParent.appendChild(button);
+  nextPromptPillState.pillEl = button;
+
+  nextPromptPillState.scrollListener = () => {
+    if (!nextPromptPillState.scrollTarget || !nextPromptPillState.pillEl) return;
+    handleScrollActivity();
+  };
+  nextPromptPillState.scrollListenerTarget = resolveListenerTarget(scrollElement);
+  nextPromptPillState.scrollListenerTarget.addEventListener("scroll", nextPromptPillState.scrollListener, { passive: true });
+
+  nextPromptPillState.pillEl = button;
+}
+
 /** Show the scroll pills temporarily (call when new content arrives and user is scrolled up). */
 export function show() {
   revealScrollPillsForDuration();
 }
 
-/** Hide both scroll pills. */
+/** Hide all scroll pills. */
 export function hide() {
   fadeScrollPills();
 }
@@ -402,4 +493,5 @@ export function scrollLastMessageToTop(scrollElement, conversationElement) {
 export function cleanup() {
   cleanupPillState(bottomPillState);
   cleanupPillState(lastPromptPillState);
+  cleanupPillState(nextPromptPillState);
 }

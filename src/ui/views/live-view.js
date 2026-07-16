@@ -771,8 +771,9 @@ export function initLiveView(deps) {
       const docScroll = document.scrollingElement || document.documentElement || document.body;
       const scrollTarget = splitScroll || docScroll;
       const conversationEl = scrollTarget?.querySelector?.(".wm-live-conversation") || document.querySelector(".wm-live-conversation");
-      scrollPill.attachScrollPill(composerEl, scrollTarget, conversationEl);
       scrollPill.attachLastPromptPill(composerEl, scrollTarget, conversationEl);
+      scrollPill.attachNextPromptPill(composerEl, scrollTarget, conversationEl);
+      scrollPill.attachScrollPill(composerEl, scrollTarget, conversationEl);
     });
   };
 

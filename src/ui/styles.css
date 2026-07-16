@@ -5555,7 +5555,7 @@ body[data-keyboard-open="true"] .wm-composer-shell {
 .wm-scroll-pill {
   position: absolute;
   bottom: 100%;
-  max-width: calc(50% - 1.5rem);
+  max-width: calc(33.333% - 1rem);
   margin-bottom: 0.5rem;
   padding: 0.3rem 1rem;
   font-size: 0.8rem;
@@ -5583,6 +5583,11 @@ body[data-keyboard-open="true"] .wm-composer-shell {
 
 .wm-scroll-pill--last-prompt {
   left: 25%;
+  transform: translateX(-50%);
+}
+
+.wm-scroll-pill--next-prompt {
+  left: 50%;
   transform: translateX(-50%);
 }
 
