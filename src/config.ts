@@ -5,6 +5,7 @@ import {
   isAgentCliAutoUpdateEnabled,
 } from "./agent-cli-update-policy";
 import { AGENT_TYPES, DEFAULT_AGENT_TYPE, type AgentType } from "./agent-types";
+import { instanceSettingsService } from "./settings/instance-settings-service";
 
 export type { AgentType } from "./agent-types";
 
@@ -374,18 +375,22 @@ function createDefaultAgents(
 }
 
 export const loadConfig = (): WingmanConfig => {
-  const agentLaunchConfig = resolveAgentLaunchConfig();
+  const effectiveEnv: ConfigEnvironment = {
+    ...Bun.env,
+    ...instanceSettingsService.buildRuntimeEnv(Bun.env),
+  };
+  const agentLaunchConfig = resolveAgentLaunchConfig(effectiveEnv);
   const port = sanitizeInteger(Bun.env.PORT, DEFAULT_PORT);
-  const agentPortStart = sanitizeInteger(Bun.env.AGENT_PORTS, DEFAULT_AGENT_PORTS);
-  const agentPortMax = sanitizeInteger(Bun.env.AGENT_MAX, DEFAULT_AGENT_MAX);
-  const defaultDirectoryInput = Bun.env.DIRECTORY_DEF ?? DEFAULT_DIRECTORY;
+  const agentPortStart = sanitizeInteger(effectiveEnv.AGENT_PORTS, DEFAULT_AGENT_PORTS);
+  const agentPortMax = sanitizeInteger(effectiveEnv.AGENT_MAX, DEFAULT_AGENT_MAX);
+  const defaultDirectoryInput = effectiveEnv.DIRECTORY_DEF ?? DEFAULT_DIRECTORY;
   const defaultWorkingDirectory = normaliseDirectory(defaultDirectoryInput, process.cwd());
-  const agentDispatchDirectoryInput = readWingmanOverrideEnvValue(Bun.env, "AGENT_DISPATCH_DIRECTORY");
+  const agentDispatchDirectoryInput = readWingmanOverrideEnvValue(effectiveEnv, "AGENT_DISPATCH_DIRECTORY");
   const agentDispatchWorkingDirectory = normaliseDirectory(
     agentDispatchDirectoryInput ?? defaultDirectoryInput,
     defaultWorkingDirectory,
   );
-  const allowedDirectoryInput = Bun.env.FOLDERACCESS;
+  const allowedDirectoryInput = effectiveEnv.FOLDERACCESS;
   const configuredAllowedDirectories = allowedDirectoryInput
     ? allowedDirectoryInput
         .split(",")
@@ -400,9 +405,9 @@ export const loadConfig = (): WingmanConfig => {
       agentDispatchWorkingDirectory,
     ]),
   );
-  const hostUrlBase = parseEnvironmentString(Bun.env.HOST_URL_BASE, DEFAULT_HOST_URL_BASE);
-  const allowedOrigins = Bun.env.AGENTAPI_ALLOWED_ORIGINS ?? DEFAULT_ALLOWED_ORIGINS;
-  const allowedHosts = Bun.env.AGENTAPI_ALLOWED_HOSTS ?? DEFAULT_ALLOWED_HOSTS;
+  const hostUrlBase = parseEnvironmentString(effectiveEnv.HOST_URL_BASE, DEFAULT_HOST_URL_BASE);
+  const allowedOrigins = effectiveEnv.AGENTAPI_ALLOWED_ORIGINS ?? DEFAULT_ALLOWED_ORIGINS;
+  const allowedHosts = effectiveEnv.AGENTAPI_ALLOWED_HOSTS ?? DEFAULT_ALLOWED_HOSTS;
   const agentStatusPollIntervalMs = clampPositiveInteger(
     sanitizeInteger(Bun.env.AGENT_STATUS_POLL_INTERVAL_MS, DEFAULT_STATUS_POLL_INTERVAL_MS),
     250,
@@ -415,12 +420,12 @@ export const loadConfig = (): WingmanConfig => {
     sanitizeInteger(Bun.env.AGENT_STATUS_POLL_TIMEOUT_MS, DEFAULT_STATUS_POLL_TIMEOUT_MS),
     1000,
   );
-  const connectRelays = parseRelayList(Bun.env.CONNECT_RELAYS);
+  const connectRelays = parseRelayList(effectiveEnv.CONNECT_RELAYS);
 
   // Subdomain proxy configuration
-  const subdomainBaseDomain = readWingmanOverrideEnvValue(Bun.env, "SUBDOMAIN_BASE_DOMAIN");
+  const subdomainBaseDomain = readWingmanOverrideEnvValue(effectiveEnv, "SUBDOMAIN_BASE_DOMAIN");
   const subdomainProxyEnabled = subdomainBaseDomain !== null &&
-    readWingmanOverrideEnvValue(Bun.env, "SUBDOMAIN_PROXY_ENABLED") !== "false";
+    readWingmanOverrideEnvValue(effectiveEnv, "SUBDOMAIN_PROXY_ENABLED") !== "false";
 
   const sseKeepaliveIntervalMs = clampPositiveInteger(
     sanitizeInteger(Bun.env.SSE_KEEPALIVE_INTERVAL_MS, DEFAULT_SSE_KEEPALIVE_INTERVAL_MS),
@@ -428,14 +433,14 @@ export const loadConfig = (): WingmanConfig => {
   );
 
   // Default agent for AI features
-  const defaultAgentInput = Bun.env.DEFAULT_AGENT?.trim().toLowerCase();
+  const defaultAgentInput = effectiveEnv.DEFAULT_AGENT?.trim().toLowerCase();
   const defaultAgent: AgentType = defaultAgentInput && AGENT_TYPES.includes(defaultAgentInput as AgentType)
     ? (defaultAgentInput as AgentType)
     : DEFAULT_AGENT_TYPE;
   console.log(`[Config] Default agent: ${defaultAgent}${defaultAgentInput && defaultAgentInput !== defaultAgent ? ` (DEFAULT_AGENT="${defaultAgentInput}" was invalid)` : ""}`);
-  const codexExtraArgs = resolveCodexExtraArgs(Bun.env.GLOVES);
-  const claudeExtraArgs = resolveClaudeExtraArgs(Bun.env.GLOVES);
-  const agents = createDefaultAgents(Bun.env, agentLaunchConfig.agentApiBinary);
+  const codexExtraArgs = resolveCodexExtraArgs(effectiveEnv.GLOVES);
+  const claudeExtraArgs = resolveClaudeExtraArgs(effectiveEnv.GLOVES);
+  const agents = createDefaultAgents(effectiveEnv, agentLaunchConfig.agentApiBinary);
   if (codexExtraArgs.includes("--yolo")) {
     console.log("[Config] Codex approvals: disabled (GLOVES=OFF)");
   }
@@ -451,11 +456,11 @@ export const loadConfig = (): WingmanConfig => {
   } else if (agentLaunchConfig.agentSpawnMode === "tmux") {
     console.log("[Config] Agent spawn mode: tmux (sessions run in tmux windows)");
   }
-  const agentTmuxSession = parseEnvironmentString(Bun.env.AGENT_TMUX_SESSION, DEFAULT_AGENT_TMUX_SESSION);
+  const agentTmuxSession = parseEnvironmentString(effectiveEnv.AGENT_TMUX_SESSION, DEFAULT_AGENT_TMUX_SESSION);
 
   // App routing mode - "path" for /host/<alias>, "subdomain" for <alias>.domain.com
   const validRoutingModes: AppRoutingMode[] = ["path", "subdomain"];
-  const routingModeInput = readWingmanOverrideEnvValue(Bun.env, "APP_ROUTING")?.toLowerCase();
+  const routingModeInput = readWingmanOverrideEnvValue(effectiveEnv, "APP_ROUTING")?.toLowerCase();
   const appRoutingMode: AppRoutingMode = routingModeInput && validRoutingModes.includes(routingModeInput as AppRoutingMode)
     ? (routingModeInput as AppRoutingMode)
     : "subdomain";
@@ -466,21 +471,21 @@ export const loadConfig = (): WingmanConfig => {
   }
 
   // Public base URL (for external links in notifications, etc.)
-  const baseUrl = parseEnvironmentString(Bun.env.WINGMAN_BASE_URL, `http://localhost:${port}`);
+  const baseUrl = parseEnvironmentString(effectiveEnv.WINGMAN_BASE_URL, `http://localhost:${port}`);
   console.log(`[Config] Base URL: ${baseUrl}`);
 
   // Maple Proxy configuration for private chat
-  const mapleProxyUrl = parseEnvironmentString(Bun.env.MAPLE_PROXY_URL, "http://localhost:8091");
-  const mapleDefaultModel = parseEnvironmentString(Bun.env.MAPLE_DEFAULT_MODEL, "llama-3.3-70b");
-  const mapleApiKeyInput = Bun.env.MAPLE_API?.trim();
+  const mapleProxyUrl = parseEnvironmentString(effectiveEnv.MAPLE_PROXY_URL, "http://localhost:8091");
+  const mapleDefaultModel = parseEnvironmentString(effectiveEnv.MAPLE_DEFAULT_MODEL, "llama-3.3-70b");
+  const mapleApiKeyInput = effectiveEnv.MAPLE_API?.trim();
   const mapleApiKey = mapleApiKeyInput && mapleApiKeyInput.length > 0 ? mapleApiKeyInput : null;
 
   // Gitea configuration for ngit repo hosting
-  const giteaUrlInput = Bun.env.GITEA_URL?.trim();
+  const giteaUrlInput = effectiveEnv.GITEA_URL?.trim();
   const giteaUrl = giteaUrlInput && giteaUrlInput.length > 0 ? giteaUrlInput.replace(/\/+$/, "") : null;
-  const giteaApiTokenInput = Bun.env.GITEA_API_TOKEN?.trim();
+  const giteaApiTokenInput = effectiveEnv.GITEA_API_TOKEN?.trim();
   const giteaApiToken = giteaApiTokenInput && giteaApiTokenInput.length > 0 ? giteaApiTokenInput : null;
-  const giteaOwnerInput = Bun.env.GITEA_OWNER?.trim();
+  const giteaOwnerInput = effectiveEnv.GITEA_OWNER?.trim();
   const giteaOwner = giteaOwnerInput && giteaOwnerInput.length > 0 ? giteaOwnerInput : null;
   if (giteaUrl && giteaApiToken && giteaOwner) {
     console.log(`[Config] Gitea: ${giteaUrl} (owner: ${giteaOwner})`);
@@ -489,14 +494,14 @@ export const loadConfig = (): WingmanConfig => {
   }
 
   // Registration toggle — set REGISTER=FALSE to block new signups
-  const registerInput = (Bun.env.REGISTER ?? "").trim().toUpperCase();
+  const registerInput = (effectiveEnv.REGISTER ?? "").trim().toUpperCase();
   const registrationEnabled = registerInput !== "FALSE";
   if (!registrationEnabled) {
     console.log("[Config] Registration disabled (REGISTER=FALSE)");
   }
 
   // SuperBased / Flux Adaptor configuration
-  const superbasedUrlInput = Bun.env.SUPERBASED_URL?.trim();
+  const superbasedUrlInput = effectiveEnv.SUPERBASED_URL?.trim();
   const superbasedUrl = superbasedUrlInput && superbasedUrlInput.length > 0
     ? superbasedUrlInput.replace(/\/+$/, "")
     : null;

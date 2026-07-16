@@ -191,6 +191,7 @@ import { performSystemCleanup } from "./server/system-cleanup.js";
 import { type SystemRoutesContext } from "./server/system-routes";
 import { createApiRouteHandler } from "./server/api-routes";
 import { type RemoteInstructRoutesContext } from "./server/remote-instruct-routes";
+import { instanceSettingsService } from "./settings/instance-settings-service";
 import {
   handleTerminalWebSocketUpgrade,
 } from "./server/terminal-websocket";
@@ -253,12 +254,17 @@ import {
   createGitWorktree,
 } from "./server/git-operations";
 
+const instanceSettingsAutoImport = instanceSettingsService.autoImportMissing(process.env);
+if (instanceSettingsAutoImport.imported.length > 0) {
+  console.log(
+    `[settings] imported ${instanceSettingsAutoImport.imported.length} environment setting(s) into encrypted instance settings`,
+  );
+}
+
 const config = loadConfig();
 const wingmanInstanceIdentity = loadWingmanInstanceIdentity();
 const defaultTowerUrl = (
-  Bun.env.WAPP_TOWER_URL?.trim() ||
-  Bun.env.TOWER_URL?.trim() ||
-  Bun.env.WINGMAN_TOWER_URL?.trim() ||
+  instanceSettingsService.get("internal.wapp_tower_url") ||
   "http://127.0.0.1:3100"
 ).replace(/\/$/, "");
 const towerWappRegistrar = new HttpTowerWappRegistrar();
@@ -305,7 +311,7 @@ if (migratedUserSettingCount > 0) {
   console.log(`[config] migrated ${migratedUserSettingCount} sensitive user setting(s) to encrypted storage`);
 }
 const configuredAdminNpubs = normaliseNpubList(
-  Bun.env.ADMIN_NPUB?.trim() ? Bun.env.ADMIN_NPUB : Bun.env.WINGMAN_ADMIN_NPUB,
+  instanceSettingsService.get("identity.admin_npubs") ?? "",
 );
 const adminNpub = configuredAdminNpubs[0] ?? null;
 const isConfiguredAdminNpub = (npub: string | null | undefined): boolean => isNpubInList(npub, configuredAdminNpubs);
@@ -813,7 +819,7 @@ const wingmanMcpApiHandler = createWingmanMcpApiHandler({
   defaultSkillsRoot: join(projectRoot, "skills"),
   userSettingsStore,
   artifactsStore,
-  openRouterApiKey: Bun.env.OPENROUTER_API?.trim() || null,
+  openRouterApiKey: instanceSettingsService.get("integrations.openrouter_api_key"),
   findProjectByDirectory: (dir) => npubProjectStore.findByDirectory(dir),
   memoryStore,
   getWingmanNpub: () => wingmanInstanceIdentity?.npub ?? null,
@@ -841,7 +847,7 @@ const nightWatchDeps = {
   agentHost,
   messageStore,
   promptQueueStore,
-  openRouterApiKey: Bun.env.OPENROUTER_API?.trim() || null,
+  openRouterApiKey: instanceSettingsService.get("integrations.openrouter_api_key"),
   openRouterBaseUrl: "https://openrouter.ai/api",
   wingmanBaseUrl: config.baseUrl,
   getSession: (sid: string) => manager.getSession(sid) ?? null,
@@ -1485,7 +1491,7 @@ const constantTimeTokenMatch = (expected: string, provided: string): boolean => 
 };
 
 const isValidWebhookToken = (request: Request): boolean => {
-  const configured = Bun.env.WEBHOOK_OFF_TOKEN?.trim();
+  const configured = instanceSettingsService.get("internal.webhook_off_token")?.trim();
   if (!configured) {
     return false;
   }
@@ -2691,7 +2697,7 @@ const handleApi = createApiRouteHandler({
     AccessActions,
   },
   signingApiContext: {
-    signingSecret: Bun.env.WINGMAN_SIGNING_SECRET?.trim() || null,
+    signingSecret: instanceSettingsService.get("internal.signing_secret"),
     getSession: (sid: string) => manager.getSession(sid),
     getInstanceIdentity: () => loadWingmanInstanceIdentity(),
   },
@@ -2705,6 +2711,11 @@ const handleApi = createApiRouteHandler({
   userSettingsRoutesContext: {
     agents: config.agents,
     userSettingsStore,
+    ensureApiAccess,
+    AccessActions,
+  },
+  instanceSettingsRoutesContext: {
+    service: instanceSettingsService,
     ensureApiAccess,
     AccessActions,
   },

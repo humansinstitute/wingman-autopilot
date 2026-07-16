@@ -37,6 +37,10 @@ import { handleSigningApi, type SigningApiContext } from "../signing/signing-api
 import { handleTerminalApi, type TerminalRoutesContext } from "./terminal-routes";
 import { handleUserSettingsApi, type UserSettingsRoutesContext } from "./user-settings-routes";
 import {
+  handleInstanceSettingsApi,
+  type InstanceSettingsRoutesContext,
+} from "./instance-settings-routes";
+import {
   handleRemoteInstructApi,
   type RemoteInstructRoutesContext,
 } from "./remote-instruct-routes";
@@ -114,6 +118,7 @@ export interface ApiRoutesContext {
   signingApiContext?: SigningApiContext;
   terminalRoutesContext?: TerminalRoutesContext;
   userSettingsRoutesContext: UserSettingsRoutesContext;
+  instanceSettingsRoutesContext: InstanceSettingsRoutesContext;
   remoteInstructRoutesContext: RemoteInstructRoutesContext;
   cloudflareTunnelRoutesContext?: CloudflareTunnelRoutesContext;
   workspaceDelegationStore: WorkspaceDelegationStore;
@@ -173,6 +178,7 @@ export interface ApiRoutesContext {
     TodosManage: AccessAction;
     SessionsManage: AccessAction;
     DeploymentsManage: AccessAction;
+    SystemManage: AccessAction;
     UiRestricted?: AccessAction;
     FilesRead: AccessAction;
     FilesWrite: AccessAction;
@@ -279,6 +285,17 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
     const billingApiResponse = await handleBillingApi(request, url, method, authContext, ctx.billingApiContext);
     if (billingApiResponse) {
       return billingApiResponse;
+    }
+
+    const instanceSettingsResponse = await handleInstanceSettingsApi(
+      request,
+      url,
+      method,
+      authContext,
+      ctx.instanceSettingsRoutesContext,
+    );
+    if (instanceSettingsResponse) {
+      return instanceSettingsResponse;
     }
 
     if (pathname.startsWith("/api/cloudflare/tunnel-hostnames")) {

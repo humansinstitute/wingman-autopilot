@@ -59,12 +59,6 @@ export const getSessionSecretBytes = (): Uint8Array => {
   cachedSecret = encoder.encode(source);
   secretHash = createHash('sha256').update(cachedSecret).digest('hex');
   
-  Object.defineProperty(Bun.env, 'IDENTITY_SESSION_SECRET', {
-    value: source,
-    writable: false,
-    configurable: false
-  });
-
   return cachedSecret;
 };
 

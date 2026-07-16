@@ -101,6 +101,14 @@ function createHandler(options: {
         SessionsManage: "sessions:manage" as any,
       },
     },
+    instanceSettingsRoutesContext: {
+      service: {} as any,
+      ensureApiAccess: async (_action, _request, _url, currentAuth) =>
+        currentAuth.npub ? null : Response.json({ error: "Authentication required" }, { status: 401 }),
+      AccessActions: {
+        SystemManage: "system:manage" as any,
+      },
+    },
     remoteInstructRoutesContext: {
       promptPath: "/tmp/remote-instruct.md",
       config: {
@@ -154,6 +162,7 @@ function createHandler(options: {
       TodosManage: "todos:manage" as any,
       SessionsManage: "sessions:manage" as any,
       DeploymentsManage: "deployments:manage" as any,
+      SystemManage: "system:manage" as any,
       FilesRead: "files:read" as any,
       FilesWrite: "files:write" as any,
     },

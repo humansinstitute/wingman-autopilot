@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import type { AgentType } from "../config";
 import { getSessionSecretBytes } from "../auth/session-secret";
 import { normaliseNpub } from "../identity/npub-utils";
+import { instanceSettingsService } from "../settings/instance-settings-service";
 import { decryptTeamProviderKey, encryptTeamProviderKey } from "./team-key-crypto";
 import {
   teamBillingStore,
@@ -77,6 +78,10 @@ const usdFromMicros = (micros: number): number => {
 const bpsToMultiplier = (bps: number): number => 1 + (Math.max(0, bps) / 10_000);
 
 const pickOpenRouterManagementKey = (): string | null => {
+  const managed = instanceSettingsService.get("integrations.openrouter_management_key");
+  if (managed) {
+    return managed;
+  }
   const candidates = [
     Bun.env.OPENROUTER_PROVISIONING_KEY,
     Bun.env.OPENROUTER_MANAGEMENT_KEY,
@@ -93,6 +98,10 @@ const pickOpenRouterManagementKey = (): string | null => {
 const hasOpenRouterManagementKey = (): boolean => Boolean(pickOpenRouterManagementKey());
 
 const pickOpenRouterRuntimeKey = (): string | null => {
+  const managed = instanceSettingsService.get("integrations.openrouter_api_key");
+  if (managed) {
+    return managed;
+  }
   const candidates = [
     Bun.env.OPENROUTER_TEAM_RUNTIME_KEY,
     Bun.env.OPENROUTER_BILLING_RUNTIME_KEY,

@@ -3,6 +3,9 @@ import { join } from "node:path";
 
 import { loadConfig, resolveAgentLaunchConfig } from "./config";
 
+Bun.env.WINGMAN_DISABLE_INSTANCE_SETTINGS = "1";
+process.env.WINGMAN_DISABLE_INSTANCE_SETTINGS = "1";
+
 const ENV_KEYS = [
   "AGENT_MODE",
   "AGENT_CLI_AUTOUPDATE",
@@ -24,6 +27,7 @@ const ENV_KEYS = [
   "WINGMAN_AGENT_DISPATCH_DIRECTORY",
   "WINGMAN_SUBDOMAIN_BASE_DOMAIN",
   "WINGMAN_SUBDOMAIN_PROXY_ENABLED",
+  "WINGMAN_DISABLE_INSTANCE_SETTINGS",
 ] as const;
 
 const originalEnv = new Map<string, string | undefined>(
