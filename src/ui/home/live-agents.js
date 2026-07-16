@@ -37,8 +37,9 @@ function renderSessionActions(target, session, deps) {
 
   const resumeBtn = document.createElement("button");
   resumeBtn.className = "wm-button";
-  resumeBtn.textContent = "Resume";
+  resumeBtn.textContent = "View";
   resumeBtn.disabled = pending;
+  resumeBtn.setAttribute("aria-label", `View session ${session.name || session.id}`);
   resumeBtn.addEventListener("click", () => resumeSession(session.id));
   target.append(resumeBtn);
 
@@ -65,9 +66,9 @@ function renderSessionActions(target, session, deps) {
   if (canResumeNativeAgentSession(session)) {
     const nativeResumeBtn = document.createElement("button");
     nativeResumeBtn.className = "wm-button";
-    nativeResumeBtn.textContent = "Resume Native";
+    nativeResumeBtn.textContent = "Resume";
     nativeResumeBtn.disabled = pending;
-    nativeResumeBtn.setAttribute("aria-label", `Resume native agent session for ${session.name || session.id}`);
+    nativeResumeBtn.setAttribute("aria-label", `Resume agent session for ${session.name || session.id}`);
     nativeResumeBtn.dataset.testid = "resume-native-session";
     nativeResumeBtn.addEventListener("click", () => {
       void withPendingSessionAction(session.id, "resume-native", async () => {

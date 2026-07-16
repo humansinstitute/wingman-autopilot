@@ -341,9 +341,9 @@ export function createArchiveComponent({
         const nativeResumeBtn = document.createElement("button");
         nativeResumeBtn.type = "button";
         nativeResumeBtn.className = "wm-button";
-        nativeResumeBtn.textContent = pendingAction === "resume-native" ? "Resuming..." : "Resume Native";
+        nativeResumeBtn.textContent = pendingAction === "resume-native" ? "Resuming..." : "Resume";
         nativeResumeBtn.disabled = pending;
-        nativeResumeBtn.setAttribute("aria-label", `Resume native agent session for ${session.name || session.id}`);
+        nativeResumeBtn.setAttribute("aria-label", `Resume agent session for ${session.name || session.id}`);
         nativeResumeBtn.dataset.testid = "resume-native-archived-session";
         nativeResumeBtn.addEventListener("click", (event) => {
           event.stopPropagation();

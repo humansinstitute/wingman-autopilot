@@ -20,7 +20,16 @@ describe("live-view composition", () => {
   test("offers native resume from archived transcripts", () => {
     expect(source).toContain("canResumeNativeAgentSession(state.archivedSession.session)");
     expect(source).toContain("resume-native-archived-live-session");
+    expect(source).toContain('archivedNativeResumePending ? "Resuming..." : "Resume"');
+    expect(source).toContain("Resume agent session");
     expect(source).toContain("await resumeNativeSession(routeSessionId);");
+    expect(source).not.toContain("Resume Native");
+    expect(source).not.toContain("Resume native agent session");
+  });
+
+  test("describes existing session navigation as viewing a session", () => {
+    expect(source).toContain("No live session selected. Launch a new agent or use the menu to view one.");
+    expect(source).not.toContain("use the menu to resume one");
   });
 
   test("renders live sessions through the task dispatch tab preference", () => {

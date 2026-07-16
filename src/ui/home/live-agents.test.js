@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 
 import {
   canResumeNativeAgentSession,
@@ -10,6 +11,9 @@ import {
   sortSessions,
   toggleSessionSort,
 } from "./session-table.js";
+
+const liveAgentsSource = readFileSync(new URL("./live-agents.js", import.meta.url), "utf8");
+const archiveSource = readFileSync(new URL("./archive.js", import.meta.url), "utf8");
 
 describe("live agents helpers", () => {
   const sessions = [
@@ -112,5 +116,19 @@ describe("live agents helpers", () => {
       },
     })).toBe(true);
     expect(canResumeNativeAgentSession({ metadata: {} })).toBe(false);
+  });
+
+  test("uses View for existing sessions and Resume for native agent sessions", () => {
+    expect(liveAgentsSource).toContain('resumeBtn.textContent = "View";');
+    expect(liveAgentsSource).toContain('nativeResumeBtn.textContent = "Resume";');
+    expect(liveAgentsSource).toContain("View session");
+    expect(liveAgentsSource).toContain("Resume agent session");
+    expect(liveAgentsSource).not.toContain("Resume Native");
+    expect(liveAgentsSource).not.toContain("Resume native agent session");
+
+    expect(archiveSource).toContain('pendingAction === "resume-native" ? "Resuming..." : "Resume"');
+    expect(archiveSource).toContain("Resume agent session");
+    expect(archiveSource).not.toContain("Resume Native");
+    expect(archiveSource).not.toContain("Resume native agent session");
   });
 });

@@ -1422,9 +1422,9 @@ export function initLiveView(deps) {
           const resumeNativeBtn = document.createElement("button");
           resumeNativeBtn.type = "button";
           resumeNativeBtn.className = "wm-button wm-archived-resume-native";
-          resumeNativeBtn.textContent = archivedNativeResumePending ? "Resuming..." : "Resume Native";
+          resumeNativeBtn.textContent = archivedNativeResumePending ? "Resuming..." : "Resume";
           resumeNativeBtn.disabled = archivedNativeResumePending;
-          resumeNativeBtn.setAttribute("aria-label", `Resume native agent session for ${sessionName}`);
+          resumeNativeBtn.setAttribute("aria-label", `Resume agent session for ${sessionName}`);
           resumeNativeBtn.dataset.testid = "resume-native-archived-live-session";
           resumeNativeBtn.addEventListener("click", async () => {
             if (archivedNativeResumePending) return;
@@ -1520,7 +1520,7 @@ export function initLiveView(deps) {
       const container = document.createElement("section");
       container.className = "wm-card wm-live-main";
       const empty = document.createElement("p");
-      empty.textContent = "No live session selected. Launch a new agent or use the menu to resume one.";
+      empty.textContent = "No live session selected. Launch a new agent or use the menu to view one.";
       container.append(empty);
       wrapper.append(container);
       return wrapper;
