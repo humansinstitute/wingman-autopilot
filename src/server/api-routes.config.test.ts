@@ -33,12 +33,13 @@ function createHandler(options: {
       agents: {
         claude: { label: "Claude" },
         codex: { label: "Codex", modelOptions: ["default", "gpt-5.5"] },
-        goose: { label: "Goose" },
+        goose: { label: "Goose", modelOptions: ["default", "openrouter/moonshotai/kimi-k3"] },
         opencode: {
           label: "OpenCode",
           modelOptions: [
             "default",
             "opencode/big-pickle",
+            "openrouter/moonshotai/kimi-k3",
             "maple/kimi-k2-thinking",
             "maple/qwen3-coder-480b",
             "maple/gpt-oss-120b",
@@ -239,6 +240,7 @@ describe("createApiRouteHandler config defaults", () => {
       modelOptions: [
         "default",
         "opencode/big-pickle",
+        "openrouter/moonshotai/kimi-k3",
         "maple/kimi-k2-thinking",
         "maple/qwen3-coder-480b",
         "maple/gpt-oss-120b",

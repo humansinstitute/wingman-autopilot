@@ -102,6 +102,7 @@ const DEFAULT_SSE_KEEPALIVE_INTERVAL_MS = 30000;
 const DEFAULT_AGENTAPI_RELATIVE_PATH = "../out/agentapi";
 const DEFAULT_AGENT_TMUX_SESSION = "wm-ap-agents";
 const DEFAULT_MODEL_OPTION = "default";
+const OPENROUTER_KIMI_K3_MODEL = "openrouter/moonshotai/kimi-k3";
 const CODEX_MODEL_OPTIONS = [
   DEFAULT_MODEL_OPTION,
   "gpt-5.5",
@@ -114,10 +115,11 @@ const CLAUDE_MODEL_OPTIONS = [
   "sonnet[1m]",
   "haiku",
 ];
-const GOOSE_MODEL_OPTIONS = [DEFAULT_MODEL_OPTION];
+const GOOSE_MODEL_OPTIONS = [DEFAULT_MODEL_OPTION, OPENROUTER_KIMI_K3_MODEL];
 const OPENCODE_MODEL_OPTIONS = [
   DEFAULT_MODEL_OPTION,
   "opencode/big-pickle",
+  OPENROUTER_KIMI_K3_MODEL,
   "maple/kimi-k2-thinking",
   "maple/qwen3-coder-480b",
   "maple/gpt-oss-120b",

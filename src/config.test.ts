@@ -260,6 +260,20 @@ describe("loadConfig", () => {
     ]);
   });
 
+  test("exposes the OpenRouter Kimi K3 model for Goose and OpenCode", () => {
+    applyEnv({
+      AGENTAPI_BIN: "/tmp/custom-agentapi",
+      AGENT_MODE: undefined,
+      AGENT_SPAWN_MODE: undefined,
+      GLOVES: undefined,
+    });
+
+    const config = loadConfig();
+
+    expect(config.agents.goose.modelOptions).toContain("openrouter/moonshotai/kimi-k3");
+    expect(config.agents.opencode.modelOptions).toContain("openrouter/moonshotai/kimi-k3");
+  });
+
   test("uses GLOVES=OFF as the single approval bypass for Codex and Claude", () => {
     applyEnv({
       AGENTAPI_BIN: "/tmp/custom-agentapi",
