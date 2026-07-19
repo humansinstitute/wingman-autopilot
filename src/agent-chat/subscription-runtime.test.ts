@@ -204,6 +204,7 @@ function createTestManager(
     }),
     fetchFlightDeckPgEvents: async () => ({ events: [], next_cursor: null }),
     fetchFlightDeckPgChannelMessages: async () => ({ messages: [], next_cursor: null }),
+    fetchFlightDeckPgWorkroomContext: async () => ({ isWorkroom: false, workroom: null, participant: null, appTargets: [], recentEvents: [], recentLinks: [], openApprovals: [] }),
     botKeyStore: {
       getActiveKeyForUser: () => null,
       getActiveKeyForBotNpub: (botNpub) => botKeys.get(botNpub) ?? null,
@@ -851,6 +852,15 @@ describe('WorkspaceSubscriptionManager', () => {
           }],
           next_cursor: null,
         }),
+        fetchFlightDeckPgWorkroomContext: async () => ({
+          isWorkroom: true,
+          workroom: { id: 'room-1', goal: 'Ship the release', repo: { integrationBranch: 'staging' } },
+          participant: { npub: signer.npub, role: 'reviewer', metadataStatus: 'valid', capabilities: ['github_pr'], localWorkspace: { repoPath: '/repo', defaultBranch: 'main', canRunTests: true }, constraints: { canMergeIntegration: false, canMergeProduction: false, canRestartManagedApps: false } },
+          appTargets: [{ kind: 'preview' }],
+          recentEvents: [{ eventType: 'pr_ready' }],
+          recentLinks: [],
+          openApprovals: [],
+        }),
       },
     );
     const imported = await manager.importAgentConnectPackage({
@@ -888,6 +898,10 @@ describe('WorkspaceSubscriptionManager', () => {
       scopeId: 'scope-1',
       channelId: 'channel-1',
       threadId: 'thread-1',
+      workroomContext: {
+        isWorkroom: true,
+        participant: { role: 'reviewer' },
+      },
       payload: {
         body: 'Hello autopilot',
         channel_id: 'channel-1',

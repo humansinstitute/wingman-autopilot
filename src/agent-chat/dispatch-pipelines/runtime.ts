@@ -22,7 +22,7 @@ import type {
   ResolvedAppendedContext,
   ResolvedPipelineSelection,
 } from '../agent-profile-policy-store';
-import { fetchFlightDeckPgScopeChannels, type FlightDeckPgChannel } from '../tower-client';
+import { fetchFlightDeckPgScopeChannels, type FlightDeckPgChannel, type FlightDeckPgWorkroomContext } from '../tower-client';
 import {
   DEFAULT_DISPATCH_PIPELINE_VERSION_POLICY,
   normaliseBuiltInDispatchPipelineId,
@@ -73,6 +73,7 @@ export interface DispatchPipelineEventInput {
   groupNpubs?: string[];
   botIdentity?: RuntimeBotIdentity | null;
   profileRuntime?: DispatchProfileRuntimeContext | null;
+  workroomContext?: FlightDeckPgWorkroomContext | null;
 }
 
 export interface DispatchProfileRuntimeContext {
@@ -1073,6 +1074,7 @@ function buildDispatchEnvelope(input: {
     flightDeckContext: {
       channel: input.flightDeckChannelContext,
     },
+    workroomContext: eventInput.workroomContext ?? { isWorkroom: false },
     runtime: {
       mode: flightDeckRuntime.mode,
       yokeStateDir: flightDeckRuntime.yokeStateDir,

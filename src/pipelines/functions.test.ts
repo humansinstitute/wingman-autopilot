@@ -1496,6 +1496,59 @@ describe("memory pipeline functions", () => {
     expect(JSON.stringify(result)).not.toContain("agent-dispatch-chat");
   });
 
+  test("workroom role metadata changes the intent packet while normal chat stays compact", async () => {
+    const result = await builtinPipelineFunctions["dispatch.prepareChatIntentInput"]!({
+      dispatch: { routeId: "route-workroom", triggerKind: "chat" },
+      workspace: { workspaceOwnerNpub: "npub1owner", sourceAppNpub: "npub1source" },
+      agent: { botNpub: "npub1bot", workingDirectory: "/repo" },
+      chat: { messageText: "Review the PR", senderNpub: "npub1requester", channelId: "channel-1", threadId: "root-1" },
+      record: { recordId: "message-1", payload: { body: "Review the PR", sender_npub: "npub1requester" } },
+      chatContext: { shouldProceed: true, thread: { recent_messages: [{ message_id: "message-1", body: "Review the PR" }] } },
+      workroomContext: {
+        isWorkroom: true,
+        workroom: { id: "room-1", goal: "Ship the release", state: "active", repo: { integrationBranch: "staging" } },
+        participant: { role: "reviewer", capabilities: ["github_pr"] },
+        appTargets: [{ kind: "preview", runbook: { test: "bun test" } }],
+        recentEvents: [{ eventType: "pr_ready" }],
+        recentLinks: [],
+        openApprovals: [],
+      },
+    });
+    expect(result.workroomContext).toMatchObject({ participant: { role: "reviewer" } });
+    expect(result.workroomInstruction).toContain("reviewer");
+    expect(result.notes.join(" ")).toContain("typed workroom fields");
+
+    const normal = await builtinPipelineFunctions["dispatch.prepareChatIntentInput"]!({
+      dispatch: { routeId: "route-normal", triggerKind: "chat" },
+      workspace: {}, agent: {}, chat: { senderNpub: "npub1requester" }, record: { recordId: "message-2", payload: {} },
+      chatContext: { shouldProceed: true, thread: { recent_messages: [{ message_id: "message-2", body: "Hello" }] } },
+    });
+    expect(normal).not.toHaveProperty("workroomInstruction");
+    expect(normal).not.toHaveProperty("workroomContext");
+  });
+
+  test("workroom participant self-fill produces structured metadata", async () => {
+    const result = await builtinPipelineFunctions["workroom.prepareParticipantMetadata"]!({
+      workroomContext: { isWorkroom: true, workroom: { id: "room-1" } },
+      agent: { workingDirectory: "/repo", capabilities: ["github_pr", "tests"], canRunTests: true },
+      runtime: { mode: "flightdeck_pg" },
+    });
+    expect(result).toEqual({
+      isWorkroom: true,
+      metadata: {
+        repoPath: "/repo",
+        defaultBranch: "main",
+        capabilities: ["github_pr", "tests"],
+        localApps: [],
+        constraints: {},
+        canRunTests: true,
+        runtime: "flightdeck_pg",
+      },
+      status: "structured",
+      workroomId: "room-1",
+    });
+  });
+
   test("dispatch.prepareChatIntentInput appends the triggering chat message when hydration is stale", async () => {
     const result = await builtinPipelineFunctions["dispatch.prepareChatIntentInput"]!({
       dispatch: { routeId: "route-1", triggerKind: "chat" },
@@ -2142,6 +2195,7 @@ describe("memory pipeline functions", () => {
     const spec = loadSharedPipelineSpec("agent-dispatch-chat.json");
     const names = spec.steps.map((step) => step.name);
     expect(names).toEqual([
+      "prepare-workroom-participant-metadata",
       "hydrate-chat-context",
       "prepare-intent-input",
       "prepare-short-lookup-answer",

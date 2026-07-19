@@ -59,6 +59,7 @@ import {
   buildSuccessDiagnostic,
   checkBackendConnectionHealth,
   fetchFlightDeckPgChannelMessages,
+  fetchFlightDeckPgWorkroomContext,
   fetchFlightDeckPgEvents,
   fetchFlightDeckPgWorkspaceMe,
   fetchWorkspaceKeyMappings,
@@ -68,6 +69,7 @@ import {
   registerWorkspaceKeyWithTower,
   type FlightDeckPgEvent,
   type FlightDeckPgMessage,
+  type FlightDeckPgWorkroomContext,
 } from './tower-client';
 import { loadYokeBotHelpers } from './yoke-bot-helpers';
 import { decryptRecordPayloadWithYoke } from './yoke-record-payload';
@@ -191,6 +193,38 @@ function getOptionalTextArray(value: unknown): string[] {
   return value
     .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
     .filter((entry) => entry.length > 0);
+}
+
+async function resolveWorkroomContextForChat(input: {
+  record: WorkspaceSubscriptionRecord;
+  botIdentity: RuntimeBotIdentity;
+  channelId: string | null;
+  threadId: string | null;
+  actorNpub: string | null;
+  fetchContext?: typeof fetchFlightDeckPgWorkroomContext;
+}): Promise<FlightDeckPgWorkroomContext> {
+  if (!input.record.workspaceId || !input.channelId || !input.threadId) {
+    return { isWorkroom: false, workroom: null, participant: null, appTargets: [], recentEvents: [], recentLinks: [], openApprovals: [] };
+  }
+  try {
+    return await (input.fetchContext ?? fetchFlightDeckPgWorkroomContext)({
+      backendBaseUrl: input.record.backendBaseUrl,
+      workspaceId: input.record.workspaceId,
+      channelId: input.channelId,
+      threadId: input.threadId,
+      actorNpub: input.actorNpub,
+      appNpub: input.record.sourceAppNpub,
+      botIdentity: input.botIdentity,
+    });
+  } catch (error) {
+    // A Tower deployment may not have the companion route yet. Network-level
+    // absence is compatible with ordinary chat; authenticated HTTP failures
+    // remain visible so a real workroom lookup problem is not hidden.
+    if (error instanceof TypeError) {
+      return { isWorkroom: false, workroom: null, participant: null, appTargets: [], recentEvents: [], recentLinks: [], openApprovals: [] };
+    }
+    throw error;
+  }
 }
 
 function sha256Hex(value: string): string {
@@ -814,6 +848,7 @@ export interface WorkspaceSubscriptionManagerDependencies {
   fetchFlightDeckPgEvents?: typeof fetchFlightDeckPgEvents;
   connectFlightDeckPgEventStream?: typeof connectFlightDeckPgEventStream;
   fetchFlightDeckPgChannelMessages?: typeof fetchFlightDeckPgChannelMessages;
+  fetchFlightDeckPgWorkroomContext?: typeof fetchFlightDeckPgWorkroomContext;
   decryptRecordPayload?: typeof decryptRecordPayloadWithYoke;
   checkBackendHealth?: typeof checkBackendConnectionHealth;
   flightDeckPgEventPollIntervalMs?: number;
@@ -958,6 +993,7 @@ export class WorkspaceSubscriptionManager {
   private readonly fetchFlightDeckPgEventsImpl: typeof fetchFlightDeckPgEvents;
   private readonly connectFlightDeckPgEventStreamImpl: typeof connectFlightDeckPgEventStream;
   private readonly fetchFlightDeckPgChannelMessagesImpl: typeof fetchFlightDeckPgChannelMessages;
+  private readonly fetchFlightDeckPgWorkroomContextImpl: typeof fetchFlightDeckPgWorkroomContext;
   private readonly decryptRecordPayloadImpl: typeof decryptRecordPayloadWithYoke;
   private readonly checkBackendHealthImpl: typeof checkBackendConnectionHealth;
   private readonly flightDeckPgEventPollIntervalMs: number;
@@ -990,6 +1026,7 @@ export class WorkspaceSubscriptionManager {
     this.fetchFlightDeckPgEventsImpl = deps.fetchFlightDeckPgEvents ?? fetchFlightDeckPgEvents;
     this.connectFlightDeckPgEventStreamImpl = deps.connectFlightDeckPgEventStream ?? connectFlightDeckPgEventStream;
     this.fetchFlightDeckPgChannelMessagesImpl = deps.fetchFlightDeckPgChannelMessages ?? fetchFlightDeckPgChannelMessages;
+    this.fetchFlightDeckPgWorkroomContextImpl = deps.fetchFlightDeckPgWorkroomContext ?? fetchFlightDeckPgWorkroomContext;
     this.decryptRecordPayloadImpl = deps.decryptRecordPayload ?? decryptRecordPayloadWithYoke;
     this.checkBackendHealthImpl = deps.checkBackendHealth ?? checkBackendConnectionHealth;
     this.flightDeckPgEventPollIntervalMs = Math.max(1, deps.flightDeckPgEventPollIntervalMs ?? FLIGHT_DECK_PG_EVENT_POLL_INTERVAL_MS);
@@ -3447,6 +3484,14 @@ export class WorkspaceSubscriptionManager {
           },
         });
       }
+      const workroomContext = await resolveWorkroomContextForChat({
+        record,
+        botIdentity: runtime.botIdentity,
+        channelId,
+        threadId,
+        actorNpub,
+        fetchContext: this.fetchFlightDeckPgWorkroomContextImpl,
+      });
       const profileDecision = this.resolveProfileRuntimeDecision({
         subscription: record,
         eventType: 'chat_mention',
@@ -3508,6 +3553,7 @@ export class WorkspaceSubscriptionManager {
           changedFields: [],
           groupNpubs: [],
           botIdentity: runtime.botIdentity,
+          workroomContext,
           profileRuntime: this.buildProfileRuntimeContext(profileDecision),
         }),
         CHAT_ADVISORY_PIPELINE_TIMEOUT_MS,
@@ -3899,6 +3945,14 @@ export class WorkspaceSubscriptionManager {
               CHAT_ADVISORY_ROUTING_TIMEOUT_MS,
               'chat_routing_context_timeout',
             );
+            const workroomContext = await resolveWorkroomContextForChat({
+              record,
+              botIdentity: runtime.botIdentity,
+              channelId: routingContext.channelId,
+              threadId: routingContext.threadId,
+              actorNpub: routingContext.updaterNpub,
+              fetchContext: this.fetchFlightDeckPgWorkroomContextImpl,
+            });
             const profileDecision = this.resolveProfileRuntimeDecision({
               subscription: record,
               eventType: 'chat_mention',
@@ -3950,6 +4004,7 @@ export class WorkspaceSubscriptionManager {
                 changedFields: [],
                 groupNpubs: routingContext.messageGroupNpubs,
                 botIdentity: runtime.botIdentity,
+                workroomContext,
                 profileRuntime: this.buildProfileRuntimeContext(profileDecision),
               }),
               CHAT_ADVISORY_PIPELINE_TIMEOUT_MS,

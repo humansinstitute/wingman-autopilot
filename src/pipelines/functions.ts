@@ -1885,6 +1885,13 @@ export const builtinPipelineFunctions: FunctionRegistry = {
     const requesterNpub = getText(chat.senderNpub)
       ?? getText(objectValue(record.payload).sender_npub)
       ?? getText(record.updaterNpub);
+    const workroomContext = objectValue(input.workroomContext);
+    const isWorkroom = workroomContext.isWorkroom === true;
+    const participant = objectValue(workroomContext.participant);
+    const role = getText(participant.role);
+    const workroomInstruction = isWorkroom
+      ? `Workroom mode is strict. The participant role is ${role ?? "unassigned"}. Follow only that role: integration coordinates PRs, integration branch, app targets, approvals, and deploy/restart requests; contributor creates scoped work, PRs, validation, preview links, and PR-ready events; reviewer inspects PRs, tests, preview links, and writes review evidence; approver focuses on approval decisions and does not implement; observer answers only when directly asked or mentioned.`
+      : null;
 
     return {
       objective: "Classify the latest chat request and decide whether to start a downstream work pipeline.",
@@ -1915,6 +1922,7 @@ export const builtinPipelineFunctions: FunctionRegistry = {
       channelContext,
       referencedRecords,
       scopes,
+      ...(isWorkroom ? { workroomContext, workroomInstruction } : {}),
       notes: [
         "Use latestThread as the authoritative current conversation.",
         "Use channelContext.contextPrompt as channel-specific instructions for how this work should be handled.",
@@ -1925,8 +1933,54 @@ export const builtinPipelineFunctions: FunctionRegistry = {
         "Use create_task only for durable output such as code, docs, files, WApp changes, migrations, configuration, or other concrete artifacts.",
         "For create_task, provide a compact taskDraft with title, instructions, acceptanceCriteria, executionPlan, and managerChecklist when enough information is available.",
         "Do not choose a child pipeline in this stage.",
+        ...(workroomInstruction ? [workroomInstruction, "Use typed workroom fields for role, room, repo, branches, app targets, runbooks, recent events/links, and approvals; do not infer missing authority from prose."] : []),
       ],
     };
+  },
+
+  async "workroom.prepareParticipantMetadata"(input) {
+    const workroomContext = objectValue(input.workroomContext);
+    if (workroomContext.isWorkroom !== true) {
+      return { isWorkroom: false, metadata: null, status: "not_applicable" };
+    }
+    const agent = objectValue(input.agent);
+    const runtime = objectValue(input.runtime);
+    const workspace = objectValue(input.workspace);
+    const participant = objectValue(workroomContext.participant);
+    const metadata = {
+      repoPath: getText(agent.workingDirectory),
+      defaultBranch: getText(agent.defaultBranch) ?? "main",
+      capabilities: Array.isArray(agent.capabilities) ? agent.capabilities.filter((item): item is string => typeof item === "string") : [],
+      localApps: Array.isArray(agent.localApps) ? agent.localApps : [],
+      constraints: objectValue(agent.constraints),
+      canRunTests: Boolean(agent.canRunTests ?? true),
+      runtime: getText(runtime.mode),
+    };
+    const result = {
+      isWorkroom: true,
+      metadata,
+      status: "structured",
+      workroomId: getText(objectValue(workroomContext.workroom).id),
+    };
+    if (input.persist !== true || participant.metadataStatus === "valid" || !result.workroomId) return result;
+    const towerBaseUrl = getText(workspace.backendBaseUrl ?? workspace.towerBaseUrl ?? workspace.baseUrl);
+    const workspaceId = getText(workspace.workspaceId ?? workspace.workspace_id);
+    const appNpub = getText(workspace.sourceAppNpub ?? workspace.appNpub ?? workspace.app_npub);
+    if (!towerBaseUrl || !workspaceId || !appNpub) {
+      return { ...result, status: "structured_not_persisted", persistence: { status: "missing_connection" } };
+    }
+    try {
+      const persisted = await patchTowerPgJson(
+        towerBaseUrl,
+        `/api/v4/flightdeck-pg/workspaces/${encodeURIComponent(workspaceId)}/workrooms/${encodeURIComponent(result.workroomId)}/participant`,
+        { metadata },
+        appNpub,
+      );
+      return { ...result, status: "persisted", persistence: { status: "ok", response: persisted } };
+    } catch (error) {
+      const status = error instanceof Error && /\(404\)|\(405\)|\(501\)/.test(error.message) ? "endpoint_unavailable" : "failed";
+      return { ...result, status: "structured_not_persisted", persistence: { status, reason: error instanceof Error ? error.message : String(error) } };
+    }
   },
 
   async "dispatch.prepareShortLookupAnswer"(input) {
@@ -3762,6 +3816,26 @@ async function postTowerPgJson(baseUrl: string, path: string, body: Record<strin
     const text = await response.text().catch(() => "");
     const forbidden = response.status === 403 ? " daily_scope_forbidden: human must enable Daily Scope access for this agent." : "";
     throw new Error(`Tower PG request failed (${response.status}) ${path}${forbidden}${text ? `: ${truncateText(text, 240)}` : ""}`);
+  }
+  const payload = await response.json();
+  return objectValue(payload);
+}
+
+async function patchTowerPgJson(baseUrl: string, path: string, body: Record<string, unknown>, appNpub: string | null = null): Promise<Record<string, unknown>> {
+  const url = joinUrl(baseUrl, path);
+  const serialized = JSON.stringify(body);
+  const bodyHash = createHash("sha256").update(serialized, "utf8").digest("hex");
+  const { token } = await signWithWingmanKey(url, "PATCH", bodyHash);
+  const headers: Record<string, string> = {
+    accept: "application/json",
+    authorization: token,
+    "content-type": "application/json",
+  };
+  if (appNpub) headers["x-flightdeck-pg-app-npub"] = appNpub;
+  const response = await fetch(url, { method: "PATCH", headers, body: serialized });
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`Tower PG request failed (${response.status}) ${path}${text ? `: ${truncateText(text, 240)}` : ""}`);
   }
   const payload = await response.json();
   return objectValue(payload);

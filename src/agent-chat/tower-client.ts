@@ -71,6 +71,35 @@ export interface FlightDeckPgMessage {
   updated_at?: string | null;
 }
 
+export type WorkroomParticipantRole = 'integration' | 'contributor' | 'reviewer' | 'approver' | 'observer';
+
+export interface WorkroomParticipantMetadata {
+  npub: string | null;
+  role: WorkroomParticipantRole | null;
+  metadataStatus: 'missing' | 'valid' | 'invalid' | null;
+  capabilities: string[];
+  localWorkspace: {
+    repoPath: string | null;
+    defaultBranch: string | null;
+    canRunTests: boolean | null;
+  };
+  constraints: {
+    canMergeIntegration: boolean | null;
+    canMergeProduction: boolean | null;
+    canRestartManagedApps: boolean | null;
+  };
+}
+
+export interface FlightDeckPgWorkroomContext {
+  isWorkroom: boolean;
+  workroom: Record<string, unknown> | null;
+  participant: WorkroomParticipantMetadata | null;
+  appTargets: Record<string, unknown>[];
+  recentEvents: Record<string, unknown>[];
+  recentLinks: Record<string, unknown>[];
+  openApprovals: Record<string, unknown>[];
+}
+
 export interface FlightDeckPgChannel {
   id: string;
   workspace_id?: string;
@@ -688,6 +717,131 @@ export async function fetchFlightDeckPgChannelMessages(params: {
     messages: Array.isArray(payload.messages) ? payload.messages : [],
     next_cursor: typeof payload.next_cursor === 'string' ? payload.next_cursor : null,
   };
+}
+
+function normaliseWorkroomParticipant(value: unknown): WorkroomParticipantMetadata | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const participant = value as Record<string, unknown>;
+  const localWorkspaceValue = participant.localWorkspace ?? participant.local_workspace;
+  const localWorkspace = localWorkspaceValue && typeof localWorkspaceValue === 'object'
+    ? localWorkspaceValue as Record<string, unknown>
+    : {};
+  const constraints = participant.constraints && typeof participant.constraints === 'object'
+    ? participant.constraints as Record<string, unknown>
+    : {};
+  const role = participant.role;
+  return {
+    npub: typeof participant.npub === 'string' ? participant.npub : null,
+    role: role === 'integration' || role === 'contributor' || role === 'reviewer' || role === 'approver' || role === 'observer'
+      ? role
+      : null,
+    metadataStatus: (participant.metadataStatus ?? participant.metadata_status) === 'missing'
+      || (participant.metadataStatus ?? participant.metadata_status) === 'valid'
+      || (participant.metadataStatus ?? participant.metadata_status) === 'invalid'
+      ? participant.metadataStatus ?? participant.metadata_status
+      : null,
+    capabilities: Array.isArray(participant.capabilities)
+      ? participant.capabilities.filter((item): item is string => typeof item === 'string')
+      : [],
+    localWorkspace: {
+      repoPath: typeof (localWorkspace.repoPath ?? localWorkspace.repo_path) === 'string' ? localWorkspace.repoPath ?? localWorkspace.repo_path as string : null,
+      defaultBranch: typeof (localWorkspace.defaultBranch ?? localWorkspace.default_branch) === 'string' ? localWorkspace.defaultBranch ?? localWorkspace.default_branch as string : null,
+      canRunTests: typeof (localWorkspace.canRunTests ?? localWorkspace.can_run_tests) === 'boolean' ? localWorkspace.canRunTests ?? localWorkspace.can_run_tests as boolean : null,
+    },
+    constraints: {
+      canMergeIntegration: typeof (constraints.canMergeIntegration ?? constraints.can_merge_integration) === 'boolean' ? constraints.canMergeIntegration ?? constraints.can_merge_integration as boolean : null,
+      canMergeProduction: typeof (constraints.canMergeProduction ?? constraints.can_merge_production) === 'boolean' ? constraints.canMergeProduction ?? constraints.can_merge_production as boolean : null,
+      canRestartManagedApps: typeof (constraints.canRestartManagedApps ?? constraints.can_restart_managed_apps) === 'boolean' ? constraints.canRestartManagedApps ?? constraints.can_restart_managed_apps as boolean : null,
+    },
+  };
+}
+
+function normaliseWorkroomContext(value: unknown): FlightDeckPgWorkroomContext {
+  const payload = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  const workroom = payload.workroom && typeof payload.workroom === 'object' && !Array.isArray(payload.workroom)
+    ? payload.workroom as Record<string, unknown>
+    : null;
+  const records = (key: string): Record<string, unknown>[] => Array.isArray(payload[key])
+    ? payload[key].filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && !Array.isArray(item)))
+    : [];
+  return {
+    isWorkroom: payload.isWorkroom === true,
+    workroom: workroom ?? (payload.room && typeof payload.room === 'object' && !Array.isArray(payload.room) ? payload.room as Record<string, unknown> : null),
+    participant: normaliseWorkroomParticipant(payload.participant),
+    appTargets: records('appTargets').concat(records('app_targets')),
+    recentEvents: records('recentEvents').concat(records('recent_events')),
+    recentLinks: records('recentLinks').concat(records('recent_links')),
+    openApprovals: records('openApprovals').concat(records('open_approvals')),
+  };
+}
+
+export async function fetchFlightDeckPgWorkroomContext(params: {
+  backendBaseUrl: string;
+  workspaceId: string;
+  channelId: string;
+  threadId: string;
+  actorNpub?: string | null;
+  appNpub: string;
+  botIdentity: RuntimeBotIdentity;
+  signal?: AbortSignal;
+}): Promise<FlightDeckPgWorkroomContext> {
+  const path = `/api/v4/flightdeck-pg/workspaces/${encodeURIComponent(params.workspaceId)}/workroom-context`;
+  const url = buildFlightDeckPgUrl(params.backendBaseUrl, path, {
+    channel_id: params.channelId,
+    thread_id: params.threadId,
+    actor_npub: params.actorNpub ?? null,
+  });
+  const authorization = await signFlightDeckPgBotRequest({ botIdentity: params.botIdentity, url, method: 'GET' });
+  const response = await fetch(url, {
+    headers: {
+      Accept: 'application/json',
+      Authorization: authorization,
+      'x-flightdeck-pg-app-npub': params.appNpub,
+    },
+    signal: params.signal,
+  });
+  if (response.status === 404 || response.status === 405 || response.status === 501) {
+    return { isWorkroom: false, workroom: null, participant: null, appTargets: [], recentEvents: [], recentLinks: [], openApprovals: [] };
+  }
+  if (!response.ok) {
+    const error = await parseTowerError(response, 'flightdeck_pg_workroom_context');
+    throw Object.assign(new Error(error.message), error);
+  }
+  return normaliseWorkroomContext(await response.json());
+}
+
+export async function patchFlightDeckPgWorkroomParticipantMetadata(params: {
+  backendBaseUrl: string;
+  workspaceId: string;
+  workroomId: string;
+  appNpub: string;
+  botIdentity: RuntimeBotIdentity;
+  metadata: Record<string, unknown>;
+  signal?: AbortSignal;
+}): Promise<Record<string, unknown>> {
+  const path = `/api/v4/flightdeck-pg/workspaces/${encodeURIComponent(params.workspaceId)}/workrooms/${encodeURIComponent(params.workroomId)}/participant`;
+  const url = buildFlightDeckPgUrl(params.backendBaseUrl, path);
+  const body = { metadata: params.metadata };
+  const authorization = await signFlightDeckPgBotRequest({ botIdentity: params.botIdentity, url, method: 'PATCH', body });
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      Accept: 'application/json',
+      Authorization: authorization,
+      'Content-Type': 'application/json',
+      'x-flightdeck-pg-app-npub': params.appNpub,
+    },
+    body: JSON.stringify(body),
+    signal: params.signal,
+  });
+  if (!response.ok) {
+    const error = await parseTowerError(response, 'flightdeck_pg_workroom_participant_patch');
+    throw Object.assign(new Error(error.message), error);
+  }
+  const payload = await response.json();
+  return payload && typeof payload === 'object' && !Array.isArray(payload) ? payload as Record<string, unknown> : {};
 }
 
 export async function createFlightDeckPgChannelMessage(params: {

@@ -54,6 +54,25 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
   },
   steps: [
     {
+      name: "prepare-workroom-participant-metadata",
+      description: "Build typed participant metadata for a workroom self-fill before role-specific chat classification.",
+      type: "code",
+      function: "workroom.prepareParticipantMetadata",
+      input: {
+        pick: {
+          workroomContext: "$.workroomContext",
+          workspace: "$.workspace",
+          agent: "$.agent",
+          runtime: "$.runtime",
+        },
+      },
+      assign: "$.participantMetadata",
+      display: {
+        in: [{ label: "Workroom", path: "$.workroomContext.isWorkroom" }],
+        out: [{ label: "Participant Metadata", path: "$.metadata", format: "text" }],
+      },
+    },
+    {
       name: "hydrate-chat-context",
       description: "Fetch the latest Flight Deck PG thread, referenced records, and visible scopes after the runtime has already acknowledged receipt.",
       type: "code",
@@ -68,6 +87,7 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
           routing: "$.routing",
           runtime: "$.runtime",
           flightDeckContext: "$.flightDeckContext",
+          workroomContext: "$.workroomContext",
         },
       },
       assign: "$.chatContext",
@@ -100,6 +120,7 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
           runtime: "$.runtime",
           chatContext: "$.chatContext",
           flightDeckContext: "$.flightDeckContext",
+          workroomContext: "$.workroomContext",
         },
       },
       assign: "$.chatDispatchInput",
@@ -153,7 +174,7 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
           chatDispatchInput: "$.chatDispatchInput",
         },
       },
-      prompt: "You are stage 1 of agent-dispatch-chat: Fast Gate. The selected input contains chatDispatchInput, a compact decision packet. Use chatDispatchInput.latestThread as the authoritative latest conversation, chatDispatchInput.channelContext.contextPrompt as channel-specific instructions, and referencedRecords as supporting context. Do not choose child pipelines. Do not inspect repositories, sessions, files, Flight Deck state, Tower state, or external sources in this stage. Classify only as answer_now, think_then_answer, create_task, or ignore. Use answer_now only when the complete final reply can be written immediately from supplied context in chatResponse.body. Use think_then_answer when the final output is still a chat answer but needs reasoning, context loading, lookup, or multiple internal steps. Use create_task only when the user needs durable output such as code, docs, files, WApp changes, migrations, configuration, or other concrete artifacts. Use ignore for self-authored or non-actionable dispatches. For create_task, include taskDraft with title, instructions, acceptanceCriteria, executionPlan, and managerChecklist when enough information is available; ask one clarifyingQuestion when required information is missing. Return JSON only with: intent string exactly answer_now|think_then_answer|create_task|ignore, chatResponse object with body string|null, clarifyingQuestion string|null, taskDraft object|null, confidence number from 0 to 1.",
+      prompt: "You are stage 1 of agent-dispatch-chat: Fast Gate. The selected input contains chatDispatchInput, a compact decision packet. Use chatDispatchInput.latestThread as the authoritative latest conversation, chatDispatchInput.channelContext.contextPrompt as channel-specific instructions, and referencedRecords as supporting context. When chatDispatchInput.workroomContext exists, treat it as typed authority: enforce its participant role, room goal/state, repo and branches, app targets/runbooks, recent events/links, and approvals. Integration coordinates; contributor scopes and validates work; reviewer writes evidence; approver decides approvals without implementing; observer answers only when directly asked or mentioned. Do not choose child pipelines. Do not inspect repositories, sessions, files, Flight Deck state, Tower state, or external sources in this stage. Classify only as answer_now, think_then_answer, create_task, or ignore. Use answer_now only when the complete final reply can be written immediately from supplied context in chatResponse.body. Use think_then_answer when the final output is still a chat answer but needs reasoning, context loading, lookup, or multiple internal steps. Use create_task only when the user needs durable output such as code, docs, files, WApp changes, migrations, configuration, or other concrete artifacts. Use ignore for self-authored or non-actionable dispatches. For create_task, include taskDraft with title, instructions, acceptanceCriteria, executionPlan, and managerChecklist when enough information is available; ask one clarifyingQuestion when required information is missing. Return JSON only with: intent string exactly answer_now|think_then_answer|create_task|ignore, chatResponse object with body string|null, clarifyingQuestion string|null, taskDraft object|null, confidence number from 0 to 1.",
       assign: "$.agentDecision",
       display: {
         in: [

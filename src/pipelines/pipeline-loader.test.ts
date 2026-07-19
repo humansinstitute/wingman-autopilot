@@ -72,6 +72,7 @@ describe("pipeline definition version paths", () => {
     expect(definition?.slug).toBe("fd-agent-dispatch-chat");
     expect(definition?.name).toBe("fd-agent-dispatch-chat");
     expect(definition?.spec.steps.map((step) => step.name)).toEqual([
+      "prepare-workroom-participant-metadata",
       "hydrate-chat-context",
       "prepare-intent-input",
       "prepare-short-lookup-answer",
