@@ -15,9 +15,9 @@ export function createStatus() {
   return status;
 }
 
-export function createButton(label, className = 'wm-button secondary') {
+export function createButton(label, className = 'wm-button secondary', type = 'button') {
   const button = document.createElement('button');
-  button.type = 'button';
+  button.type = type;
   button.className = className;
   button.textContent = label;
   return button;
@@ -252,7 +252,7 @@ function createSettingEditor(setting, onSave, onCancel) {
   input.setAttribute('aria-label', `Value for ${setting.label}`);
   input.setAttribute('data-testid', `instance-setting-input-${setting.key}`);
 
-  const save = createButton('Save', 'wm-button');
+  const save = createButton('Save', 'wm-button', 'submit');
   save.setAttribute('aria-label', `Save ${setting.label}`);
   save.setAttribute('data-testid', `instance-setting-save-${setting.key}`);
 
