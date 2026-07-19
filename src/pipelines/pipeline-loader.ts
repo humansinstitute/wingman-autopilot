@@ -64,6 +64,7 @@ const AGENT_DISPATCH_CHAT_DEFINITION = {
           workspace: "$.workspace",
           agent: "$.agent",
           runtime: "$.runtime",
+          persist: "$.runtime.persistParticipantMetadata",
         },
       },
       assign: "$.participantMetadata",
