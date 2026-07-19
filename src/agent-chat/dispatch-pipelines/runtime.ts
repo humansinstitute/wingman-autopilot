@@ -1081,6 +1081,7 @@ function buildDispatchEnvelope(input: {
       commandPrefix: flightDeckRuntime.commandPrefix,
       commands: flightDeckRuntime.commands,
       error: flightDeckRuntime.error,
+      persistParticipantMetadata: true,
       acknowledgement: input.acknowledgement,
       availablePipelines: input.availablePipelines.map((definition) => ({
         id: definition.id,
