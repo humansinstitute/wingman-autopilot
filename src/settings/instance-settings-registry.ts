@@ -22,6 +22,7 @@ export interface InstanceSettingDefinition {
   cleanupAllowed?: boolean;
   compatibilityEnvName?: string;
   defaultValue?: string;
+  options?: readonly string[];
   validate?: (value: string) => string | null;
 }
 
@@ -122,6 +123,7 @@ export const INSTANCE_SETTING_DEFINITIONS: InstanceSettingDefinition[] = [
     requiresRestart: true,
     cleanupAllowed: true,
     compatibilityEnvName: "WINGMAN_APP_ROUTING",
+    options: ["path", "subdomain"],
     validate: (value) => ["path", "subdomain"].includes(value.trim().toLowerCase())
       ? null
       : "App routing must be path or subdomain",
@@ -149,6 +151,7 @@ export const INSTANCE_SETTING_DEFINITIONS: InstanceSettingDefinition[] = [
     requiresRestart: true,
     cleanupAllowed: true,
     compatibilityEnvName: "WINGMAN_SUBDOMAIN_PROXY_ENABLED",
+    options: ["true", "false"],
     validate: booleanValue("Subdomain proxy enabled"),
   },
   {
@@ -234,6 +237,7 @@ export const INSTANCE_SETTING_DEFINITIONS: InstanceSettingDefinition[] = [
     requiresRestart: true,
     cleanupAllowed: true,
     compatibilityEnvName: "AGENT_SPAWN_MODE",
+    options: ["bun", "pm2", "tmux"],
     validate: (value) => ["bun", "pm2", "tmux"].includes(value.trim().toLowerCase())
       ? null
       : "Agent spawn mode must be bun, pm2, or tmux",
@@ -489,6 +493,7 @@ export const INSTANCE_SETTING_DEFINITIONS: InstanceSettingDefinition[] = [
     requiresRestart: true,
     cleanupAllowed: true,
     compatibilityEnvName: "REGISTER",
+    options: ["true", "false"],
     validate: (value) => ["true", "false", "1", "0", "yes", "no", "on", "off"].includes(value.trim().toLowerCase())
       ? null
       : "Registration toggle must be a boolean",

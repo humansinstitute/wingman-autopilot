@@ -245,10 +245,23 @@ function createSettingEditor(setting, onSave, onCancel) {
   form.className = 'wm-instance-settings__editor';
   form.setAttribute('data-testid', `instance-setting-editor-${setting.key}`);
 
-  const input = document.createElement('input');
+  const options = Array.isArray(setting.options) ? setting.options : [];
+  const input = options.length > 0
+    ? document.createElement('select')
+    : document.createElement('input');
   input.className = 'wm-input';
-  input.type = setting.secret ? 'password' : 'text';
-  input.placeholder = setting.secret ? 'Replace secret' : 'Set value';
+  if (options.length > 0) {
+    options.forEach((option) => {
+      const choice = document.createElement('option');
+      choice.value = option;
+      choice.textContent = option.charAt(0).toUpperCase() + option.slice(1);
+      input.append(choice);
+    });
+    input.value = setting.value || setting.maskedValue || setting.defaultValue || options[0];
+  } else {
+    input.type = setting.secret ? 'password' : 'text';
+    input.placeholder = setting.secret ? 'Replace secret' : 'Set value';
+  }
   input.setAttribute('aria-label', `Value for ${setting.label}`);
   input.setAttribute('data-testid', `instance-setting-input-${setting.key}`);
 

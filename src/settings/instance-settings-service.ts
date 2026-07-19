@@ -40,6 +40,7 @@ export interface MaskedInstanceSetting {
   maskedValue: string | null;
   fingerprint: string | null;
   defaultValue: string | null;
+  options: string[];
 }
 
 export interface EnvImportCandidate {
@@ -368,6 +369,7 @@ function maskDefinition(
     maskedValue: fallbackValue === null ? null : maskValue(fallbackValue, Boolean(definition.secret)),
     fingerprint: fallbackValue === null ? null : fingerprintValue(fallbackValue),
     defaultValue: definition.defaultValue ?? null,
+    options: definition.options ? [...definition.options] : [],
   };
 }
 
