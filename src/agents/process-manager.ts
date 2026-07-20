@@ -278,20 +278,54 @@ async function prepareCodexApiAuthHome(env: Record<string, string>): Promise<voi
 }
 
 /**
- * Build a direct opencode command from the agentapi-wrapped command.
- * Extracts the CLI binary and any args after the `--` separator, then
- * prepends `--port PORT` so OpenCode serves on the allocated port.
+ * Build a direct OpenCode server command from the AgentAPI-wrapped command.
+ * OpenCode's native HTTP API is exposed by `opencode serve`; model selection
+ * is sent per prompt by the SDK, so process-level model flags are removed.
  */
-function resolveNativeOpenCodeCommand(agentapiCommand: string[], port: number): string[] {
+export function resolveNativeOpenCodeCommand(agentapiCommand: string[], port: number): string[] {
   const separatorIndex = agentapiCommand.indexOf("--");
   if (separatorIndex === -1) {
-    // Fallback: just use `opencode` with a port flag
-    return ["opencode", "--port", String(port)];
+    return ["opencode", "serve", "--port", String(port), "--hostname", "127.0.0.1"];
   }
-  const cliArgs = agentapiCommand.slice(separatorIndex + 1);
-  // Insert --port PORT after the binary name
-  const [binary, ...rest] = cliArgs;
-  return [binary ?? "opencode", "--port", String(port), ...rest];
+  const [binary, ...cliArgs] = agentapiCommand.slice(separatorIndex + 1);
+  return [
+    binary ?? "opencode",
+    "serve",
+    "--port",
+    String(port),
+    "--hostname",
+    "127.0.0.1",
+    ...withoutModelArgs(cliArgs),
+  ];
+}
+
+function withoutModelArgs(args: string[]): string[] {
+  const filtered: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--model") {
+      index += 1;
+      continue;
+    }
+    if (arg?.startsWith("--model=")) {
+      continue;
+    }
+    filtered.push(arg);
+  }
+  return filtered;
+}
+
+function extractModelOverride(args: string[]): string {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--model") {
+      return args[index + 1]?.trim() ?? "";
+    }
+    if (arg?.startsWith("--model=")) {
+      return arg.slice("--model=".length).trim();
+    }
+  }
+  return "";
 }
 
 function withModelOverride(command: string[], modelValue: string): string[] {
@@ -426,6 +460,7 @@ export class ProcessManager {
     let command = definition.command({ port, agent, config: this.config });
 
     const resolvedModel = normalizeAgentModelOverride(model);
+    let sessionModel = resolvedModel || undefined;
 
     // When the OpenCode native SDK flag is on, spawn opencode directly
     // instead of wrapping it with agentapi.  The OpenCodeAdapter SDK client
@@ -436,6 +471,7 @@ export class ProcessManager {
     if (agent === "opencode") {
       const ocFlag = featureFlagStore.getFlag(OPENCODE_NATIVE_SDK_FLAG);
       if (ocFlag && resolveFeatureFlagEffectiveState(ocFlag.state, true) === "on") {
+        sessionModel = extractModelOverride(command) || undefined;
         command = resolveNativeOpenCodeCommand(command, port);
       }
     }
@@ -478,7 +514,7 @@ export class ProcessManager {
       isAdmin,
       targetFile: targetFile ?? undefined,
       metadata: sessionMetadata,
-      model: resolvedModel || undefined,
+      model: sessionModel,
     };
 
     this.sessions.set(id, session);

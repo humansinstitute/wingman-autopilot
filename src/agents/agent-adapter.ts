@@ -1,8 +1,8 @@
 /**
  * AgentAdapter — abstracts the communication protocol between Wingman and an agent.
  *
- * AgentApiAdapter (agentapi HTTP proxy) is the default for all agents.
- * Future adapters: OpenCodeAdapter (@opencode-ai/sdk), CodexAdapter (@openai/codex-sdk).
+ * AgentApiAdapter (agentapi HTTP proxy) remains the fallback for agents without
+ * a native transport. OpenCodeAdapter and CodexAdapter use their SDKs directly.
  */
 
 import type { AgentType } from "../config";
@@ -64,11 +64,7 @@ export interface AgentAdapter {
   /** Send a message to the agent. Throws on failure after retries. */
   sendMessage(content: string, type?: string): Promise<void>;
 
-  /**
-   * Whether prompts must be delivered through this adapter's `sendMessage`
-   * rather than an agentapi HTTP `POST /message`. True for in-process native
-   * SDK adapters (Pi, native Codex) that bypass agentapi entirely.
-   */
+  /** Whether prompts must bypass AgentAPI and use this adapter directly. */
   deliversPromptsDirectly?(): boolean;
 
   /** Fetch conversation message history */

@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   ProcessManager,
   normalizeAgentModelOverride,
+  resolveNativeOpenCodeCommand,
   shouldCleanupMcpFiles,
   pm2StopShouldMarkStopped,
 } from "./process-manager";
@@ -68,6 +69,27 @@ describe("normalizeAgentModelOverride", () => {
 
   test("keeps explicit model overrides", () => {
     expect(normalizeAgentModelOverride("gpt-5.5")).toBe("gpt-5.5");
+  });
+});
+
+describe("resolveNativeOpenCodeCommand", () => {
+  test("starts OpenCode's native server and removes process-level model flags", () => {
+    expect(resolveNativeOpenCodeCommand([
+      "/repo/out/agentapi",
+      "server",
+      "--type=opencode",
+      "--",
+      "opencode",
+      "--model",
+      "openrouter/kimi",
+    ], 3704)).toEqual([
+      "opencode",
+      "serve",
+      "--port",
+      "3704",
+      "--hostname",
+      "127.0.0.1",
+    ]);
   });
 });
 

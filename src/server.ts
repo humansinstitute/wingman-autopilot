@@ -474,12 +474,13 @@ const FEATURE_FLAG_DEFAULTS: Array<{
     key: OPENCODE_NATIVE_SDK_FLAG,
     label: "OpenCode Native SDK",
     description: "Use @opencode-ai/sdk directly instead of agentapi for OpenCode sessions.",
-    state: "off",
+    state: "on",
   },
 ];
 
 featureFlagStore.ensureDefaults(FEATURE_FLAG_DEFAULTS);
 featureFlagStore.ensureDefaultState(CODEX_NATIVE_SDK_FLAG, "off");
+featureFlagStore.ensureDefaultState(OPENCODE_NATIVE_SDK_FLAG, "on");
 process.env.WINGMAN_PID = process.pid.toString();
 const projectStore = new ProjectStore();
 const todoStore = new TodoStore();
