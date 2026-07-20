@@ -62,6 +62,7 @@ export function initSessionRuntimeSync({
   fetchSessionQueue,
   applyRouteSessionFromPath,
   ensureActiveSession,
+  applyBranding,
 }) {
   const conversationSelectionState = {
     pointerDownInConversation: false,
@@ -81,6 +82,7 @@ export function initSessionRuntimeSync({
       ? configData.agents.filter((agent) => agent && typeof agent.id === "string" && typeof agent.label === "string")
       : [];
     state.config = { ...configData, adminNpub: adminNpubNormalized ?? null, adminNpubs, connectRelays, agents };
+    applyBranding?.(state.config.branding);
 
     if (typeof globalThis !== "undefined" && globalThis.wingmanIdentity) {
       globalThis.wingmanIdentity.connectRelays = connectRelays;

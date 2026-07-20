@@ -1,6 +1,7 @@
 export type InstanceSettingType = "string" | "number" | "boolean" | "json" | "list" | "secret";
 
 export type InstanceSettingCategory =
+  | "branding"
   | "runtime"
   | "agents"
   | "integrations"
@@ -63,6 +64,36 @@ const jsonValue = (label: string) => (value: string): string | null => {
 };
 
 export const INSTANCE_SETTING_DEFINITIONS: InstanceSettingDefinition[] = [
+  {
+    key: "branding.name",
+    label: "Autopilot Name",
+    description: "Name shown in the header and browser title.",
+    category: "branding",
+    type: "string",
+    envAliases: ["AUTOPILOT_NAME", "WINGMAN_NAME"],
+    autoImport: true,
+    requiresRestart: false,
+    cleanupAllowed: true,
+    compatibilityEnvName: "AUTOPILOT_NAME",
+    defaultValue: "Wingman",
+    validate: nonEmpty("Autopilot name"),
+  },
+  {
+    key: "branding.highlight_color",
+    label: "Highlight Colour",
+    description: "Base colour used to derive the Autopilot accent palette.",
+    category: "branding",
+    type: "string",
+    envAliases: ["AUTOPILOT_HIGHLIGHT_COLOR", "WINGMAN_HIGHLIGHT_COLOR"],
+    autoImport: true,
+    requiresRestart: false,
+    cleanupAllowed: true,
+    compatibilityEnvName: "AUTOPILOT_HIGHLIGHT_COLOR",
+    defaultValue: "#10b981",
+    validate: (value) => /^#[0-9a-f]{6}$/i.test(value.trim())
+      ? null
+      : "Highlight colour must be a six-digit hex colour",
+  },
   {
     key: "runtime.port",
     label: "Port",

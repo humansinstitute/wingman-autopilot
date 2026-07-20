@@ -1,4 +1,5 @@
 const CATEGORY_LABELS = {
+  branding: 'Branding',
   runtime: 'Runtime',
   agents: 'Agents',
   integrations: 'Integrations',

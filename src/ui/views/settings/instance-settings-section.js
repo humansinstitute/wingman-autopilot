@@ -65,7 +65,9 @@ export function createInstanceSettingsSection() {
       selectionInitialized = true;
     }
 
-    const settings = Array.isArray(payload.settings) ? payload.settings : [];
+    const settings = Array.isArray(payload.settings)
+      ? payload.settings.filter((setting) => setting.category !== 'branding')
+      : [];
     body.append(createSettingsPanel(settings, {
       editingKey,
       onEdit: (key) => {

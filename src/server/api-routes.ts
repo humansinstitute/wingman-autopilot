@@ -623,6 +623,7 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
     }
 
     if (pathname === "/api/config" && method === "GET") {
+      const instanceSettings = ctx.instanceSettingsRoutesContext.service;
       const defaultAgent = resolveViewerDefaultAgent(ctx, viewerNpub);
       const agents = Object.entries(ctx.config.agents ?? {}).map(([key, definition]) => ({
         id: key,
@@ -630,6 +631,10 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
         modelOptions: Array.isArray(definition.modelOptions) ? definition.modelOptions : ["default"],
       }));
       return Response.json({
+        branding: {
+          name: instanceSettings.get("branding.name")?.trim() || "Wingman",
+          highlightColor: instanceSettings.get("branding.highlight_color")?.trim() || "#10b981",
+        },
         port: ctx.config.port,
         baseUrl: ctx.config.baseUrl,
         agentPortStart: ctx.config.agentPortStart,

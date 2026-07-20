@@ -148,6 +148,7 @@ import { abbreviateNpub, normaliseNpubValue, isFiniteNumber, initIdentityDom } f
 import { initIdentityStateManager } from "./identity/state-manager.js";
 import { createNavigation } from "./navigation/navigation.js";
 import { createSessionRouting } from "./sessions/session-routing.js";
+import { applyInstanceBranding, getInstanceName } from "./branding/instance-branding.js";
 
 // Ace editor is lazy-loaded when the file editor is first opened.
 // See loadAceEditor() below and initFileEditor deps.
@@ -1267,7 +1268,8 @@ const setActiveNav = () => {
 };
 
 const updateDocumentTitle = () => {
-  let title = "Wingman";
+  const instanceName = getInstanceName(state.config);
+  let title = instanceName;
   if (currentRoute === "live") {
     const currentSessionId = resolveCurrentLiveSessionId();
     const session = currentSessionId
@@ -1275,30 +1277,30 @@ const updateDocumentTitle = () => {
       : null;
     if (session) {
       const sessionName = getSessionDisplayName(session);
-      title = `${sessionName} - Wingman`;
+      title = `${sessionName} - ${instanceName}`;
     } else {
-      title = "Agents - Wingman";
+      title = `Agents - ${instanceName}`;
     }
   } else if (currentRoute === "apps") {
-    title = "Apps - Wingman";
+    title = `Apps - ${instanceName}`;
   } else if (currentRoute === "files") {
     title = getFilesSurfaceFromPath(window.location.pathname) === "docs"
-      ? "Docs - Wingman"
-      : "Files - Wingman";
+      ? `Docs - ${instanceName}`
+      : `Files - ${instanceName}`;
   } else if (currentRoute === "settings") {
-    title = "Settings - Wingman";
+    title = `Settings - ${instanceName}`;
   } else if (currentRoute === "projects") {
-    title = "Projects - Wingman";
+    title = `Projects - ${instanceName}`;
   } else if (currentRoute === "nightwatch") {
-    title = "Night Watchman - Wingman";
+    title = `Night Watchman - ${instanceName}`;
   } else if (currentRoute === "scheduler") {
-    title = "Triggers - Wingman";
+    title = `Triggers - ${instanceName}`;
   } else if (currentRoute === "pipelines") {
-    title = "Pipelines - Wingman";
+    title = `Pipelines - ${instanceName}`;
   } else if (currentRoute === "terminal") {
-    title = "Terminal - Wingman";
+    title = `Terminal - ${instanceName}`;
   } else if (currentRoute === "home") {
-    title = "Home - Wingman";
+    title = `Home - ${instanceName}`;
   }
   document.title = title;
 };
@@ -1634,6 +1636,10 @@ const sessionRuntimeSync = initSessionRuntimeSync({
   fetchSessionQueue: (...args) => fetchSessionQueue(...args),
   applyRouteSessionFromPath: (...args) => applyRouteSessionFromPath(...args),
   ensureActiveSession: (...args) => ensureActiveSession(...args),
+  applyBranding: (branding) => {
+    applyInstanceBranding(branding);
+    updateDocumentTitle();
+  },
 });
 fetchConfig = (...args) => sessionRuntimeSync.fetchConfig(...args);
 fetchSessions = (...args) => sessionRuntimeSync.fetchSessions(...args);
@@ -2066,6 +2072,12 @@ const settingsViewModule = initSettingsView({
   fetchNpubProjects,
   renderNpubProjectsPanel,
   openDirectoryBrowser: (...args) => openDirectoryBrowser(...args),
+  refreshBranding: async (branding) => {
+    state.config = { ...state.config, branding };
+    applyInstanceBranding(branding);
+    updateDocumentTitle();
+    render();
+  },
 });
 renderSettings = settingsViewModule.renderSettings;
 

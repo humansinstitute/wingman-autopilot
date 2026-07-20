@@ -103,7 +103,9 @@ function createHandler(options: {
       },
     },
     instanceSettingsRoutesContext: {
-      service: {} as any,
+      service: {
+        get: (key: string) => options.settings?.[key] ?? null,
+      } as any,
       ensureApiAccess: async (_action, _request, _url, currentAuth) =>
         currentAuth.npub ? null : Response.json({ error: "Authentication required" }, { status: 401 }),
       AccessActions: {
@@ -175,6 +177,20 @@ function createHandler(options: {
 }
 
 describe("createApiRouteHandler config defaults", () => {
+  test("returns instance branding with configured values", async () => {
+    const handler = createHandler({
+      settings: {
+        "branding.name": "Rick",
+        "branding.highlight_color": "#a855f7",
+      },
+    });
+    const url = new URL("http://localhost:3000/api/config");
+    const response = await handler(new Request(url.toString()), url, "GET", anonymousAuth);
+    const body = await response!.json() as { branding: { name: string; highlightColor: string } };
+
+    expect(body.branding).toEqual({ name: "Rick", highlightColor: "#a855f7" });
+  });
+
   test("returns a per-user default agent override from user settings", async () => {
     const authContext: RequestAuthContext = {
       npub: "npub1viewer",

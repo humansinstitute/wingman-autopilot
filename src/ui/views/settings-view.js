@@ -19,6 +19,7 @@ import { createAgentChatSection } from './settings/agent-chat-section.js';
 import { createFlightDeckSection } from './settings/flight-deck-section.js';
 import { createRemoteInstructSection } from './settings/remote-instruct-section.js';
 import { createInstanceSettingsSection } from './settings/instance-settings-section.js';
+import { createInstanceBrandingSection } from '../branding/instance-branding.js';
 
 export function initSettingsView(deps) {
   const {
@@ -40,6 +41,7 @@ export function initSettingsView(deps) {
     fetchNpubProjects,
     renderNpubProjectsPanel,
     openDirectoryBrowser,
+    refreshBranding,
   } = deps;
 
   function renderWorkspaceTab() {
@@ -228,6 +230,10 @@ export function initSettingsView(deps) {
 
   function renderAdminTab() {
     const fragment = document.createDocumentFragment();
+    fragment.append(createInstanceBrandingSection({
+      config: state.config,
+      onSaved: refreshBranding,
+    }));
     fragment.append(createInstanceSettingsSection());
     fragment.append(createRemoteInstructSection());
     fragment.append(createTeamBillingSection());
