@@ -101,6 +101,17 @@ describe("createSessionEventsHandler", () => {
               type: "status",
               status: "running",
             });
+            listener({
+              type: "permission",
+              permission: {
+                id: "permission-1",
+                sessionId: "session-1",
+                type: "file",
+                title: "Write file",
+                metadata: {},
+                createdAt: "2026-04-16T08:00:00.000Z",
+              },
+            });
           });
           return () => {};
         },

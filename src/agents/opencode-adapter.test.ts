@@ -12,6 +12,16 @@ const context = {
   opencodeSdkSessionId: "opencode-session",
 };
 
+function requestUrl(input: string | URL | Request): string {
+  return typeof input === "string" ? input : input instanceof Request ? input.url : input.toString();
+}
+
+async function requestBody(input: string | URL | Request, init?: RequestInit): Promise<string> {
+  if (typeof init?.body === "string") return init.body;
+  if (input instanceof Request) return input.clone().text();
+  return "";
+}
+
 describe("OpenCodeAdapter", () => {
   const originalFetch = globalThis.fetch;
 
@@ -21,8 +31,7 @@ describe("OpenCodeAdapter", () => {
 
   test("reads structured message history from OpenCode", async () => {
     globalThis.fetch = (async (input) => {
-      const requestUrl = typeof input === "string" ? input : input.url;
-      expect(new URL(requestUrl).pathname).toBe("/session/opencode-session/message");
+      expect(new URL(requestUrl(input)).pathname).toBe("/session/opencode-session/message");
       return Response.json([
         {
           info: {
@@ -53,13 +62,8 @@ describe("OpenCodeAdapter", () => {
     const requests: Array<{ path: string; body: Record<string, unknown> | null }> = [];
     let releasePrompt: (() => void) | null = null;
     globalThis.fetch = (async (input, init) => {
-      const requestUrl = typeof input === "string" ? input : input.url;
-      const url = new URL(requestUrl);
-      const bodyText = typeof init?.body === "string"
-        ? init.body
-        : typeof input === "string"
-          ? null
-          : await input.clone().text();
+      const url = new URL(requestUrl(input));
+      const bodyText = await requestBody(input, init);
       const body = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : null;
       requests.push({ path: url.pathname, body });
       if (url.pathname.endsWith("/abort")) return Response.json(true);
@@ -83,7 +87,41 @@ describe("OpenCodeAdapter", () => {
 
     const interrupted = await adapter.interruptCurrentTurn();
     expect(interrupted).toBe(true);
-    releasePrompt?.();
+    (releasePrompt as (() => void) | null)?.();
     await sendPromise;
+  });
+
+  test("surfaces and resolves OpenCode permission requests", async () => {
+    let requestedBody: unknown = null;
+    globalThis.fetch = (async (input, init) => {
+      const bodyText = await requestBody(input, init);
+      requestedBody = bodyText ? JSON.parse(bodyText) : null;
+      return Response.json(true);
+    }) as typeof fetch;
+
+    const adapter = new OpenCodeAdapter(context);
+    const events: unknown[] = [];
+    const unsubscribe = adapter.subscribeToEvents((event) => events.push(event));
+    await (adapter as unknown as {
+      handleEvent(event: Record<string, unknown>): Promise<void>;
+    }).handleEvent({
+      type: "permission.updated",
+      properties: {
+        id: "permission-1",
+        sessionID: "opencode-session",
+        type: "file",
+        title: "Write project file",
+        pattern: "src/**",
+        metadata: {},
+        time: { created: 1_750_000_000_000 },
+      },
+    });
+
+    expect(events).toHaveLength(1);
+    expect(adapter.getPendingPermissions()).toHaveLength(1);
+    await expect(adapter.respondToPermission("permission-1", "once")).resolves.toBe(true);
+    expect(requestedBody).toEqual({ response: "once" });
+    expect(adapter.getPendingPermissions()).toHaveLength(0);
+    unsubscribe();
   });
 });

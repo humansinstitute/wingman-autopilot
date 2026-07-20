@@ -36,6 +36,15 @@ db.version(3).stores({
   apps: "id, label, updatedAt",
 });
 
+// Version 4: Add ephemeral agent permission requests for native SDK sessions.
+db.version(4).stores({
+  messages: "++id, sessionId, [sessionId+createdAt], messageHash",
+  sessions: "id, status, updatedAt",
+  apiSessions: "id, status, agentType, npub, updatedAt, targetFile",
+  apps: "id, label, updatedAt",
+  permissions: "id, sessionId, status, createdAt, [sessionId+status]",
+});
+
 /**
  * Message store operations.
  *
@@ -282,6 +291,49 @@ export const MessageStore = {
   },
 };
 
+export const PermissionStore = {
+  async getSessionPermissions(sessionId) {
+    return db.permissions
+      .where("[sessionId+status]")
+      .equals([sessionId, "pending"])
+      .sortBy("createdAt");
+  },
+
+  async upsert(sessionId, permission) {
+    if (!permission?.id) return;
+    await db.permissions.put({
+      ...permission,
+      id: `${sessionId}:${permission.id}`,
+      permissionId: permission.id,
+      sessionId,
+      status: "pending",
+      updatedAt: new Date().toISOString(),
+    });
+  },
+
+  async replaceSession(sessionId, permissions) {
+    await this.clearSession(sessionId);
+    for (const permission of Array.isArray(permissions) ? permissions : []) {
+      await this.upsert(sessionId, permission);
+    }
+  },
+
+  async remove(sessionId, permissionId) {
+    await db.permissions.delete(`${sessionId}:${permissionId}`);
+  },
+
+  liveQuery(sessionId) {
+    return db.permissions
+      .where("[sessionId+status]")
+      .equals([sessionId, "pending"])
+      .sortBy("createdAt");
+  },
+
+  async clearSession(sessionId) {
+    await db.permissions.where("sessionId").equals(sessionId).delete();
+  },
+};
+
 /**
  * Session store operations.
  */
@@ -456,32 +508,35 @@ export const DbUtils = {
     await db.sessions.clear();
     await db.apiSessions.clear();
     await db.apps.clear();
+    await db.permissions.clear();
   },
 
   /**
    * Get database statistics.
    */
   async getStats() {
-    const [messageCount, sessionCount, apiSessionCount, appCount] = await Promise.all([
+    const [messageCount, sessionCount, apiSessionCount, appCount, permissionCount] = await Promise.all([
       db.messages.count(),
       db.sessions.count(),
       db.apiSessions.count(),
       db.apps.count(),
+      db.permissions.count(),
     ]);
-    return { messageCount, sessionCount, apiSessionCount, appCount };
+    return { messageCount, sessionCount, apiSessionCount, appCount, permissionCount };
   },
 
   /**
    * Export all data (for debugging).
    */
   async exportAll() {
-    const [messages, sessions, apiSessions, apps] = await Promise.all([
+    const [messages, sessions, apiSessions, apps, permissions] = await Promise.all([
       db.messages.toArray(),
       db.sessions.toArray(),
       db.apiSessions.toArray(),
       db.apps.toArray(),
+      db.permissions.toArray(),
     ]);
-    return { messages, sessions, apiSessions, apps };
+    return { messages, sessions, apiSessions, apps, permissions };
   },
 };
 

@@ -172,6 +172,10 @@ function createNativeAdapterStream(
             writeEvent("message", event.message as unknown as Record<string, unknown>);
             return;
           }
+          if (event.type === "permission") {
+            writeEvent("permission", event.permission as unknown as Record<string, unknown>);
+            return;
+          }
           writeEvent("status", {
             status: event.status,
             agent_status: event.status,

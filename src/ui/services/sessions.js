@@ -62,6 +62,28 @@ export async function fetchSessionMessagesApi(sessionId, options = {}) {
   return response.json();
 }
 
+export async function fetchSessionPermissionsApi(sessionId) {
+  const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/permissions`);
+  if (!response.ok) return null;
+  return response.json();
+}
+
+export async function respondToSessionPermissionApi(sessionId, permissionId, responseValue) {
+  const response = await fetch(
+    `/api/sessions/${encodeURIComponent(sessionId)}/permissions/${encodeURIComponent(permissionId)}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ response: responseValue }),
+    },
+  );
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(body?.error || response.statusText || "Failed to respond to permission");
+  }
+  return body;
+}
+
 /**
  * Fetches session history from any source (live, abandoned, or archived).
  * @param {string} sessionId - The session ID

@@ -4586,6 +4586,56 @@ body[data-live-header-collapsed="true"]:has(#app[data-route="live"]) .wm-live-dr
   font-weight: 500;
 }
 
+.wm-permission-requests {
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.75rem 1rem;
+  background: rgba(245, 158, 11, 0.08);
+  border-bottom: 1px solid rgba(245, 158, 11, 0.25);
+}
+
+.wm-permission-request {
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.7rem;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 0.5rem;
+  background: var(--bg-secondary);
+}
+
+.wm-permission-request__copy {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.wm-permission-request__copy span {
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+.wm-permission-request__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.wm-permission-request__actions button {
+  min-height: 2rem;
+  padding: 0.35rem 0.65rem;
+  border: 1px solid var(--border-color);
+  border-radius: 0.35rem;
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  cursor: pointer;
+}
+
+.wm-permission-request__actions button:hover,
+.wm-permission-request__actions button:focus-visible {
+  border-color: var(--accent-primary);
+}
+
 .chat-loading,
 .chat-error,
 .chat-empty {

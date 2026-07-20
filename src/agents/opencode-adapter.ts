@@ -12,6 +12,7 @@ import { createOpencodeClient } from "@opencode-ai/sdk/client";
 import type {
   AdapterStreamEvent,
   AgentAdapter,
+  AgentPermission,
   AdapterSessionContext,
   PromptReadiness,
 } from "./agent-adapter";
@@ -32,6 +33,7 @@ export class OpenCodeAdapter implements AgentAdapter {
   private state: AdapterState = "initializing";
   private readonly workingDirectory: string;
   private readonly streamListeners = new Set<(event: AdapterStreamEvent) => void>();
+  private readonly pendingPermissions = new Map<string, AgentPermission>();
   private eventAbortController: AbortController | null = null;
   private eventTask: Promise<void> | null = null;
 
@@ -146,7 +148,7 @@ export class OpenCodeAdapter implements AgentAdapter {
       if (result.error) {
         throw new Error(`OpenCode prompt failed: ${JSON.stringify(result.error)}`);
       }
-      const usage = result.data?.info.tokens;
+      const usage = result.data?.info?.tokens;
       if (usage && this.context.recordUsage) {
         this.context.recordUsage({
           sessionId: this.context.id,
@@ -176,6 +178,25 @@ export class OpenCodeAdapter implements AgentAdapter {
     });
     if (result.error || !Array.isArray(result.data)) return [];
     return result.data.flatMap((entry) => toAgentMessages(entry.info, entry.parts));
+  }
+
+  getPendingPermissions(): AgentPermission[] {
+    return [...this.pendingPermissions.values()];
+  }
+
+  async respondToPermission(
+    permissionId: string,
+    response: "once" | "always" | "reject",
+  ): Promise<boolean> {
+    if (!this.sessionId || !this.pendingPermissions.has(permissionId)) return false;
+    const result = await this.client.postSessionIdPermissionsPermissionId({
+      path: { id: this.sessionId, permissionID: permissionId },
+      query: { directory: this.workingDirectory },
+      body: { response },
+    });
+    if (result.error) return false;
+    this.pendingPermissions.delete(permissionId);
+    return true;
   }
 
   async interruptCurrentTurn(): Promise<boolean> {
@@ -328,6 +349,19 @@ export class OpenCodeAdapter implements AgentAdapter {
     }
     if (event.type === "message.updated" || event.type === "message.part.updated") {
       await this.emitLatestMessages();
+      return;
+    }
+    if (event.type === "permission.updated") {
+      const permission = toAgentPermission(properties);
+      if (permission) {
+        this.pendingPermissions.set(permission.id, permission);
+        this.emitStream({ type: "permission", permission });
+      }
+      return;
+    }
+    if (event.type === "permission.replied") {
+      const permissionId = typeof properties.permissionID === "string" ? properties.permissionID : "";
+      if (permissionId) this.pendingPermissions.delete(permissionId);
     }
   }
 
@@ -371,4 +405,27 @@ function toAgentMessages(info: Message, parts: Part[]): AgentMessage[] {
     content: text,
     createdAt: new Date(info.time.created).toISOString(),
   }];
+}
+
+function toAgentPermission(properties: Record<string, unknown>): AgentPermission | null {
+  const id = typeof properties.id === "string" ? properties.id : "";
+  const sessionId = typeof properties.sessionID === "string" ? properties.sessionID : "";
+  const type = typeof properties.type === "string" ? properties.type : "permission";
+  const title = typeof properties.title === "string" ? properties.title : type;
+  if (!id || !sessionId) return null;
+  const time = properties.time as Record<string, unknown> | undefined;
+  const created = typeof time?.created === "number" ? time.created : Date.now();
+  return {
+    id,
+    sessionId,
+    type,
+    title,
+    ...(typeof properties.pattern === "string" || Array.isArray(properties.pattern)
+      ? { pattern: properties.pattern as string | string[] }
+      : {}),
+    metadata: properties.metadata && typeof properties.metadata === "object"
+      ? properties.metadata as Record<string, unknown>
+      : {},
+    createdAt: new Date(created).toISOString(),
+  };
 }

@@ -70,6 +70,12 @@ export interface AgentAdapter {
   /** Fetch conversation message history */
   fetchMessages(): Promise<AgentMessage[]>;
 
+  /** Return pending interactive permissions, when supported. */
+  getPendingPermissions?(): AgentPermission[];
+
+  /** Resolve a pending interactive permission, when supported. */
+  respondToPermission?(permissionId: string, response: "once" | "always" | "reject"): Promise<boolean>;
+
   /** Interrupt the current turn when the adapter supports it */
   interruptCurrentTurn(): Promise<boolean>;
 
@@ -103,7 +109,21 @@ export type AdapterStreamEvent =
   | {
       type: "status";
       status: AgentRuntimeStatus | null;
+    }
+  | {
+      type: "permission";
+      permission: AgentPermission;
     };
+
+export interface AgentPermission {
+  id: string;
+  sessionId: string;
+  type: string;
+  title: string;
+  pattern?: string | string[];
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
 
 export type AgentAdapterFactory = (context: AdapterSessionContext) => AgentAdapter;
 

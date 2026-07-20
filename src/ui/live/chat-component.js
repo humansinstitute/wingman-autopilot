@@ -6,7 +6,7 @@
 import Alpine from "/vendor/alpinejs/module.esm.js";
 import Dexie from "/vendor/dexie/dexie.mjs";
 import { sseManager } from "./sse-manager.js";
-import { MessageStore, SessionStore } from "./db.js";
+import { MessageStore, PermissionStore, SessionStore } from "./db.js";
 import { show as scrollPillShow, isNearBottom as scrollPillIsNearBottom } from "./scroll-pill.js";
 import {
   getChatMessageHtmlCacheOptions,
@@ -17,7 +17,11 @@ import { state } from "../state/index.js";
 import { getWorkingNotesPanelKey, getWorkingNotesPanelState } from "./working-notes-toggle.js";
 import { AGENT_OUTPUT_FORMATTING_FLAG_KEY } from "../rendering/agent-output-format.js";
 import { normalizeRuntimeStatus } from "./session-status-cache.js";
-import { fetchSessionMessagesApi } from "../services/sessions.js";
+import {
+  fetchSessionMessagesApi,
+  fetchSessionPermissionsApi,
+  respondToSessionPermissionApi,
+} from "../services/sessions.js";
 import {
   LIVE_MESSAGE_WINDOW_DEFAULT,
   LIVE_MESSAGE_PAGE_SIZE,
@@ -109,6 +113,7 @@ export function registerChatComponent() {
   Alpine.store("chat", {
     sessionId: null,
     messages: [],
+    permissions: [],
     messageWindow: createWindowRecord(0, LIVE_MESSAGE_WINDOW_DEFAULT),
     status: "disconnected",
     connectionState: "disconnected",
@@ -118,6 +123,7 @@ export function registerChatComponent() {
     _sseUnsubscribers: [],
     _messageSubscription: null,
     _statusSubscription: null,
+    _permissionSubscription: null,
     _speechBaselineReady: false,
     _lastSpeechCandidateKey: "",
     speechPlaybackKey: "",
@@ -145,7 +151,9 @@ export function registerChatComponent() {
       try {
         this._subscribeToMessages(sessionId);
         this._subscribeToSessionStatus(sessionId);
+        this._subscribeToPermissions(sessionId);
         void this._syncMessagesFromServer(sessionId);
+        void this._syncPermissionsFromServer(sessionId);
 
         // Subscribe to SSE status/connection events
         this._setupSSEListeners(sessionId);
@@ -247,12 +255,39 @@ export function registerChatComponent() {
         });
     },
 
+    _subscribeToPermissions(sessionId) {
+      this._permissionSubscription?.unsubscribe?.();
+      this._permissionSubscription = Dexie.liveQuery(() => PermissionStore.getSessionPermissions(sessionId))
+        .subscribe({
+          next: (permissions) => {
+            if (this.sessionId === sessionId) this.permissions = permissions;
+          },
+          error: (error) => console.warn("[chat] Failed to read permissions:", error),
+        });
+    },
+
     async _syncMessagesFromServer(sessionId) {
       const payload = await fetchSessionMessagesApi(sessionId, { refresh: true }).catch(() => null);
       if (this.sessionId !== sessionId || !Array.isArray(payload?.messages)) {
         return;
       }
       await MessageStore.syncFromServerIfChanged(sessionId, payload.messages);
+    },
+
+    async _syncPermissionsFromServer(sessionId) {
+      const payload = await fetchSessionPermissionsApi(sessionId).catch(() => null);
+      if (this.sessionId !== sessionId || !Array.isArray(payload?.permissions)) return;
+      await PermissionStore.replaceSession(sessionId, payload.permissions);
+    },
+
+    async respondToPermission(permission, response) {
+      if (!this.sessionId || !permission?.permissionId) return;
+      try {
+        await respondToSessionPermissionApi(this.sessionId, permission.permissionId, response);
+        await PermissionStore.remove(this.sessionId, permission.permissionId);
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : String(error);
+      }
     },
 
     /**
@@ -300,6 +335,8 @@ export function registerChatComponent() {
       this._messageSubscription = null;
       this._statusSubscription?.unsubscribe?.();
       this._statusSubscription = null;
+      this._permissionSubscription?.unsubscribe?.();
+      this._permissionSubscription = null;
       this._sseUnsubscribers.forEach((unsub) => unsub());
       this._sseUnsubscribers = [];
       if (this.sessionId) {
@@ -307,6 +344,7 @@ export function registerChatComponent() {
       }
       this.sessionId = null;
       this.messages = [];
+      this.permissions = [];
       this.messageWindow = createWindowRecord(0, LIVE_MESSAGE_WINDOW_DEFAULT);
       this.status = "disconnected";
       this.connectionState = "disconnected";
@@ -537,6 +575,27 @@ export function getChatTemplate(sessionId) {
       <span class="busy-indicator">Agent working...</span>
     </template>
   </div>
+
+  <section
+    class="wm-permission-requests"
+    aria-label="Agent permission requests"
+    data-testid="agent-permission-requests"
+    x-show="$store.chat.permissions.length > 0"
+  >
+    <template x-for="permission in $store.chat.permissions" :key="permission.id">
+      <article class="wm-permission-request" data-testid="agent-permission-request">
+        <div class="wm-permission-request__copy">
+          <strong x-text="permission.title"></strong>
+          <span x-text="permission.pattern ? (Array.isArray(permission.pattern) ? permission.pattern.join(', ') : permission.pattern) : permission.type"></span>
+        </div>
+        <div class="wm-permission-request__actions">
+          <button type="button" aria-label="Allow permission once" data-testid="permission-allow-once" @click="$store.chat.respondToPermission(permission, 'once')">Allow once</button>
+          <button type="button" aria-label="Always allow permission" data-testid="permission-allow-always" @click="$store.chat.respondToPermission(permission, 'always')">Always allow</button>
+          <button type="button" aria-label="Reject permission" data-testid="permission-reject" @click="$store.chat.respondToPermission(permission, 'reject')">Reject</button>
+        </div>
+      </article>
+    </template>
+  </section>
 
   <!-- Loading state -->
   <template x-if="$store.chat.isLoading">

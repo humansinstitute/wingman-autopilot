@@ -1933,6 +1933,35 @@ export async function handleSessionApi(
 
     // Note: SSE endpoint (/events) is handled earlier in the route chain
 
+    if (parts[4] === "permissions") {
+      if (!liveOwnedSession) return Response.json({ error: "Not found" }, { status: 404 });
+      const adapter = ctx.manager.getAdapter(resolvedId);
+      if (method === "GET" && parts.length === 5) {
+        return Response.json({ id: resolvedId, permissions: adapter?.getPendingPermissions?.() ?? [] });
+      }
+      if (method === "POST" && parts[5]) {
+        let payload: unknown;
+        try {
+          payload = await request.json();
+        } catch {
+          return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
+        }
+        const response = payload && typeof payload === "object"
+          ? (payload as Record<string, unknown>).response
+          : null;
+        if (response !== "once" && response !== "always" && response !== "reject") {
+          return Response.json({ error: "Permission response must be once, always, or reject" }, { status: 400 });
+        }
+        if (!adapter?.respondToPermission) {
+          return Response.json({ error: "This agent does not expose interactive permissions" }, { status: 409 });
+        }
+        const ok = await adapter.respondToPermission(parts[5], response);
+        return ok
+          ? Response.json({ id: resolvedId, permissionId: parts[5], response, ok: true })
+          : Response.json({ error: "Permission is no longer pending" }, { status: 404 });
+      }
+    }
+
     if (parts[4] === "messages") {
       if (parts[5] && parts[6] === "speech" && (method === "GET" || method === "POST")) {
         return handleMessageSpeech(request, method, resolvedId, parts[5], liveOwnedSession, authContext, ctx);

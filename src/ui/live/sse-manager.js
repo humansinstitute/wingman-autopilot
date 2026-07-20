@@ -3,7 +3,7 @@
  * Manages EventSource connections with automatic reconnection.
  */
 
-import { MessageStore, SessionStore } from "./db.js";
+import { MessageStore, PermissionStore, SessionStore } from "./db.js";
 import { normalizeRuntimeStatus } from "./session-status-cache.js";
 
 const RECONNECT_BASE_MS = 1000;
@@ -131,6 +131,16 @@ class SSEManager {
         }
       });
 
+      source.addEventListener("permission", async (event) => {
+        try {
+          this.lastEventTime.set(sessionId, Date.now());
+          const data = JSON.parse(event.data);
+          await PermissionStore.upsert(sessionId, data);
+        } catch (err) {
+          console.warn("[sse] Failed to process permission event:", err);
+        }
+      });
+
       source.addEventListener("transport", (event) => {
         try {
           this.lastEventTime.set(sessionId, Date.now());
@@ -180,6 +190,10 @@ class SSEManager {
       this.setStreamMode(sessionId, STREAM_MODE_EVENT_STREAM);
       await SessionStore.updateStatus(sessionId, status, status);
       this.notifyStatusListeners(sessionId, status);
+    }
+
+    if (data.type === "permission") {
+      await PermissionStore.upsert(sessionId, data);
     }
   }
 
