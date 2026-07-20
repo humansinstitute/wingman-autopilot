@@ -42,6 +42,14 @@ describe("OpenCodeAdapter", () => {
           },
           parts: [
             { id: "part-1", sessionID: "opencode-session", messageID: "message-1", type: "text", text: "Structured response" },
+            {
+              id: "part-2",
+              sessionID: "opencode-session",
+              messageID: "message-1",
+              type: "reasoning",
+              text: "I inspected the project first.",
+              time: { start: 1_750_000_001_000 },
+            },
           ],
         },
       ]);
@@ -54,6 +62,13 @@ describe("OpenCodeAdapter", () => {
         role: "assistant",
         content: "Structured response",
         createdAt: "2025-06-15T15:06:40.000Z",
+        messageId: "part-1",
+      },
+      {
+        role: "agent-working",
+        content: "I inspected the project first.",
+        createdAt: "2025-06-15T15:06:41.000Z",
+        messageId: "part-2",
       },
     ]);
   });

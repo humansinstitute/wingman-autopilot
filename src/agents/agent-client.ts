@@ -9,6 +9,8 @@ export interface AgentMessage {
   role: string;
   content: string;
   createdAt: string;
+  /** Stable upstream message/part identity when the agent provides one. */
+  messageId?: string;
 }
 
 export interface AgentMessageOptions {

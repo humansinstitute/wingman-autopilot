@@ -67,13 +67,14 @@ export const MessageStore = {
     const messageId = normalized.messageId ?? null;
     const now = new Date().toISOString();
 
+    const sessionMessages = await db.messages.where("sessionId").equals(sessionId).toArray();
+    const matchingMessageById = messageId
+      ? sessionMessages.find((entry) => entry.messageId === messageId)
+      : null;
     const matchingTimestampMessages = createdAt
-      ? await db.messages
-          .where("[sessionId+createdAt]")
-          .equals([sessionId, createdAt])
-          .toArray()
+      ? sessionMessages.filter((entry) => entry.createdAt === createdAt)
       : [];
-    const matchingMessage = [...matchingTimestampMessages]
+    const matchingMessage = matchingMessageById ?? [...matchingTimestampMessages]
       .reverse()
       .find((entry) => entry.role === role);
 

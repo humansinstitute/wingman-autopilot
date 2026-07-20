@@ -386,17 +386,28 @@ function parseModelReference(model: string): { providerID: string; modelID: stri
 }
 
 function toAgentMessages(info: Message, parts: Part[]): AgentMessage[] {
-  const role = info.role === "user" ? "user" : "assistant";
-  const text = parts
-    .filter((part): part is Extract<Part, { type: "text" }> => part.type === "text" && !part.ignored)
-    .map((part) => part.text)
-    .join("");
-  if (!text) return [];
-  return [{
-    role,
-    content: text,
-    createdAt: new Date(info.time.created).toISOString(),
-  }];
+  const messageCreatedAt = new Date(info.time.created).toISOString();
+  return parts.flatMap((part) => {
+    if (part.type === "text" && !part.ignored && part.text) {
+      return [{
+        role: info.role === "user" ? "user" : "assistant",
+        content: part.text,
+        createdAt: messageCreatedAt,
+        messageId: part.id,
+      }];
+    }
+
+    if (part.type === "reasoning" && part.text) {
+      return [{
+        role: "agent-working",
+        content: part.text,
+        createdAt: new Date(part.time.start).toISOString(),
+        messageId: part.id,
+      }];
+    }
+
+    return [];
+  });
 }
 
 function toAgentPermission(properties: Record<string, unknown>): AgentPermission | null {
