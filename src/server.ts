@@ -74,7 +74,7 @@ import {
 import { createCloudflareTunnelClientFromEnv } from "./cloudflare/tunnel-hostnames";
 import { NightWatchStore } from "./nightwatch/nightwatch-store";
 import { maybeTriggerNightWatch, NIGHTWATCH_FEATURE_FLAG_KEY } from "./nightwatch/nightwatch-engine";
-import { CODEX_NATIVE_SDK_FLAG, OPENCODE_NATIVE_SDK_FLAG } from "./agents/agent-adapter";
+import { CODEX_NATIVE_SDK_FLAG, GOOSE_NATIVE_ACP_FLAG, OPENCODE_NATIVE_SDK_FLAG } from "./agents/agent-adapter";
 import { createNightWatchApiHandler } from "./nightwatch/nightwatch-api";
 import { nip19, verifyEvent } from "nostr-tools";
 import { startTaskListener } from "./nostr/task-listener";
@@ -476,11 +476,18 @@ const FEATURE_FLAG_DEFAULTS: Array<{
     description: "Use @opencode-ai/sdk directly instead of agentapi for OpenCode sessions.",
     state: "on",
   },
+  {
+    key: GOOSE_NATIVE_ACP_FLAG,
+    label: "Goose Native ACP",
+    description: "Use Goose ACP directly instead of AgentAPI, enabling native session resume.",
+    state: "off",
+  },
 ];
 
 featureFlagStore.ensureDefaults(FEATURE_FLAG_DEFAULTS);
 featureFlagStore.ensureDefaultState(CODEX_NATIVE_SDK_FLAG, "off");
 featureFlagStore.ensureDefaultState(OPENCODE_NATIVE_SDK_FLAG, "on");
+featureFlagStore.ensureDefaultState(GOOSE_NATIVE_ACP_FLAG, "off");
 process.env.WINGMAN_PID = process.pid.toString();
 const projectStore = new ProjectStore();
 const todoStore = new TodoStore();

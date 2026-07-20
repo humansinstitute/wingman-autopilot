@@ -42,6 +42,8 @@ export interface AdapterSessionContext {
   codexConfig?: Record<string, unknown>;
   /** OpenCode session ID for session resume (used by OpenCodeAdapter) */
   opencodeSdkSessionId?: string;
+  /** Goose ACP session ID for session resume (used by GooseAdapter) */
+  gooseSessionId?: string;
   /** Called when an adapter discovers or creates the native agent session ID. */
   onNativeSessionId?: (sessionId: string) => void;
   /** Optional billing callback for native SDK adapters that bypass the proxy */
@@ -129,10 +131,16 @@ export type AgentAdapterFactory = (context: AdapterSessionContext) => AgentAdapt
 
 export const CODEX_NATIVE_SDK_FLAG = "codex-use-native-sdk";
 export const OPENCODE_NATIVE_SDK_FLAG = "opencode-use-native-sdk";
+export const GOOSE_NATIVE_ACP_FLAG = "goose-use-native-acp";
 
 /** Whether the native `@openai/codex-sdk` adapter is the active Codex transport. */
 export function isCodexNativeSdkEnabled(): boolean {
   const flag = featureFlagStore.getFlag(CODEX_NATIVE_SDK_FLAG);
+  return Boolean(flag && resolveFeatureFlagEffectiveState(flag.state, true) === "on");
+}
+
+export function isGooseNativeAcpEnabled(): boolean {
+  const flag = featureFlagStore.getFlag(GOOSE_NATIVE_ACP_FLAG);
   return Boolean(flag && resolveFeatureFlagEffectiveState(flag.state, true) === "on");
 }
 
@@ -164,6 +172,13 @@ export function resolveAdapterFactory(agent: AgentType): AgentAdapterFactory {
         return new OpenCodeAdapter(context);
       };
     }
+  }
+
+  if (agent === "goose" && isGooseNativeAcpEnabled()) {
+    return (context: AdapterSessionContext) => {
+      const { GooseAdapter } = require("./goose-adapter") as typeof import("./goose-adapter");
+      return new GooseAdapter(context);
+    };
   }
 
   // Default: all agents use agentapi

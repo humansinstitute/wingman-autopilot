@@ -11,7 +11,12 @@ import { sanitizeLogEntry } from "../logging/log-sanitizer";
 import { trackProjectForSession } from "../projects/npub-project-tracker";
 import type { AgentRuntimeStatus } from "../types/agent-status";
 import type { AgentAdapter, AdapterSessionContext } from "./agent-adapter";
-import { resolveAdapterFactory, OPENCODE_NATIVE_SDK_FLAG, isCodexNativeSdkEnabled } from "./agent-adapter";
+import {
+  resolveAdapterFactory,
+  OPENCODE_NATIVE_SDK_FLAG,
+  isCodexNativeSdkEnabled,
+  isGooseNativeAcpEnabled,
+} from "./agent-adapter";
 import { featureFlagStore, resolveFeatureFlagEffectiveState } from "../storage/feature-flag-store";
 import {
   type SessionMetadata,
@@ -689,8 +694,11 @@ export class ProcessManager {
       // so there is no agentapi server to spawn. The CodexAdapter handles the
       // lifecycle; we just mark the session running and let the adapter take over.
       const codexNativeSdk = agent === "codex" && isCodexNativeSdkEnabled();
+      const gooseNativeAcp = agent === "goose" && isGooseNativeAcpEnabled();
       if (codexNativeSdk) {
         this.appendLog(session, "[manager] Codex native SDK enabled — skipping agentapi spawn");
+      } else if (gooseNativeAcp) {
+        this.appendLog(session, "[manager] Goose native ACP enabled — skipping agentapi spawn");
       } else if (this.config.agentSpawnMode === "pm2") {
         await this.spawnAgentProcessViaPM2(session);
       } else if (this.config.agentSpawnMode === "tmux") {
@@ -718,6 +726,9 @@ export class ProcessManager {
           : undefined,
         codexConfig: session.agent === "codex" ? session.codexConfig : undefined,
         opencodeSdkSessionId: session.metadata.nativeAgentSession?.agent === "opencode"
+          ? session.metadata.nativeAgentSession.sessionId
+          : undefined,
+        gooseSessionId: session.metadata.nativeAgentSession?.agent === "goose"
           ? session.metadata.nativeAgentSession.sessionId
           : undefined,
         onNativeSessionId: (nativeSessionId) => {
@@ -821,6 +832,9 @@ export class ProcessManager {
         ? session.metadata.nativeAgentSession.sessionId
         : undefined,
       opencodeSdkSessionId: session.metadata.nativeAgentSession?.agent === "opencode"
+        ? session.metadata.nativeAgentSession.sessionId
+        : undefined,
+      gooseSessionId: session.metadata.nativeAgentSession?.agent === "goose"
         ? session.metadata.nativeAgentSession.sessionId
         : undefined,
       onNativeSessionId: (nativeSessionId) => {

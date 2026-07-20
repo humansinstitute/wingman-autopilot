@@ -3,10 +3,15 @@ import { describe, expect, test } from "bun:test";
 import {
   buildNativeAgentCommand,
   prepareNativeAgentSessionMetadata,
+  supportsNativeSessionResume,
 } from "./native-session";
 import { normaliseSessionMetadata } from "../sessions/session-metadata";
 
 describe("native agent session helpers", () => {
+  test("supports Goose native session resume", () => {
+    expect(supportsNativeSessionResume("goose")).toBe(true);
+  });
+
   test("preallocates Claude session IDs and adds --session-id for fresh launches", () => {
     const metadata = prepareNativeAgentSessionMetadata(
       "claude",
