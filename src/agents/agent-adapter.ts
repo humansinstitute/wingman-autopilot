@@ -44,6 +44,8 @@ export interface AdapterSessionContext {
   opencodeSdkSessionId?: string;
   /** Goose ACP session ID for session resume (used by GooseAdapter) */
   gooseSessionId?: string;
+  /** Configured Goose executable path or PATH-resolved command. */
+  gooseCli?: string;
   /** Called when an adapter discovers or creates the native agent session ID. */
   onNativeSessionId?: (sessionId: string) => void;
   /** Optional billing callback for native SDK adapters that bypass the proxy */

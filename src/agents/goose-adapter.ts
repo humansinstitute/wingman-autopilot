@@ -136,7 +136,7 @@ export class GooseAdapter implements AgentAdapter {
       ...(this.context.env ?? {}),
     };
     const client = new GooseAcpClient({
-      cliPath: env.GOOSE_CLI || DEFAULT_GOOSE_CLI,
+      cliPath: this.context.gooseCli || env.GOOSE_CLI || DEFAULT_GOOSE_CLI,
       workingDirectory: this.context.workingDirectory ?? process.cwd(),
       env,
     });

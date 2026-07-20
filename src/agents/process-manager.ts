@@ -304,6 +304,12 @@ export function resolveNativeOpenCodeCommand(agentapiCommand: string[], port: nu
   ];
 }
 
+function resolveWrappedAgentCli(command: string[]): string | undefined {
+  const separatorIndex = command.indexOf("--");
+  const cli = separatorIndex >= 0 ? command[separatorIndex + 1] : undefined;
+  return cli && cli.trim().length > 0 ? cli : undefined;
+}
+
 function withoutModelArgs(args: string[]): string[] {
   const filtered: string[] = [];
   for (let index = 0; index < args.length; index += 1) {
@@ -731,6 +737,7 @@ export class ProcessManager {
         gooseSessionId: session.metadata.nativeAgentSession?.agent === "goose"
           ? session.metadata.nativeAgentSession.sessionId
           : undefined,
+        gooseCli: agent === "goose" ? resolveWrappedAgentCli(session.command) : undefined,
         onNativeSessionId: (nativeSessionId) => {
           this.setNativeAgentSessionMetadata(session, nativeSessionId, { emit: true });
         },
@@ -837,6 +844,7 @@ export class ProcessManager {
       gooseSessionId: session.metadata.nativeAgentSession?.agent === "goose"
         ? session.metadata.nativeAgentSession.sessionId
         : undefined,
+      gooseCli: input.agent === "goose" ? resolveWrappedAgentCli(session.command) : undefined,
       onNativeSessionId: (nativeSessionId) => {
         this.setNativeAgentSessionMetadata(session, nativeSessionId, { emit: this.sessions.has(session.id) });
       },
