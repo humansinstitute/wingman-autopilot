@@ -19,6 +19,7 @@ export interface TeamBillingServiceDependencies {
   listIdentityMembers: () => MemberInput[];
   serverPort: number;
   baseUrl: string;
+  getOpenRouterApiKey?: () => string | null;
 }
 
 export interface BillingLaunchConfig {
@@ -562,6 +563,20 @@ export class TeamBillingService {
   }): Promise<BillingLaunchConfig> {
     const config = teamBillingStore.getConfig();
     if (!config.useCredits) {
+      if (input.agent === "goose") {
+        const openRouterApiKey = this.deps.getOpenRouterApiKey?.()?.trim();
+        if (openRouterApiKey) {
+          return {
+            billingMode: "subscription",
+            env: {
+              GOOSE_PROVIDER: OPENROUTER_PROVIDER,
+              GOOSE_PROVIDER__API_KEY: openRouterApiKey,
+              OPENROUTER_API_KEY: openRouterApiKey,
+            },
+            fallbackReason: "credits-disabled",
+          };
+        }
+      }
       return {
         billingMode: "subscription",
         env: {},
@@ -619,6 +634,8 @@ export class TeamBillingService {
         billingMode: "credits",
         env: {
           GOOSE_PROVIDER: "openrouter",
+          GOOSE_PROVIDER__API_KEY: proxyToken,
+          GOOSE_PROVIDER__HOST: `${launchBaseUrl}/api/provider/openrouter`,
           OPENROUTER_HOST: `${launchBaseUrl}/api/provider/openrouter`,
           OPENROUTER_API_KEY: proxyToken,
         },

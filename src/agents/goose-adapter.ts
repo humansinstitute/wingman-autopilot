@@ -135,6 +135,18 @@ export class GooseAdapter implements AgentAdapter {
       ...(process.env as Record<string, string>),
       ...(this.context.env ?? {}),
     };
+    const model = this.context.model?.trim();
+    if (model) {
+      env.GOOSE_MODEL = model;
+      const provider = model.split("/", 1)[0]?.trim();
+      if (provider) env.GOOSE_PROVIDER = provider;
+    }
+    if (env.OPENROUTER_API_KEY && !env.GOOSE_PROVIDER__API_KEY) {
+      env.GOOSE_PROVIDER__API_KEY = env.OPENROUTER_API_KEY;
+    }
+    if (env.OPENROUTER_HOST && !env.GOOSE_PROVIDER__HOST) {
+      env.GOOSE_PROVIDER__HOST = env.OPENROUTER_HOST;
+    }
     const client = new GooseAcpClient({
       cliPath: this.context.gooseCli || env.GOOSE_CLI || DEFAULT_GOOSE_CLI,
       workingDirectory: this.context.workingDirectory ?? process.cwd(),

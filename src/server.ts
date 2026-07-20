@@ -772,6 +772,7 @@ const teamBillingService = new TeamBillingService({
     })),
   serverPort: config.port,
   baseUrl: config.baseUrl,
+  getOpenRouterApiKey: () => instanceSettingsService.get("integrations.openrouter_api_key"),
 });
 teamBillingService.syncTeamMembers();
 if (teamBillingService.isCreditsEnabled()) {
