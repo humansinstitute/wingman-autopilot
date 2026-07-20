@@ -43,6 +43,7 @@ const commandSpecs: CommandSpec[] = [
   { name: "Codex CLI", command: process.env.CODEX_CLI || "/usr/local/bin/codex", args: ["--version"] },
   { name: "Claude CLI", command: process.env.CLAUDE_CLI || "/usr/local/bin/claude", args: ["--version"] },
   { name: "Goose CLI", command: process.env.GOOSE_CLI || "/usr/local/bin/goose", args: ["--version"] },
+  { name: "Goose ACP", command: process.env.GOOSE_CLI || "/usr/local/bin/goose", args: ["acp", "--help"] },
   { name: "OpenCode CLI", command: process.env.OPENCODE_CLI || "/usr/local/bin/opencode", args: ["--version"] },
   { name: "Gemini CLI", command: process.env.GEMINI_CLI || "/usr/local/bin/gemini", args: ["--version"] },
   { name: "Pi CLI", command: process.env.PI_CLI || "/usr/local/bin/pi", args: ["--version"] },

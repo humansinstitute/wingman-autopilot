@@ -7,6 +7,7 @@ ARG CODEX_PACKAGE=@openai/codex@latest
 ARG CLAUDE_PACKAGE=@anthropic-ai/claude-code@latest
 ARG OPENCODE_PACKAGE=opencode-ai@latest
 ARG FLIGHTDECK_CLI_PACKAGE=@runwingman/flightdeck-cli@latest
+ARG GOOSE_VERSION=v1.33.1
 
 ENV BUN_INSTALL=/usr/local/bun
 ENV PATH=/usr/local/bun/bin:/usr/local/bin:/home/wingman/.local/bin:$PATH
@@ -45,7 +46,7 @@ RUN if [[ "${INSTALL_AGENT_CLIS}" == "true" ]]; then \
     ln -sf /usr/local/bun/bin/codex /usr/local/bin/codex; \
     npm install -g "${CLAUDE_PACKAGE}" "${OPENCODE_PACKAGE}"; \
     curl -fsSL https://github.com/aaif-goose/goose/releases/download/stable/download_cli.sh \
-      | GOOSE_BIN_DIR=/usr/local/bin CONFIGURE=false bash; \
+      | GOOSE_VERSION="${GOOSE_VERSION}" GOOSE_BIN_DIR=/usr/local/bin CONFIGURE=false bash; \
   fi
 
 ARG GEMINI_PACKAGE=@google/gemini-cli@latest
