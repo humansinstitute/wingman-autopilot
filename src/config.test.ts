@@ -235,10 +235,12 @@ describe("loadConfig", () => {
     const claudeCommand = config.agents.claude.command({ agent: "claude", config, port: 3701 });
     const gooseCommand = config.agents.goose.command({ agent: "goose", config, port: 3702 });
     const geminiCommand = config.agents.gemini.command({ agent: "gemini", config, port: 3703 });
+    const openCodeCommand = config.agents.opencode.command({ agent: "opencode", config, port: 3704 });
 
     expect(claudeCommand).toContain("--type=claude");
     expect(gooseCommand).toContain("--type=goose");
     expect(geminiCommand).toContain("--type=gemini");
+    expect(openCodeCommand).toContain("--type=opencode");
   });
 
   test("exposes Claude model aliases for session launch overrides", () => {
