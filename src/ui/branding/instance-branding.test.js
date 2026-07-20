@@ -17,4 +17,10 @@ describe('instance branding', () => {
     });
     expect(getInstanceName(null)).toBe('Wingman');
   });
+
+  test('does not leave legacy green shades in themed UI effects', async () => {
+    const styles = await Bun.file(new URL('../styles.css', import.meta.url)).text();
+    expect(styles).not.toMatch(/#(?:34d399|6ee7b7|d1fae5|ecfdf5)/i);
+    expect(styles).not.toMatch(/rgba\((?:52, 211, 153|110, 231, 183),/);
+  });
 });
