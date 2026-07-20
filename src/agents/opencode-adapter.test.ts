@@ -124,4 +124,17 @@ describe("OpenCodeAdapter", () => {
     expect(adapter.getPendingPermissions()).toHaveLength(0);
     unsubscribe();
   });
+
+  test("does not delete the persisted OpenCode session during adapter cleanup", async () => {
+    let deleteCalled = false;
+    globalThis.fetch = (async (input) => {
+      if (requestUrl(input).endsWith("/opencode-session")) deleteCalled = true;
+      return Response.json(true);
+    }) as typeof fetch;
+
+    const adapter = new OpenCodeAdapter(context);
+    await adapter.dispose();
+
+    expect(deleteCalled).toBe(false);
+  });
 });

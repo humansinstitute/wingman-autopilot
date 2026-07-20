@@ -252,16 +252,8 @@ export class OpenCodeAdapter implements AgentAdapter {
   async dispose(): Promise<void> {
     this.state = "disposed";
     this.stopEventStream();
-
-    // Try to clean up the session in OpenCode
-    if (this.sessionId) {
-      try {
-        await this.client.session.delete({ path: { id: this.sessionId } });
-      } catch {
-        // Best effort — process may already be gone
-      }
-      this.sessionId = null;
-    }
+    // Keep the OpenCode session on disk so archived sessions can be resumed.
+    // Deleting it is an explicit user action in OpenCode, not lifecycle cleanup.
   }
 
   // -----------------------------------------------------------------------
