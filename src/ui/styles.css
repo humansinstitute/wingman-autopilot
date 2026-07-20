@@ -220,6 +220,12 @@ body[data-live-header-collapsed="true"]:has(#app[data-route="live"]) .wm-header 
   cursor: pointer;
 }
 
+.wm-branding-settings__hex-input {
+  width: 8.5rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  text-transform: lowercase;
+}
+
 .wm-logo {
   display: none;
   border-radius: 12px;

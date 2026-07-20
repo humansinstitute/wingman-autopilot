@@ -4,14 +4,18 @@ const DEFAULT_NAME = 'Wingman';
 const DEFAULT_HIGHLIGHT_COLOR = '#10b981';
 const HEX_COLOR_PATTERN = /^#[0-9a-f]{6}$/i;
 
+export function normalizeBrandColorInput(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  const candidate = trimmed.startsWith('#') ? trimmed : `#${trimmed}`;
+  return HEX_COLOR_PATTERN.test(candidate) ? candidate.toLowerCase() : null;
+}
+
 export function normalizeInstanceBranding(branding) {
   const name = typeof branding?.name === 'string' && branding.name.trim()
     ? branding.name.trim()
     : DEFAULT_NAME;
-  const highlightColor = typeof branding?.highlightColor === 'string'
-    && HEX_COLOR_PATTERN.test(branding.highlightColor.trim())
-    ? branding.highlightColor.trim().toLowerCase()
-    : DEFAULT_HIGHLIGHT_COLOR;
+  const highlightColor = normalizeBrandColorInput(branding?.highlightColor) ?? DEFAULT_HIGHLIGHT_COLOR;
   return { name, highlightColor };
 }
 
@@ -65,11 +69,32 @@ export function createInstanceBrandingSection({ config, onSaved }) {
   colorInput.value = branding.highlightColor;
   colorInput.setAttribute('aria-label', 'Choose Autopilot highlight colour');
   colorInput.setAttribute('data-testid', 'autopilot-branding-color');
-  const colorValue = document.createElement('code');
-  colorValue.textContent = branding.highlightColor;
+  const colorValue = document.createElement('input');
+  colorValue.type = 'text';
+  colorValue.className = 'wm-branding-settings__hex-input';
+  colorValue.value = branding.highlightColor;
+  colorValue.maxLength = 7;
+  colorValue.placeholder = '#10b981';
+  colorValue.spellcheck = false;
+  colorValue.autocapitalize = 'none';
+  colorValue.setAttribute('aria-label', 'Autopilot highlight colour hex value');
+  colorValue.setAttribute('data-testid', 'autopilot-branding-color-hex');
+  colorValue.setAttribute('pattern', '#?[0-9a-fA-F]{6}');
   colorInput.addEventListener('input', () => {
-    colorValue.textContent = colorInput.value;
+    colorValue.value = colorInput.value;
+    colorValue.setCustomValidity('');
     applyInstanceBranding({ name: nameInput.value, highlightColor: colorInput.value });
+  });
+  colorValue.addEventListener('input', () => {
+    const normalizedColor = normalizeBrandColorInput(colorValue.value);
+    colorValue.setCustomValidity(normalizedColor ? '' : 'Enter a six-digit hex colour, such as #a855f7');
+    if (!normalizedColor) return;
+    colorInput.value = normalizedColor;
+    applyInstanceBranding({ name: nameInput.value, highlightColor: normalizedColor });
+  });
+  colorValue.addEventListener('blur', () => {
+    const normalizedColor = normalizeBrandColorInput(colorValue.value);
+    if (normalizedColor) colorValue.value = normalizedColor;
   });
   colorRow.append(colorInput, colorValue);
 
@@ -87,14 +112,21 @@ export function createInstanceBrandingSection({ config, onSaved }) {
     event.preventDefault();
     const name = nameInput.value.trim();
     if (!name) return;
+    const highlightColor = normalizeBrandColorInput(colorValue.value);
+    if (!highlightColor) {
+      colorValue.setCustomValidity('Enter a six-digit hex colour, such as #a855f7');
+      colorValue.reportValidity();
+      return;
+    }
     saveButton.disabled = true;
     status.textContent = 'Saving…';
     try {
       await Promise.all([
         saveInstanceSetting('branding.name', name),
-        saveInstanceSetting('branding.highlight_color', colorInput.value),
+        saveInstanceSetting('branding.highlight_color', highlightColor),
       ]);
-      const nextBranding = applyInstanceBranding({ name, highlightColor: colorInput.value });
+      colorValue.value = highlightColor;
+      const nextBranding = applyInstanceBranding({ name, highlightColor });
       status.textContent = 'Branding saved';
       await onSaved?.(nextBranding);
     } catch (error) {

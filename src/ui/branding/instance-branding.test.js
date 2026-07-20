@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 
-import { getInstanceName, normalizeInstanceBranding } from './instance-branding.js';
+import {
+  getInstanceName,
+  normalizeBrandColorInput,
+  normalizeInstanceBranding,
+} from './instance-branding.js';
 
 describe('instance branding', () => {
   test('normalizes configured instance branding', () => {
@@ -16,6 +20,13 @@ describe('instance branding', () => {
       highlightColor: '#10b981',
     });
     expect(getInstanceName(null)).toBe('Wingman');
+  });
+
+  test('normalizes directly typed hex colours', () => {
+    expect(normalizeBrandColorInput('A855F7')).toBe('#a855f7');
+    expect(normalizeBrandColorInput(' #2563eb ')).toBe('#2563eb');
+    expect(normalizeBrandColorInput('#12345')).toBeNull();
+    expect(normalizeBrandColorInput('blue')).toBeNull();
   });
 
   test('does not leave legacy green shades in themed UI effects', async () => {
