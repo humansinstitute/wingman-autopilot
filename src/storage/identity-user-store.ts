@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 
 import { Database } from "bun:sqlite";
 
-import { normaliseNpub, normaliseNpubList } from "../identity/npub-utils";
+import { getConfiguredAdminNpubs, normaliseNpub } from "../identity/npub-utils";
 
 const PORT_START = 41000;
 const PORTS_PER_USER = 1000;
@@ -160,9 +160,7 @@ export class IdentityUserStore {
   }
 
   ensureAdminBalance() {
-    const adminNpubs = normaliseNpubList(
-      Bun.env.ADMIN_NPUB?.trim() ? Bun.env.ADMIN_NPUB : Bun.env.WINGMAN_ADMIN_NPUB,
-    );
+    const adminNpubs = getConfiguredAdminNpubs();
     if (adminNpubs.length === 0) {
       return;
     }

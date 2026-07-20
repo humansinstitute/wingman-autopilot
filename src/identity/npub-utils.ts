@@ -33,6 +33,17 @@ export const normaliseNpubList = (
   return normalized;
 };
 
+export const getConfiguredAdminNpubs = (
+  env: Record<string, string | undefined> = Bun.env,
+): string[] => {
+  const configured = env.ADMIN_NPUBS?.trim()
+    ? env.ADMIN_NPUBS
+    : env.ADMIN_NPUB?.trim()
+      ? env.ADMIN_NPUB
+      : env.WINGMAN_ADMIN_NPUB;
+  return normaliseNpubList(configured);
+};
+
 export const isNpubInList = (
   npub: string | null | undefined,
   npubs: Iterable<string>,

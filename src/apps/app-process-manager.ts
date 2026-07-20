@@ -6,7 +6,7 @@ import { appRegistry } from "./app-registry";
 import type { AppLifecycleAction, AppRecord, AppRegistry } from "./app-registry";
 import { clearAppLogFiles } from "./app-log-files";
 import { generateIdentityAlias } from "../identity/identity-alias";
-import { isNpubInList, normaliseNpub, normaliseNpubList } from "../identity/npub-utils";
+import { getConfiguredAdminNpubs, isNpubInList, normaliseNpub, normaliseNpubList } from "../identity/npub-utils";
 import {
   addUserAppToEcosystem,
   generateAppProcessName,
@@ -160,9 +160,7 @@ export class AppProcessManager {
     towerWappRegistrar: TowerWappRegistrar = new HttpTowerWappRegistrar(),
   ) {
     this.registry = registry;
-    this.adminNpubs = normaliseNpubList(
-      adminNpubs ?? (Bun.env.ADMIN_NPUB?.trim() ? Bun.env.ADMIN_NPUB : Bun.env.WINGMAN_ADMIN_NPUB),
-    );
+    this.adminNpubs = adminNpubs === undefined ? getConfiguredAdminNpubs() : normaliseNpubList(adminNpubs);
     this.wappStore = store;
     this.towerRegistrationIdentity = towerRegistrationIdentity;
     this.towerWappRegistrar = towerWappRegistrar;

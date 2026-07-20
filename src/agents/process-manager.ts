@@ -5,7 +5,7 @@ import { join, normalize, resolve } from "node:path";
 import type { AgentDefinition, AgentType, WingmanConfig } from "../config";
 import { getAuthenticatedNpub } from "../auth/request-context";
 import { generateIdentityAlias } from "../identity/identity-alias";
-import { isNpubInList, normaliseNpub, normaliseNpubList } from "../identity/npub-utils";
+import { getConfiguredAdminNpubs, isNpubInList, normaliseNpub } from "../identity/npub-utils";
 import { isPortAvailable } from "../utils/port-utils.js";
 import { sanitizeLogEntry } from "../logging/log-sanitizer";
 import { trackProjectForSession } from "../projects/npub-project-tracker";
@@ -368,9 +368,7 @@ export class ProcessManager {
   private readonly sessions = new Map<string, AgentSession>();
   private readonly allocatedPorts = new Set<number>();
   private readonly listeners = new Set<(event: SessionEvent) => void>();
-  private readonly adminNpubs = normaliseNpubList(
-    Bun.env.ADMIN_NPUB?.trim() ? Bun.env.ADMIN_NPUB : Bun.env.WINGMAN_ADMIN_NPUB,
-  );
+  private readonly adminNpubs = getConfiguredAdminNpubs();
   private readonly adminNpub = this.adminNpubs[0] ?? null;
   /** Debounce timers for log-driven session-updated events */
   private readonly logUpdateDebounce = new Map<string, ReturnType<typeof setTimeout>>();

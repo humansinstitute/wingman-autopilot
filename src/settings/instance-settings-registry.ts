@@ -476,7 +476,7 @@ export const INSTANCE_SETTING_DEFINITIONS: InstanceSettingDefinition[] = [
     description: "Comma-separated admin npubs.",
     category: "identity",
     type: "list",
-    envAliases: ["ADMIN_NPUB", "WINGMAN_ADMIN_NPUB"],
+    envAliases: ["ADMIN_NPUBS", "ADMIN_NPUB", "WINGMAN_ADMIN_NPUB"],
     autoImport: true,
     requiresRestart: true,
     cleanupAllowed: true,
