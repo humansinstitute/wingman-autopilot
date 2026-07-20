@@ -138,9 +138,9 @@ export class GooseAdapter implements AgentAdapter {
     const model = this.context.model?.trim();
     if (model) {
       env.GOOSE_MODEL = model;
-      const provider = model.split("/", 1)[0]?.trim();
-      if (provider) env.GOOSE_PROVIDER = provider;
     }
+    const provider = this.context.gooseProvider?.trim();
+    if (provider) env.GOOSE_PROVIDER = provider;
     if (env.OPENROUTER_API_KEY && !env.GOOSE_PROVIDER__API_KEY) {
       env.GOOSE_PROVIDER__API_KEY = env.OPENROUTER_API_KEY;
     }

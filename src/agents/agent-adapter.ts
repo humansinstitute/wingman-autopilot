@@ -46,6 +46,8 @@ export interface AdapterSessionContext {
   gooseSessionId?: string;
   /** Configured Goose executable path or PATH-resolved command. */
   gooseCli?: string;
+  /** Configured Goose provider used when no session-specific override exists. */
+  gooseProvider?: string;
   /** Called when an adapter discovers or creates the native agent session ID. */
   onNativeSessionId?: (sessionId: string) => void;
   /** Optional billing callback for native SDK adapters that bypass the proxy */

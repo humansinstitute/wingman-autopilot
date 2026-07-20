@@ -55,9 +55,12 @@ import {
   getAdapterNativeSessionId,
   prepareNativeAgentSessionMetadata,
 } from "./native-session";
+import { instanceSettingsService } from "../settings/instance-settings-service";
 
 const MAX_LOG_LINES = 500;
 const DEFAULT_PM2_AGENT_START_TIMEOUT_MS = 60_000;
+const DEFAULT_GOOSE_PROVIDER = "openrouter";
+const DEFAULT_GOOSE_MODEL = "openrouter/moonshotai/kimi-k3";
 const TMUX_AGENT_START_TIMEOUT_MS = 60_000;
 const projectRootDirectory = normalize(new URL("../..", import.meta.url).pathname);
 const CODEX_AGENTAPI_DISCOVERY_ATTEMPTS = 8;
@@ -469,13 +472,18 @@ export class ProcessManager {
     let command = definition.command({ port, agent, config: this.config });
 
     const resolvedModel = normalizeAgentModelOverride(model);
-    let sessionModel = resolvedModel || undefined;
+    const configuredGooseModel = agent === "goose"
+      ? instanceSettingsService.get("agents.goose_model") || DEFAULT_GOOSE_MODEL
+      : "";
+    let sessionModel = resolvedModel || (configuredGooseModel || undefined);
 
     // When the OpenCode native SDK flag is on, spawn opencode directly
     // instead of wrapping it with agentapi.  The OpenCodeAdapter SDK client
     // connects to OpenCode's own HTTP server on the allocated port.
     if (resolvedModel.length > 0) {
       command = withModelOverride(command, resolvedModel);
+    } else if (configuredGooseModel) {
+      command = withModelOverride(command, configuredGooseModel);
     }
     if (agent === "opencode") {
       const ocFlag = featureFlagStore.getFlag(OPENCODE_NATIVE_SDK_FLAG);
@@ -738,6 +746,9 @@ export class ProcessManager {
           ? session.metadata.nativeAgentSession.sessionId
           : undefined,
         gooseCli: agent === "goose" ? resolveWrappedAgentCli(session.command) : undefined,
+        gooseProvider: agent === "goose"
+          ? instanceSettingsService.get("agents.goose_provider") || DEFAULT_GOOSE_PROVIDER
+          : undefined,
         onNativeSessionId: (nativeSessionId) => {
           this.setNativeAgentSessionMetadata(session, nativeSessionId, { emit: true });
         },
@@ -845,6 +856,9 @@ export class ProcessManager {
         ? session.metadata.nativeAgentSession.sessionId
         : undefined,
       gooseCli: input.agent === "goose" ? resolveWrappedAgentCli(session.command) : undefined,
+      gooseProvider: input.agent === "goose"
+        ? instanceSettingsService.get("agents.goose_provider") || DEFAULT_GOOSE_PROVIDER
+        : undefined,
       onNativeSessionId: (nativeSessionId) => {
         this.setNativeAgentSessionMetadata(session, nativeSessionId, { emit: this.sessions.has(session.id) });
       },
