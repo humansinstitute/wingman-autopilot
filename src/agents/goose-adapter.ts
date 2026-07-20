@@ -5,7 +5,7 @@ import { GooseAcpClient, type GooseAcpEvent, type GooseAcpRequest, type GooseAcp
 
 type AdapterState = "initializing" | "ready" | "busy" | "disposed";
 
-const ACP_PROTOCOL_VERSION = "2025-01-01";
+const ACP_PROTOCOL_VERSION = "v1";
 const DEFAULT_GOOSE_CLI = "/usr/local/bin/goose";
 
 export class GooseAdapter implements AgentAdapter {
