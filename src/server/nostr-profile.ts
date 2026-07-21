@@ -102,8 +102,8 @@ export const resolveAndCacheNostrProfile = async (
   const relays =
     Array.isArray(options.relays) && options.relays.length > 0 ? options.relays : DEFAULT_PROFILE_RELAYS;
   const existing = identityUserStore.getByNormalized(normalized);
-  if (existing?.pictureUrl && !options.force) {
-    return { pictureUrl: existing.pictureUrl, name: existing.alias ?? null, source: "cache" };
+  if ((existing?.pictureUrl || existing?.profileName) && !options.force) {
+    return { pictureUrl: existing.pictureUrl, name: existing.profileName, source: "cache" };
   }
 
   const metadata = await fetchNostrProfileMetadata(npub, relays);
@@ -111,14 +111,16 @@ export const resolveAndCacheNostrProfile = async (
     if (!existing) {
       identityUserStore.touch(npub);
     }
-    return { pictureUrl: existing?.pictureUrl ?? null, name: existing?.alias ?? null, source: "cache" };
+    return { pictureUrl: existing?.pictureUrl ?? null, name: existing?.profileName ?? null, source: "cache" };
   }
 
   const { pictureUrl, name } = metadata;
-  const updated = pictureUrl ? identityUserStore.setPictureUrl(npub, pictureUrl) : existing ?? null;
+  if (pictureUrl) identityUserStore.setPictureUrl(npub, pictureUrl);
+  if (name) identityUserStore.setProfileName(npub, name);
   if (!existing) {
     identityUserStore.touch(npub);
   }
+  const updated = identityUserStore.getByNormalized(normalized);
 
   return {
     pictureUrl: pictureUrl ?? updated?.pictureUrl ?? null,

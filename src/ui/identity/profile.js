@@ -1,3 +1,5 @@
+import { cacheIdentityProfile } from "./profile-cache.js";
+
 export const fetchIdentityProfile = async ({ npub, force = false } = {}) => {
   const params = new URLSearchParams();
   if (typeof npub === "string" && npub.trim().length > 0) {
@@ -15,7 +17,9 @@ export const fetchIdentityProfile = async ({ npub, force = false } = {}) => {
         : response.statusText || "Profile lookup failed";
     throw new Error(message);
   }
-  return payload ?? {};
+  const profile = payload ?? {};
+  await cacheIdentityProfile(profile);
+  return profile;
 };
 
 export const fetchAdminUserProfile = async ({ npub, force = false } = {}) => {

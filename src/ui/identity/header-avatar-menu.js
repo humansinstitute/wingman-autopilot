@@ -1,14 +1,5 @@
 import { applyAvatarImage } from "../utils/avatar.js";
-
-function getIdentityDisplayName(identity) {
-  const npub = typeof identity?.npub === "string" ? identity.npub : "";
-  const alias = typeof identity?.alias === "string" && identity.alias.trim().length > 0
-    ? identity.alias.trim()
-    : null;
-  if (alias) return alias;
-  if (!npub) return "?";
-  return npub.length > 20 ? `${npub.slice(0, 10)}\u2026${npub.slice(-4)}` : npub;
-}
+import { getIdentityDisplayName } from "./profile-display.js";
 
 export function initHeaderAvatarMenu({ button, state, identityEventNames = [] }) {
   const avatar = button?.querySelector("#menu-toggle-avatar");

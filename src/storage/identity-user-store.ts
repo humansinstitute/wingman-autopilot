@@ -26,6 +26,7 @@ export interface IdentityUserRecord {
   normalizedNpub: string;
   alias: string;
   nickname: string | null;
+  profileName: string | null;
   pictureUrl: string | null;
   roles: string[];
   onboardedAt: string | null;
@@ -41,6 +42,7 @@ type IdentityUserRow = {
   npub: string;
   alias: string;
   nickname: string | null;
+  profileName: string | null;
   pictureUrl: string | null;
   roles: string;
   onboardedAt: string | null;
@@ -102,6 +104,7 @@ export class IdentityUserStore {
     this.ensurePortsColumn();
     this.ensureBalanceColumn();
     this.ensureNicknameColumn();
+    this.ensureProfileNameColumn();
     this.ensurePictureColumn();
     this.synchronisePortAssignments();
   }
@@ -113,6 +116,7 @@ export class IdentityUserStore {
         npub TEXT NOT NULL,
         alias TEXT NOT NULL,
         nickname TEXT,
+        profile_name TEXT,
         picture_url TEXT,
         roles TEXT NOT NULL DEFAULT '[]',
         onboarded_at TEXT,
@@ -156,6 +160,14 @@ export class IdentityUserStore {
     const hasPictureColumn = columns.some((column) => column?.name === "picture_url");
     if (!hasPictureColumn) {
       this.db.exec(`ALTER TABLE identity_users ADD COLUMN picture_url TEXT`);
+    }
+  }
+
+  private ensureProfileNameColumn() {
+    const columns = this.db.query<{ name: string }>("PRAGMA table_info(identity_users)").all();
+    const hasProfileNameColumn = columns.some((column) => column?.name === "profile_name");
+    if (!hasProfileNameColumn) {
+      this.db.exec(`ALTER TABLE identity_users ADD COLUMN profile_name TEXT`);
     }
   }
 
@@ -341,6 +353,7 @@ export class IdentityUserStore {
          npub,
          alias,
          nickname,
+         profile_name as profileName,
          picture_url as pictureUrl,
          roles,
          onboarded_at as onboardedAt,
@@ -405,6 +418,7 @@ export class IdentityUserStore {
          npub,
          alias,
          nickname,
+         profile_name,
          picture_url,
          roles,
          onboarded_at,
@@ -413,7 +427,7 @@ export class IdentityUserStore {
          updated_at,
          ports,
          balance
-       ) VALUES (?1, ?2, ?3, NULL, NULL, '[]', NULL, ?4, ?5, ?5, ?6, ?7)`,
+       ) VALUES (?1, ?2, ?3, NULL, NULL, NULL, '[]', NULL, ?4, ?5, ?5, ?6, ?7)`,
     );
     insert.run(normalized, npub, alias, lastSeenIso, now, JSON.stringify(ports), 0);
 
@@ -557,6 +571,26 @@ export class IdentityUserStore {
     return this.getOrThrow(normalized);
   }
 
+  setProfileName(npub: string, profileName: string | null | undefined): IdentityUserRecord {
+    const normalized = normaliseNpub(npub);
+    if (!normalized) {
+      throw new Error("A valid npub is required");
+    }
+    const record = this.touch(npub);
+    const sanitized = typeof profileName === "string" ? profileName.trim().slice(0, 160) : "";
+    const nextName = sanitized.length > 0 ? sanitized : null;
+    if (record.profileName === nextName) {
+      return record;
+    }
+    this.db.prepare(
+      `UPDATE identity_users
+         SET profile_name = ?2,
+             updated_at = ?3
+       WHERE normalized_npub = ?1`,
+    ).run(normalized, nextName, new Date().toISOString());
+    return this.getOrThrow(normalized);
+  }
+
   credit(npub: string, satoshis: number): number {
     const normalized = normaliseNpub(npub);
     if (!normalized) {
@@ -632,6 +666,7 @@ export class IdentityUserStore {
          npub,
          alias,
          nickname,
+         profile_name as profileName,
          picture_url as pictureUrl,
          roles,
          onboarded_at as onboardedAt,
@@ -662,6 +697,7 @@ export class IdentityUserStore {
       normalizedNpub: row.normalizedNpub,
       alias: row.alias,
       nickname: row.nickname && row.nickname.trim().length > 0 ? row.nickname.trim() : null,
+      profileName: row.profileName && row.profileName.trim().length > 0 ? row.profileName.trim() : null,
       pictureUrl: row.pictureUrl && row.pictureUrl.trim().length > 0 ? row.pictureUrl.trim() : null,
       roles: Array.from(new Set(parseRoles(row.roles))).sort(),
       onboardedAt: row.onboardedAt ?? null,

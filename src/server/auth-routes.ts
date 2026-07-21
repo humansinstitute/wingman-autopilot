@@ -137,7 +137,10 @@ export interface AuthApiContext {
   AccessActions: { UiRestricted: AccessAction };
   getViewerNormalizedNpub: (authContext: RequestAuthContext) => string | null;
   normaliseOptionalString: (value: unknown) => string | null;
-  resolveAndCacheNostrProfile: (npub: string, opts: { force?: boolean; relays?: string[] }) => Promise<{ pictureUrl: string | null }>;
+  resolveAndCacheNostrProfile: (npub: string, opts: { force?: boolean; relays?: string[] }) => Promise<{
+    pictureUrl: string | null;
+    name?: string | null;
+  }>;
   onSessionAuthenticated?: (npub: string) => void | Promise<void>;
 }
 
@@ -323,6 +326,7 @@ export async function handleAuthApi(
       const record = ctx.identityUserStore.getByNormalized(normalizedTarget);
       return Response.json({
         npub: record?.npub ?? targetInput,
+        name: profile.name ?? null,
         pictureUrl: profile.pictureUrl ?? record?.pictureUrl ?? null,
       });
     } catch (error) {

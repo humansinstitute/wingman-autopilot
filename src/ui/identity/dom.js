@@ -244,6 +244,7 @@ export function initIdentityDom(deps) {
           method: identity.method,
           expiresAt: identity.expiresAt ?? null,
           alias: identity.alias ?? null,
+          profileName: identity.profileName ?? null,
           picture: identity.picture ?? null,
           ports: Array.isArray(identity.ports) ? [...identity.ports] : [],
           botNpub: identity.botNpub ?? null,
@@ -265,7 +266,7 @@ export function initIdentityDom(deps) {
   // ── display sync ────────────────────────────────────────────────
 
   function syncIdentityDisplayForEntry(entry) {
-    const { npub, method, authenticated, expiresAt, alias } = state.identity;
+    const { npub, method, authenticated, expiresAt, alias, profileName } = state.identity;
     if (entry.root) {
       if (authenticated) {
         entry.root.dataset.authenticated = "true";
@@ -285,14 +286,15 @@ export function initIdentityDom(deps) {
         entry.alias.removeAttribute("title");
       } else {
         const abbreviated = npub ? abbreviateNpub(npub) : "";
-        if (alias && abbreviated) {
-          entry.alias.textContent = `${alias} (${abbreviated})`;
+        const displayName = profileName || alias;
+        if (displayName && abbreviated) {
+          entry.alias.textContent = `${displayName} (${abbreviated})`;
           entry.alias.title = npub;
         } else if (abbreviated) {
           entry.alias.textContent = abbreviated;
           entry.alias.title = npub;
-        } else if (alias) {
-          entry.alias.textContent = alias;
+        } else if (displayName) {
+          entry.alias.textContent = displayName;
           entry.alias.removeAttribute("title");
         } else {
           entry.alias.textContent = "Not signed in";

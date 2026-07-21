@@ -6,6 +6,7 @@
  */
 
 import { fetchIdentityProfile } from "./profile.js";
+import { getCachedIdentityProfile } from "./profile-cache.js";
 import { startSigningListener, stopSigningListener } from "../nip98/signing-listener.js";
 import { createUnauthorizedGuard } from "../common/unauthorized-guard.js";
 import { createAdminUsersState } from "../state/index.js";
@@ -111,7 +112,15 @@ export function initIdentityStateManager(deps) {
 
   let identityProfileRequest = { npub: null, inFlight: false };
 
-  const refreshIdentityProfilePicture = async (options = {}) => {
+  const applyIdentityProfile = (profile) => {
+    if (!profile || typeof profile !== "object") return;
+    updateIdentityState({
+      profileName: typeof profile.name === "string" ? profile.name : null,
+      picture: typeof profile.pictureUrl === "string" ? profile.pictureUrl : null,
+    }, { persist: true, emit: true });
+  };
+
+  const refreshIdentityProfile = async (options = {}) => {
     const npub = state.identity.npub;
     if (!npub) return;
     const normalized = normaliseNpubValue(npub);
@@ -121,13 +130,13 @@ export function initIdentityStateManager(deps) {
     }
     identityProfileRequest = { npub: normalized, inFlight: true };
     try {
+      const cached = await getCachedIdentityProfile(npub);
+      if (cached && normaliseNpubValue(state.identity.npub) === normalized) {
+        applyIdentityProfile(cached);
+      }
       const payload = await fetchIdentityProfile({ npub, force: options.force });
-      if (payload && typeof payload === "object") {
-        if (typeof payload.pictureUrl === "string") {
-          updateIdentityState({ picture: payload.pictureUrl }, { persist: true, emit: true });
-        } else if (payload.pictureUrl === null) {
-          updateIdentityState({ picture: null }, { persist: true, emit: true });
-        }
+      if (normaliseNpubValue(state.identity.npub) === normalized) {
+        applyIdentityProfile(payload);
       }
     } catch (error) {
       if (error?.name !== "AbortError") {
@@ -615,6 +624,7 @@ export function initIdentityStateManager(deps) {
       expiresAt: current.expiresAt,
       authenticated: current.authenticated,
       alias: current.alias,
+      profileName: current.profileName ?? null,
       picture: current.picture ?? null,
       isAdmin: current.isAdmin,
       ports: Array.isArray(current.ports) ? [...current.ports] : [],
@@ -673,6 +683,7 @@ export function initIdentityStateManager(deps) {
       next.method = "none";
       next.expiresAt = null;
       next.alias = null;
+      next.profileName = null;
       next.picture = null;
       next.ports = [];
       next.botNpub = null;
@@ -701,6 +712,12 @@ export function initIdentityStateManager(deps) {
       } else if (partial.picture === null) {
         next.picture = null;
       }
+    }
+
+    if ("profileName" in partial) {
+      next.profileName = typeof partial.profileName === "string" && partial.profileName.trim().length > 0
+        ? partial.profileName.trim()
+        : null;
     }
 
     if ("botNpub" in partial) {
@@ -737,6 +754,7 @@ export function initIdentityStateManager(deps) {
       next.authenticated !== current.authenticated ||
       next.isAdmin !== current.isAdmin ||
       next.alias !== current.alias ||
+      next.profileName !== (current.profileName ?? null) ||
       next.picture !== current.picture ||
       portsChanged ||
       next.botNpub !== (current.botNpub ?? null) ||
@@ -755,8 +773,8 @@ export function initIdentityStateManager(deps) {
       state.adminUsers = createAdminUsersState();
     }
 
-    if (next.authenticated && (!next.picture || becameAuthenticated)) {
-      void refreshIdentityProfilePicture({ force: becameAuthenticated });
+    if (next.authenticated && (!next.profileName || !next.picture || becameAuthenticated)) {
+      void refreshIdentityProfile({ force: becameAuthenticated });
     }
 
     if (next.npub !== current.npub || next.isAdmin !== current.isAdmin) {

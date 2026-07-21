@@ -8,6 +8,7 @@
 
 import { applyAvatarImage } from "../utils/avatar.js";
 import { renderWorkspaceDelegationPanel } from "./workspace-delegation-panel.js";
+import { getIdentityDisplayName } from "./profile-display.js";
 
 function copyTextWithFallback(text) {
   if (!text) {
@@ -787,12 +788,12 @@ export function initIdentityPanels(deps) {
     menuIdentityContainer.append(card);
 
     const updateSection = () => {
-      const { npub, alias: identityAlias, picture } = state.identity;
+      const { npub, profileName, picture } = state.identity;
       if (npub) {
         const truncated = npub.length > 20 ? `${npub.slice(0, 10)}\u2026${npub.slice(-4)}` : npub;
-        const displayName = identityAlias ?? truncated;
+        const displayName = getIdentityDisplayName(state.identity);
         alias.textContent = displayName;
-        alias.title = identityAlias ? npub : truncated;
+        alias.title = profileName ? npub : truncated;
         manageButton.hidden = false;
         applyAvatarImage(avatar, picture, displayName);
       } else {

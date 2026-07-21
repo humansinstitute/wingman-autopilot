@@ -243,6 +243,7 @@ export const state = {
     expiresAt: null,
     authenticated: false,
     alias: null,
+    profileName: null,
     picture: null,
     isAdmin: false,
     ports: [],

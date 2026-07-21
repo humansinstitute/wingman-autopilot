@@ -40,6 +40,17 @@ function seedLegacyUser(dbPath: string, npub: string, ports: number[], createdAt
 }
 
 describe("IdentityUserStore app ports", () => {
+  test("stores a Nostr profile name separately from the generated alias", () => {
+    withStore((store) => {
+      const user = store.touch(PETE_NPUB, { alias: "honest-ivory-thicket" });
+      const updated = store.setProfileName(PETE_NPUB, "Pete");
+
+      expect(user.alias).toBe("honest-ivory-thicket");
+      expect(updated.alias).toBe("honest-ivory-thicket");
+      expect(updated.profileName).toBe("Pete");
+    });
+  });
+
   test("assigns 1000 default app ports to a new user", () => {
     withStore((store) => {
       const user = store.touch(PETE_NPUB);
