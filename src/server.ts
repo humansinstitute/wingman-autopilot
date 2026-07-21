@@ -210,6 +210,7 @@ import {
   clearWarmRestartMarker,
   loadWarmRestartMarker,
   rehydrateWarmSessions,
+  resumeStoppedNativeSessions,
   rehydrateOrphanedSessions,
   warmRestartOutcome,
   warmRestartState,
@@ -1618,6 +1619,14 @@ const staticRoutes = createStaticRouteHandler({
   assetService: createProjectStaticAssetService(projectRoot),
 });
 
+await resumeStoppedNativeSessions(
+  warmRestartMarker,
+  restartMarkerPath,
+  manager,
+  messageStore,
+  [...SUPPORTED_AGENT_TYPES],
+);
+
 await rehydrateWarmSessions(
   warmRestartMarker,
   restartMarkerPath,
@@ -2596,6 +2605,14 @@ const handleApi = createApiRouteHandler({
     manager,
     ensureApiAccess,
     AccessActions,
+    isAgentType,
+    isTrustedRestartAgent: (authContext) => {
+      const instanceNpub = wingmanInstanceIdentity?.npub ?? null;
+      return Boolean(
+        instanceNpub &&
+        (authContext.actorNpub === instanceNpub || authContext.npub === instanceNpub),
+      );
+    },
     setPreserveSessionsOnShutdown: (v) => { preserveSessionsOnShutdown = v; },
     initiateShutdown: (reason: string) => initiateShutdown(reason),
     performSystemCleanup: (deps: Parameters<typeof performSystemCleanup>[0]) => performSystemCleanup(deps),

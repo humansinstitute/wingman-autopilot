@@ -5,18 +5,28 @@ import { isAgentRuntimeStatus } from "../../types/agent-status";
 import type { AgentType } from "../../config";
 import { waitForAgentReady as waitForAgentReadyCore } from "../../agents/agent-client";
 import { hasTmuxWindow } from "../../agents/tmux-wrapper";
+import {
+  resolveNativeResumeLaunch,
+  type NativeResumeSourceSession,
+} from "../../sessions/native-resume-launch";
 
 export type WarmRestartMarker = {
   createdAt: string;
   sessionIds?: string[];
   reason?: string;
   version?: number;
+  mode?: "preserve" | "native-resume";
+  requestedBy?: string | null;
+  status?: string;
+  message?: string;
 };
 
 export interface WarmRestartOutcome {
   restored: number;
   failed: string[];
   timestamp: string;
+  mode?: "preserve" | "native-resume";
+  resumedSessions?: Array<{ sourceSessionId: string; sessionId: string }>;
 }
 
 export const warmRestartState = {
@@ -103,7 +113,7 @@ export const rehydrateWarmSessions = async (
   store: MessageStore,
   allowedAgents: AgentType[],
 ) => {
-  if (!marker) {
+  if (!marker || marker.mode === "native-resume") {
     return;
   }
 
@@ -221,6 +231,7 @@ export const rehydrateWarmSessions = async (
     restored,
     failed,
     timestamp: new Date().toISOString(),
+    mode: "preserve",
   };
   warmRestartState.marker = null;
 
@@ -234,6 +245,63 @@ export const rehydrateWarmSessions = async (
   }
 
   await clearWarmRestartMarker(markerPath);
+};
+
+export const resumeStoppedNativeSessions = async (
+  marker: WarmRestartMarker | null,
+  markerPath: string,
+  manager: ProcessManager,
+  store: MessageStore,
+  allowedAgents: AgentType[],
+): Promise<WarmRestartOutcome | null> => {
+  if (!marker || marker.mode !== "native-resume") return null;
+
+  const targetIds = Array.isArray(marker.sessionIds) ? marker.sessionIds : [];
+  const recordsById = new Map(store.listSessions().map((record) => [record.id, record]));
+  const failed: string[] = [];
+  const resumedSessions: Array<{ sourceSessionId: string; sessionId: string }> = [];
+  const isAgentType = (agent: string): agent is AgentType => allowedAgents.includes(agent as AgentType);
+
+  for (const sourceSessionId of targetIds) {
+    const source = recordsById.get(sourceSessionId) as NativeResumeSourceSession | undefined;
+    if (!source) {
+      failed.push(sourceSessionId);
+      continue;
+    }
+    try {
+      const launch = resolveNativeResumeLaunch(source, isAgentType, marker.requestedBy);
+      const session = await manager.createSession(
+        launch.agent,
+        launch.workingDirectory,
+        launch.name,
+        launch.origin,
+        undefined,
+        launch.ownerNpub,
+        launch.metadata,
+      );
+      resumedSessions.push({ sourceSessionId, sessionId: session.id });
+    } catch (error) {
+      console.warn(
+        `[restart] failed to native-resume session ${sourceSessionId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      failed.push(sourceSessionId);
+    }
+  }
+
+  const outcome: WarmRestartOutcome = {
+    restored: resumedSessions.length,
+    failed,
+    timestamp: new Date().toISOString(),
+    mode: "native-resume",
+    resumedSessions,
+  };
+  warmRestartOutcome.current = outcome;
+  warmRestartState.marker = null;
+  await clearWarmRestartMarker(markerPath);
+  console.log(
+    `[restart] native-resumed ${outcome.restored} of ${targetIds.length} stopped session${targetIds.length === 1 ? "" : "s"}`,
+  );
+  return outcome;
 };
 
 export interface OrphanedSessionsOutcome {

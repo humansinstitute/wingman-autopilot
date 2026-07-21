@@ -23,15 +23,17 @@ import type {
 } from "../storage/session-archive-store";
 import type { ForkToWorktreeInput } from "../sessions/fork-to-worktree";
 import { resolveSessionOwnerNpub } from "../sessions/session-ownership";
+import {
+  NativeResumeLaunchError,
+  resolveNativeResumeLaunch,
+  type NativeResumeSourceSession,
+} from "../sessions/native-resume-launch";
 import { deliverSessionAgentMessage } from "./session-agent-message";
 import { normalizeBusySessionMessageFailure } from "./session-message-failures";
 import { generateSpeechAudio, normalizeSpeechText as normalizeSharedSpeechText, resolveSpeechExtension } from "./audio-speech";
 import { generateSpeechSummary } from "./speech-summary";
 import type { PromptReadiness } from "../agents/agent-adapter";
-import {
-  createNativeAgentSessionMetadata,
-  supportsNativeSessionResume,
-} from "../agents/native-session";
+import { createNativeAgentSessionMetadata } from "../agents/native-session";
 import type { CodexSessionForkInput, CodexSessionForkResult } from "../agents/codex-session-fork";
 import { readCodexSessionMessagesFromFile } from "../agents/codex-session-messages";
 import {
@@ -255,54 +257,32 @@ const persistLiveSessionRecord = (
   });
 };
 
-type NativeResumeSourceSession = Pick<
-  SessionSnapshot | StoredSessionRecord,
-  "id" | "agent" | "name" | "npub" | "workingDirectory" | "metadata"
->;
-
 async function createNativeResumeSession(
   source: NativeResumeSourceSession,
   authContext: RequestAuthContext,
   ctx: SessionApiContext,
 ): Promise<Response> {
-  const sourceMetadata = normaliseSessionMetadata(source.metadata);
-  const nativeSession = sourceMetadata.nativeAgentSession;
-  if (!nativeSession?.sessionId) {
-    return Response.json({ error: "Session does not have a native agent session id to resume" }, { status: 409 });
+  let launch;
+  try {
+    launch = resolveNativeResumeLaunch(
+      source,
+      ctx.isAgentType,
+      authContext.subjectNpub ?? authContext.npub,
+    );
+  } catch (error) {
+    if (error instanceof NativeResumeLaunchError) {
+      return Response.json({ error: error.message }, { status: error.status });
+    }
+    throw error;
   }
-  const agent = nativeSession.agent || source.agent;
-  if (!ctx.isAgentType(agent) || !supportsNativeSessionResume(agent)) {
-    return Response.json({ error: `Native resume is not supported for ${agent || "this agent"}` }, { status: 400 });
-  }
-  const workingDirectory = nativeSession.workingDirectory || source.workingDirectory;
-  if (!workingDirectory) {
-    return Response.json({ error: "Session does not have a working directory to resume" }, { status: 409 });
-  }
-
-  const ownerNpub = resolveSessionOwnerNpub(source.npub ?? null, sourceMetadata);
-  const sourceName = typeof source.name === "string" && source.name.trim()
-    ? source.name.trim()
-    : source.id;
   const session = await ctx.manager.createSession(
-    agent,
-    workingDirectory,
-    `${sourceName} (resumed)`,
-    { type: "native-resume", id: source.id, label: `Native resume from ${sourceName}` },
+    launch.agent,
+    launch.workingDirectory,
+    launch.name,
+    launch.origin,
     undefined,
-    ownerNpub ?? undefined,
-    {
-      ...sourceMetadata,
-      nativeAgentSession: {
-        ...nativeSession,
-        agent,
-        workingDirectory,
-      },
-      resumedFromWingmanSessionId: source.id,
-      ownerNpub: ownerNpub ?? undefined,
-      createdByNpub: authContext.subjectNpub ?? authContext.npub ?? sourceMetadata.createdByNpub,
-      lastManagedByNpub: authContext.subjectNpub ?? authContext.npub ?? undefined,
-      chargeToNpub: resolveSessionChargeNpub(sourceMetadata, source.npub ?? null) ?? undefined,
-    },
+    launch.ownerNpub,
+    launch.metadata,
   );
   await recordLiveSession(ctx, session);
   return Response.json({

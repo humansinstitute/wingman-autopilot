@@ -54,6 +54,15 @@ function loadSharedPipelineSpec(fileName: string): DeclarativePipeline {
   return structuredClone(spec) as DeclarativePipeline;
 }
 
+test("system restart-and-resume pipeline function requires an explicit Autopilot URL", async () => {
+  const result = await builtinPipelineFunctions["system.restartAndResume"]({});
+  expect(result).toEqual({
+    status: "failed",
+    scheduled: false,
+    error: "autopilot_url_required",
+  });
+});
+
 test("chat intent input includes Flight Deck channel context", async () => {
   const result = await builtinPipelineFunctions["dispatch.prepareChatIntentInput"]({
     dispatch: { routeId: "route-1", triggerKind: "chat" },

@@ -12,6 +12,7 @@ type WarmRestartMarker = {
   version?: number;
   status?: string;
   message?: string;
+  mode?: "preserve" | "native-resume";
 };
 
 const args = process.argv.slice(2);
@@ -30,6 +31,7 @@ const markerPath = resolve(markerPathInput ?? "./restart-marker.json");
 const tmuxSession = tmuxSessionInput && tmuxSessionInput.trim().length > 0 ? tmuxSessionInput.trim() : "wingman-apps";
 const tmuxWindow = tmuxWindowInput && tmuxWindowInput.trim().length > 0 ? tmuxWindowInput.trim() : "wingman-core";
 const tmuxTarget = `${tmuxSession}:${tmuxWindow}`;
+const managedByPm2 = typeof Bun.env.pm_id === "string" && Bun.env.pm_id.trim().length > 0;
 
 if (!Number.isFinite(targetPid) || targetPid <= 0) {
   console.error(`[manager] Invalid Wingman PID: ${pidArg}`);
@@ -156,7 +158,7 @@ const waitForServer = async (port: number, timeoutMs: number) => {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
     try {
-      const response = await fetch(`http://localhost:${port}/api/system/restart/status`, {
+      const response = await fetch(`http://localhost:${port}/api/config`, {
         method: "GET",
         headers: {
           "cache-control": "no-cache",
@@ -197,31 +199,32 @@ const main = async () => {
 
   await updateMarker({ status: "starting" });
 
-  try {
-    await ensureTmuxWindow();
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    await updateMarker({
-      status: "failed",
-      message,
-    });
-    console.error(`[manager] ${message}`);
-    process.exit(1);
-  }
+  if (managedByPm2) {
+    log("Wingman is PM2-managed; waiting for PM2 to restart the process");
+  } else {
+    try {
+      await ensureTmuxWindow();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await updateMarker({ status: "failed", message });
+      console.error(`[manager] ${message}`);
+      process.exit(1);
+    }
 
-  const commandString = [bunCommand, ...bunArgs].join(" ");
-  const respawn = await runTmux(["respawn-window", "-k", "-t", tmuxTarget, "-c", projectRoot, commandString]);
-  if (respawn.exitCode !== 0) {
-    await updateMarker({
-      status: "failed",
-      message: respawn.stderr || respawn.stdout || "Failed to respawn Wingman tmux window",
-    });
-    console.error(`[manager] Failed to respawn tmux window: ${respawn.stderr || respawn.stdout}`);
-    process.exit(1);
-  }
+    const commandString = [bunCommand, ...bunArgs].join(" ");
+    const respawn = await runTmux(["respawn-window", "-k", "-t", tmuxTarget, "-c", projectRoot, commandString]);
+    if (respawn.exitCode !== 0) {
+      await updateMarker({
+        status: "failed",
+        message: respawn.stderr || respawn.stdout || "Failed to respawn Wingman tmux window",
+      });
+      console.error(`[manager] Failed to respawn tmux window: ${respawn.stderr || respawn.stdout}`);
+      process.exit(1);
+    }
 
-  await attachLogPipe();
-  log(`Respawned Wingman in tmux window ${tmuxTarget}`);
+    await attachLogPipe();
+    log(`Respawned Wingman in tmux window ${tmuxTarget}`);
+  }
 
   const ready = await waitForServer(serverPort, 30_000);
   if (!ready) {

@@ -1247,6 +1247,36 @@ function latestThreadText(chatContext: Record<string, unknown>, fallback: unknow
 }
 
 export const builtinPipelineFunctions: FunctionRegistry = {
+  async "system.restartAndResume"(input) {
+    const autopilotUrl = getText(input.autopilotUrl ?? input.baseUrl ?? input.url);
+    if (!autopilotUrl) {
+      return { status: "failed", scheduled: false, error: "autopilot_url_required" };
+    }
+    try {
+      const requestUrl = new URL("/api/system/restart-and-resume", autopilotUrl).toString();
+      const { token } = await signWithWingmanKey(requestUrl, "POST");
+      const response = await fetch(requestUrl, {
+        method: "POST",
+        headers: { authorization: token },
+      });
+      const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+      return {
+        status: response.ok ? "scheduled" : "failed",
+        scheduled: response.ok,
+        statusCode: response.status,
+        sessions: Array.isArray(payload.sessions) ? payload.sessions : [],
+        error: response.ok ? null : getText(payload.error) ?? response.statusText,
+        blockers: Array.isArray(payload.blockers) ? payload.blockers : [],
+      };
+    } catch (error) {
+      return {
+        status: "failed",
+        scheduled: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  },
+
   async "text.normalise"(input) {
     const text = String(input.text ?? "").trim();
     return {

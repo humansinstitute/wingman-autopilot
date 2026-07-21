@@ -1,7 +1,11 @@
 import { openConfirmDialog } from "../common/dialog-prompts.js";
 import { createCopyIconButton } from "../utils/clipboard.js";
 import { removeAppApi, removeWappApi, triggerAppActionApi } from "../services/apps.js";
-import { runSystemCleanupApi, triggerWarmRestartApi } from "../services/config.js";
+import {
+  runSystemCleanupApi,
+  triggerRestartAndResumeApi,
+  triggerWarmRestartApi,
+} from "../services/config.js";
 
 export const APP_STATUS_LABELS = {
   idle: "Idle",
@@ -170,6 +174,26 @@ export function initAppsRuntime({
       return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to initiate restart";
+      appsStore().system.restart.error = message;
+      showToast(message, { type: "error" });
+      return false;
+    } finally {
+      appsStore().system.restart.submitting = false;
+    }
+  }
+
+  async function triggerRestartAndResume() {
+    if (appsStore().system.restart.submitting || appsStore().system.restart.inProgress) return false;
+    appsStore().system.restart.submitting = true;
+    try {
+      await triggerRestartAndResumeApi();
+      appsStore().system.restart.inProgress = true;
+      appsStore().system.restart.error = null;
+      await fetchRestartStatus();
+      if (getCurrentRoute() === "apps") render();
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to restart and resume sessions";
       appsStore().system.restart.error = message;
       showToast(message, { type: "error" });
       return false;
@@ -357,6 +381,7 @@ export function initAppsRuntime({
     isAppActionDisabled,
     triggerAppAction,
     triggerWarmRestart,
+    triggerRestartAndResume,
     runSystemCleanup,
     removeApp,
     removeWapp,

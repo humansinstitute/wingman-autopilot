@@ -223,6 +223,7 @@ let formatAppTimestamp = () => "—";
 let isAppActionDisabled = () => true;
 let triggerAppAction = async () => false;
 let triggerWarmRestart = async () => false;
+let triggerRestartAndResume = async () => false;
 let runSystemCleanup = async () => false;
 let removeApp = async () => {};
 let removeWapp = async () => false;
@@ -1719,6 +1720,7 @@ formatAppTimestamp = (...args) => appsRuntime.formatAppTimestamp(...args);
 isAppActionDisabled = (...args) => appsRuntime.isAppActionDisabled(...args);
 triggerAppAction = (...args) => appsRuntime.triggerAppAction(...args);
 triggerWarmRestart = (...args) => appsRuntime.triggerWarmRestart(...args);
+triggerRestartAndResume = (...args) => appsRuntime.triggerRestartAndResume(...args);
 runSystemCleanup = (...args) => appsRuntime.runSystemCleanup(...args);
 removeApp = (...args) => appsRuntime.removeApp(...args);
 removeWapp = (...args) => appsRuntime.removeWapp(...args);
@@ -2031,6 +2033,7 @@ const appCardsModule = initAppCards({
   isAppActionDisabled,
   triggerAppAction: (...args) => triggerAppAction(...args),
   triggerWarmRestart: (...args) => triggerWarmRestart(...args),
+  triggerRestartAndResume: (...args) => triggerRestartAndResume(...args),
   runSystemCleanup: (...args) => runSystemCleanup(...args),
   openIdentityLoginDialog,
   showToast,

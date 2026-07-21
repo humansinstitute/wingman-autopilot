@@ -24,6 +24,7 @@
  * @param {Function} deps.isAppActionDisabled        - checks whether an app action is disabled
  * @param {Function} deps.triggerAppAction           - triggers app actions (start/stop/restart/setup/clear-logs)
  * @param {Function} deps.triggerWarmRestart         - triggers a warm restart of Wingman
+ * @param {Function} deps.triggerRestartAndResume     - stops and native-resumes sessions around restart
  * @param {Function} deps.runSystemCleanup           - triggers system cleanup
  * @param {Function} deps.openIdentityLoginDialog    - opens the identity login dialog
  * @param {Function} deps.showToast                  - displays toast feedback
@@ -57,6 +58,7 @@ export function initAppCards(deps) {
     isAppActionDisabled,
     triggerAppAction,
     triggerWarmRestart,
+    triggerRestartAndResume,
     runSystemCleanup,
     openIdentityLoginDialog,
     showToast,
@@ -102,15 +104,17 @@ export function initAppCards(deps) {
       const sessionCount = Array.isArray(appsStore().system.restart.marker?.sessionIds)
         ? appsStore().system.restart.marker.sessionIds.length
         : null;
-      progressLine.textContent =
-        sessionCount && sessionCount > 0
+      const nativeResumeMode = appsStore().system.restart.marker?.mode === "native-resume";
+      progressLine.textContent = nativeResumeMode
+        ? `Restart in progress… ${sessionCount ?? 0} stopped session${sessionCount === 1 ? "" : "s"} will resume in their native agents.`
+        : sessionCount && sessionCount > 0
           ? `Warm restart in progress… preserving ${sessionCount} active session${sessionCount === 1 ? "" : "s"}.`
           : "Warm restart in progress… Wingman will reload without interrupting active sessions.";
       statusInfo.append(progressLine);
     } else if (appsStore().system.restart.outcome) {
       const outcome = appsStore().system.restart.outcome;
       const summaryLine = document.createElement("p");
-      summaryLine.textContent = `Last warm restart restored ${outcome.restored} session${
+      summaryLine.textContent = `${outcome.mode === "native-resume" ? "Last restart native-resumed" : "Last warm restart restored"} ${outcome.restored} session${
         outcome.restored === 1 ? "" : "s"
       } (${formatAppTimestamp(outcome.timestamp)}).`;
       statusInfo.append(summaryLine);
@@ -205,6 +209,35 @@ export function initAppCards(deps) {
       }
     });
     actions.append(restartButton);
+
+    if (state.identity.isAdmin) {
+      const resumeRestartButton = document.createElement("button");
+      resumeRestartButton.type = "button";
+      resumeRestartButton.className = "wm-button secondary";
+      resumeRestartButton.dataset.testid = "restart-and-resume-sessions";
+      resumeRestartButton.setAttribute(
+        "aria-label",
+        "Stop all agent sessions, restart Autopilot, and resume native agent sessions",
+      );
+      resumeRestartButton.textContent = restartInProgress ? "Restarting…" : "Restart & Resume Agents";
+      resumeRestartButton.disabled =
+        appsStore().system.restart.submitting || restartInProgress || cleanupRunning;
+      resumeRestartButton.addEventListener("click", async () => {
+        if (resumeRestartButton.disabled) return;
+        const confirmed = window.confirm(
+          "Stop every active agent session, restart Autopilot, then resume each native coding-agent session? Sessions without a native resume ID will block the restart.",
+        );
+        if (!confirmed) return;
+        resumeRestartButton.disabled = true;
+        resumeRestartButton.textContent = "Stopping Agents…";
+        const success = await triggerRestartAndResume();
+        if (!success) {
+          resumeRestartButton.disabled = false;
+          resumeRestartButton.textContent = "Restart & Resume Agents";
+        }
+      });
+      actions.append(resumeRestartButton);
+    }
 
     if (state.identity.isAdmin) {
       const cleanupButton = document.createElement("button");

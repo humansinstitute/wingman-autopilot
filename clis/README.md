@@ -91,6 +91,7 @@ bun clis/status.ts config                  # server configuration
 bun clis/status.ts flags                   # feature flags
 bun clis/status.ts flags-set <id> true     # set a feature flag
 bun clis/status.ts restart                 # trigger warm restart
+bun clis/status.ts restart-resume          # stop sessions, restart, then native-resume them
 bun clis/status.ts restart-status          # check restart progress
 ```
 

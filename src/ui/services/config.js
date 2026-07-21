@@ -70,6 +70,20 @@ export async function triggerWarmRestartApi() {
   return payload;
 }
 
+/** Stops active sessions, restarts Autopilot, then resumes their native agent sessions. */
+export async function triggerRestartAndResumeApi() {
+  const response = await fetch("/api/system/restart-and-resume", { method: "POST" });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    const blockerNames = Array.isArray(payload?.blockers)
+      ? payload.blockers.map((item) => item?.name || item?.sessionId).filter(Boolean).join(", ")
+      : "";
+    const message = payload?.error || response.statusText || "Failed to restart and resume sessions";
+    throw new Error(blockerNames ? `${message}: ${blockerNames}` : message);
+  }
+  return payload;
+}
+
 /**
  * Triggers system cleanup (stops all sessions and apps).
  * @returns {Promise<Object>} Cleanup result

@@ -3,7 +3,7 @@
 /**
  * Wingman system status CLI (NIP-98 authenticated).
  *
- * Commands: overview (default), full, apps, sessions, config, flags, restart, restart-status
+ * Commands: overview (default), full, apps, sessions, config, flags, restart, restart-resume, restart-status
  */
 
 import { parseCommonFlags, buildConfig, requestJson } from "./lib/auth";
@@ -22,6 +22,7 @@ Commands:
   flags                Show feature flags
   flags-set <id> <val> Set a feature flag (val: true/false)
   restart              Trigger warm restart
+  restart-resume       Stop sessions, restart, and native-resume them on startup
   restart-status       Check restart status
 
 Options:
@@ -35,7 +36,8 @@ Examples:
   bun clis/status.ts full --url http://localhost:3600
   bun clis/status.ts config --json
   bun clis/status.ts flags
-  bun clis/status.ts restart`;
+  bun clis/status.ts restart
+  bun clis/status.ts restart-resume`;
 
 interface AppInfo {
   id?: string;
@@ -299,6 +301,18 @@ async function run() {
         console.log(JSON.stringify(payload, null, 2));
       } else {
         console.log(`Restart scheduled. Sessions preserved: ${JSON.stringify(payload.sessions ?? [])}`);
+      }
+      break;
+    }
+
+    case "restart-resume": {
+      const payload = await requestJson<Record<string, unknown>>(
+        baseUrl, secretKey, "POST", "/api/system/restart-and-resume",
+      );
+      if (asJson) {
+        console.log(JSON.stringify(payload, null, 2));
+      } else {
+        console.log(`Restart scheduled. Sessions queued for native resume: ${JSON.stringify(payload.sessions ?? [])}`);
       }
       break;
     }
