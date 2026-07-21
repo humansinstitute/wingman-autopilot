@@ -3,7 +3,7 @@ FROM node:22-trixie
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG INSTALL_AGENT_CLIS=true
-ARG CODEX_PACKAGE=@openai/codex@latest
+ARG CODEX_PACKAGE=@openai/codex@0.144.6
 ARG CLAUDE_PACKAGE=@anthropic-ai/claude-code@latest
 ARG OPENCODE_PACKAGE=opencode-ai@latest
 ARG FLIGHTDECK_CLI_PACKAGE=@runwingman/flightdeck-cli@latest
