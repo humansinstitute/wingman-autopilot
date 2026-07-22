@@ -9,11 +9,13 @@ const DEFAULT_CONNECT_RELAYS = [
 const NOSTR_CONNECT_SECRET_TTL_MS = 5 * 60 * 1000;
 const KEYTELEPORT_PARAM = "keyteleport";
 
-import { nip19, nip44 } from "/vendor/nostr-tools/index.js";
+import { finalizeEvent, nip19, nip44 } from "/vendor/nostr-tools/index.js";
 import { schnorr, secp256k1 } from "/vendor/@noble/curves/secp256k1.js";
 import { renderQrCode } from "./nostrconnect-qr.js";
 import * as deviceKeystore from "./device-keystore.js";
 import { showToast } from "../utils/toast.js";
+import { signIdentityEvent } from "./event-signer.js";
+import { persistServerSession } from "./login-session.js";
 
 // bunker-client.js (1.4 MB) is lazy-loaded only when Nostr Connect is needed
 let _bunkerModule = null;
@@ -283,7 +285,7 @@ const attemptBunkerRestore = async ({ context, setStatus, form, enableInputs, ro
     const npub = nip19.npubEncode(pubkeyHex);
     let expiresAt = cached?.sessionExpiresAt ?? null;
     try {
-      const refreshed = await persistServerSession(npub, null);
+      const refreshed = await persistServerSession(npub, null, (event) => signer.signEvent(event));
       if (refreshed.expiresAt) {
         expiresAt = refreshed.expiresAt;
       }
@@ -383,7 +385,7 @@ const createNostrConnectController = ({ root, context, onConnected }) => {
       identityApi.bunkerSigner = offer.signer;
       const pubkeyHex = await offer.signer.getPublicKey();
       const npub = nip19.npubEncode(pubkeyHex);
-      const { expiresAt } = await persistServerSession(npub, null);
+      const { expiresAt } = await persistServerSession(npub, null, (event) => offer.signer.signEvent(event));
       saveBunkerSession({
         remote: offer.signer.remote ?? null,
         relays: Array.isArray(offer.relays) ? offer.relays : deriveConnectRelays(context),
@@ -746,33 +748,6 @@ const generateLocalSecretKey = () => {
   throw new Error("Failed to generate valid private key");
 };
 
-const persistServerSession = async (npub, encryptedNsec, signedEvent = null) => {
-  const body = {
-    npub,
-    encryptedNsec: typeof encryptedNsec === "string" ? encryptedNsec : null,
-  };
-  if (signedEvent && typeof signedEvent === "object") {
-    body.signedEvent = signedEvent;
-  }
-  const response = await fetch("/api/auth/session", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-    },
-    credentials: "include",
-    body: JSON.stringify(body),
-  });
-
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const message = payload && typeof payload === "object" && typeof payload.error === "string" ? payload.error : `Failed to create session (${response.status})`;
-    throw new Error(message);
-  }
-
-  const expiresAt = typeof payload?.expiresAt === "number" && Number.isFinite(payload.expiresAt) ? payload.expiresAt : null;
-  return { expiresAt };
-};
-
 function normalizeBunkerSecretParam(uri) {
   if (typeof uri !== "string" || uri.length === 0) {
     return uri;
@@ -802,20 +777,6 @@ const applyIdentityUpdate = (context, partial) => {
   if (ui && typeof ui.update === "function") {
     ui.update(partial);
   }
-};
-
-const createLoginEventTemplate = () => {
-  const loginUrl = new URL("/api/auth/session", window.location.href);
-  return {
-    kind: 27235,
-    created_at: Math.floor(Date.now() / 1000),
-    tags: [
-      ["u", loginUrl.toString()],
-      ["method", "POST"],
-      ["purpose", "wingman-login"],
-    ],
-    content: "wingman-login",
-  };
 };
 
 const saveCachedSession = ({ npub, expiresAt, method }) => {
@@ -988,7 +949,11 @@ const wireLocalIdentityPanel = (root, context) => {
         }
       }
 
-      const { expiresAt } = await persistServerSession(npub, null);
+      const { expiresAt } = await persistServerSession(
+        npub,
+        null,
+        (event) => Promise.resolve(finalizeEvent(event, secretKey)),
+      );
 
       handleAuthSuccess({ npub, nsec, expiresAt, method: "local_keys" });
     } catch (error) {
@@ -1039,7 +1004,11 @@ const wireLocalIdentityPanel = (root, context) => {
         }
       }
 
-      const { expiresAt } = await persistServerSession(npub, null);
+      const { expiresAt } = await persistServerSession(
+        npub,
+        null,
+        (event) => Promise.resolve(finalizeEvent(event, secretKey)),
+      );
       handleAuthSuccess({ npub, nsec, expiresAt, method: "local_keys" });
       showToast("Signed in with imported key", { type: "success" });
     } catch (error) {
@@ -1077,13 +1046,16 @@ const wireNip07Panel = (root, context) => {
     loginButton.disabled = true;
     setStatus("Requesting login signature from extension…");
     try {
-      const signedEvent = await window.nostr.signEvent(createLoginEventTemplate());
-      const pubkeyHex = signedEvent?.pubkey;
+      const pubkeyHex = await window.nostr.getPublicKey();
       if (!pubkeyHex || typeof pubkeyHex !== "string") {
-        throw new Error("Extension returned an empty signature");
+        throw new Error("Extension returned an empty public key");
       }
       const npub = nip19.npubEncode(pubkeyHex);
-      const { expiresAt } = await persistServerSession(npub, null, signedEvent);
+      const { expiresAt } = await persistServerSession(
+        npub,
+        null,
+        (event) => window.nostr.signEvent(event),
+      );
       saveCachedSession({ npub, expiresAt, method: "nip07" });
       applyIdentityUpdate(context, { npub, method: "nip07", expiresAt, isAuthenticated: true, alias: npub });
       root.classList.add("is-authenticated");
@@ -1157,7 +1129,7 @@ const initBunkerPanel = (root, context) => {
       identityApi.bunkerSigner = signer;
       const pubkeyHex = await signer.getPublicKey();
       const npub = nip19.npubEncode(pubkeyHex);
-      const { expiresAt } = await persistServerSession(npub, null);
+      const { expiresAt } = await persistServerSession(npub, null, (event) => signer.signEvent(event));
       saveBunkerSession({
         remote: signer.remote ?? parsed.remote,
         relays: Array.isArray(signer.relays) ? signer.relays : parsed.relays,
@@ -1421,7 +1393,11 @@ const handleKeyTeleport = async ({ blob, context }) => {
     }
 
     // Create server session
-    const { expiresAt } = await persistServerSession(npub, null);
+    const { expiresAt } = await persistServerSession(
+      npub,
+      null,
+      (event) => Promise.resolve(finalizeEvent(event, secretKey)),
+    );
 
     // Save session metadata to local cache (no encrypted nsec - that's in device keystore now)
     saveCachedSession({ npub, expiresAt, method: "keyteleport" });
@@ -1521,7 +1497,7 @@ const restoreFromDeviceKeystore = async (context) => {
     // Refresh server session
     let expiresAt = null;
     try {
-      const result = await persistServerSession(npub, null);
+      const result = await persistServerSession(npub, null, (event) => signIdentityEvent(event));
       expiresAt = result.expiresAt;
     } catch (error) {
       console.warn("[identity] Failed to refresh server session:", error instanceof Error ? error.message : error);

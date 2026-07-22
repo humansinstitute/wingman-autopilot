@@ -123,6 +123,7 @@ import { AgentRuntimeStatusPoller } from "./agents/agent-status-poller";
 import { LiveMessagePersistenceLoop } from "./server/live-message-persistence";
 import { syncLiveSessionMessages } from "./server/live-session-messages";
 import { getSessionCookieName, mintSessionCookie, SessionCookieError, SESSION_COOKIE_NAME } from "./auth/session-cookie";
+import { LoginChallengeStore } from "./auth/login-challenge-store";
 import {
   resolveRequestAuthContext,
   runWithRequestContext,
@@ -605,6 +606,7 @@ const schedulerApiHandler = createSchedulerApiHandler({
   },
 });
 const nip98GrantsStore = new Nip98GrantStore();
+const loginChallengeStore = new LoginChallengeStore();
 const memoryStore = new MemoryStore();
 const nip98ApiHandler = createNip98ApiHandler({
   grantsStore: nip98GrantsStore,
@@ -2637,6 +2639,7 @@ const handleApi = createApiRouteHandler({
     SessionCookieError,
     SESSION_COOKIE_NAME,
     shouldUseSecureCookies,
+    loginChallengeStore,
     generateIdentityAlias,
     handleKeyTeleport,
     handleKeyTeleportRegistration,

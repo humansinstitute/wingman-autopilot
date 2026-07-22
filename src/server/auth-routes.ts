@@ -9,8 +9,10 @@ import type { AccessAction } from "../auth/access-control";
 import type { MintSessionCookieOptions, SessionCookiePayload } from "../auth/session-cookie";
 import { nip19, verifyEvent } from "nostr-tools";
 import { configuredPublicRequestUrl, forwardedRequestUrl } from "./request-url";
+import type { LoginChallengeStore } from "../auth/login-challenge-store";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "HEAD";
+const LOGIN_CHALLENGE_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 
 function isConfiguredAdminNpub(ctx: AuthApiContext, npub: string | null | undefined): boolean {
   if (ctx.isAdminNpub) {
@@ -25,7 +27,13 @@ function normalizePathname(value: string): string {
   return normalized || "/";
 }
 
-function signedLoginEventNpub(input: unknown, request: Request, url: URL, ctx: AuthApiContext): string {
+function signedLoginEventNpub(
+  input: unknown,
+  challenge: string,
+  request: Request,
+  url: URL,
+  ctx: AuthApiContext,
+): string {
   if (!input || typeof input !== "object") {
     throw new Error("signedEvent must be an object");
   }
@@ -62,6 +70,9 @@ function signedLoginEventNpub(input: unknown, request: Request, url: URL, ctx: A
   const uTag = tags.find((tag): tag is string[] => Array.isArray(tag) && tag[0] === "u" && typeof tag[1] === "string");
   const methodTag = tags.find((tag): tag is string[] => Array.isArray(tag) && tag[0] === "method" && typeof tag[1] === "string");
   const purposeTag = tags.find((tag): tag is string[] => Array.isArray(tag) && tag[0] === "purpose" && typeof tag[1] === "string");
+  const challengeTags = tags.filter(
+    (tag): tag is string[] => Array.isArray(tag) && tag[0] === "challenge" && typeof tag[1] === "string",
+  );
 
   if (!uTag?.[1]) {
     throw new Error("signedEvent missing u tag");
@@ -71,6 +82,12 @@ function signedLoginEventNpub(input: unknown, request: Request, url: URL, ctx: A
   }
   if (purposeTag?.[1] !== "wingman-login") {
     throw new Error("signedEvent purpose tag must be wingman-login");
+  }
+  if (challengeTags.length !== 1 || challengeTags[0]?.[1] !== challenge) {
+    throw new Error("signedEvent challenge tag does not match login challenge");
+  }
+  if (event.content !== challenge) {
+    throw new Error("signedEvent content does not match login challenge");
   }
 
   let eventUrl: URL;
@@ -127,6 +144,7 @@ export interface AuthApiContext {
   SessionCookieError: new (...args: any[]) => Error;
   SESSION_COOKIE_NAME: string;
   shouldUseSecureCookies: (request: Request) => boolean;
+  loginChallengeStore: LoginChallengeStore;
 
   generateIdentityAlias: (npub: string) => string;
   handleKeyTeleport: (request: Request) => Response | Promise<Response>;
@@ -155,6 +173,17 @@ export async function handleAuthApi(
 ): Promise<Response | null> {
   const pathname = url.pathname;
 
+  // GET /api/auth/challenge — issue a short-lived, single-use login challenge.
+  if (pathname === "/api/auth/challenge" && method === "GET") {
+    try {
+      return Response.json(ctx.loginChallengeStore.issue(), {
+        headers: { "cache-control": "no-store" },
+      });
+    } catch {
+      return Response.json({ error: "Unable to issue login challenge" }, { status: 503 });
+    }
+  }
+
   // POST /api/auth/session — login / session creation
   if (pathname === "/api/auth/session" && method === "POST") {
     let payload: unknown;
@@ -168,7 +197,7 @@ export async function handleAuthApi(
       return Response.json({ error: "Invalid JSON payload" }, { status: 400 });
     }
 
-    const { npub, encryptedNsec, signedEvent } = payload as Record<string, unknown>;
+    const { npub, encryptedNsec, signedEvent, challenge } = payload as Record<string, unknown>;
     if (typeof npub !== "string" || npub.trim().length === 0) {
       return Response.json({ error: "npub is required" }, { status: 400 });
     }
@@ -178,16 +207,25 @@ export async function handleAuthApi(
       return Response.json({ error: "encryptedNsec must be a string" }, { status: 400 });
     }
 
-    if (typeof signedEvent !== "undefined" && signedEvent !== null) {
-      try {
-        const signerNpub = signedLoginEventNpub(signedEvent, request, url, ctx);
-        if (normaliseNpub(signerNpub) !== normaliseNpub(trimmedNpub)) {
-          return Response.json({ error: "signedEvent.pubkey must match npub" }, { status: 400 });
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Invalid signedEvent";
-        return Response.json({ error: message }, { status: 400 });
+    if (typeof challenge !== "string" || !LOGIN_CHALLENGE_PATTERN.test(challenge)) {
+      return Response.json({ error: "challenge is required" }, { status: 400 });
+    }
+    if (!signedEvent || typeof signedEvent !== "object") {
+      return Response.json({ error: "signedEvent is required" }, { status: 400 });
+    }
+
+    try {
+      const signerNpub = signedLoginEventNpub(signedEvent, challenge, request, url, ctx);
+      if (normaliseNpub(signerNpub) !== normaliseNpub(trimmedNpub)) {
+        return Response.json({ error: "signedEvent.pubkey must match npub" }, { status: 400 });
       }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Invalid signedEvent";
+      return Response.json({ error: message }, { status: 400 });
+    }
+
+    if (!ctx.loginChallengeStore.consume(challenge)) {
+      return Response.json({ error: "Login challenge is invalid, expired, or already used" }, { status: 401 });
     }
 
     try {
