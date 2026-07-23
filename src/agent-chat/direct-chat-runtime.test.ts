@@ -38,7 +38,7 @@ function fixture(options: { publish?: (input: any, attempt: number) => Promise<a
   const subscription: any = { subscriptionId: 'sub1', workspaceOwnerNpub: 'npub1owner', workspaceServiceNpub: 'npub1workspace', workspaceId: 'workspace-1', towerServiceNpub: 'npub1tower', backendBaseUrl: 'https://tower', sourceAppNpub: 'npub1app', botNpub: 'npub1rick', wsKeyNpub: 'npub1mapped', managedByNpub: 'npub1manager' };
   const channel: any = { id: 'channel-1', scope_id: 'scope-1', metadata: { agent_chat: { enabled: true, activation: 'mention_then_continue', context_prompt: 'Context' } } };
   const botIdentity: any = { botNpub: 'npub1rick', botPubkeyHex: '00', botSecret: new Uint8Array([1]) };
-  const message = (id: string, body: string, mention = false): FlightDeckPgMessage => ({ id, workspace_id: 'workspace-1', channel_id: 'channel-1', thread_id: 'thread-1', body, created_at: `2026-01-01T00:00:0${id.slice(-1)}Z`, created_by_actor_id: `actor-${id}`, created_by_actor_npub: 'npub1human', metadata: mention ? { mentions: [{ type: 'agent', npub: 'npub1rick', label: 'Rick' }] } : {} });
+  const message = (id: string, body: string, mention: false | { type?: string; npub?: string } | true = false): FlightDeckPgMessage => ({ id, workspace_id: 'workspace-1', channel_id: 'channel-1', thread_id: 'thread-1', body, created_at: `2026-01-01T00:00:0${id.slice(-1)}Z`, created_by_actor_id: `actor-${id}`, created_by_actor_npub: 'npub1human', metadata: mention ? { mentions: [{ type: mention === true ? 'agent' : mention.type ?? '', npub: mention === true ? 'npub1rick' : mention.npub ?? 'npub1rick', label: 'Rick' }] } : {} });
   const handle = (messages: FlightDeckPgMessage[], entityId: string) => runtime.handle({ subscription, botIdentity, channel, messages, event: { entity_id: entityId, channel_id: 'channel-1', cursor: `cursor-${entityId}` } });
   return { runtime, handle, message, prompts, creates, published, interceptStore, sessions };
 }
@@ -57,6 +57,19 @@ describe('Agent Direct Chat runtime', () => {
 
   test('literal mention text does not activate an unbound thread', async () => {
     const f = fixture(); const m1 = f.message('m1', '@Rick hello');
+    expect(await f.handle([m1], 'm1')).toEqual({ handled: false, reason: 'not_activated' });
+    expect(f.creates).toHaveLength(0);
+  });
+
+  test('activates by matching mention npub even when Tower classifies the actor as a person', async () => {
+    const f = fixture(); const m1 = f.message('m1', '@Rick hello', { type: 'person' });
+    expect(await f.handle([m1], 'm1')).toEqual({ handled: true, reason: 'direct_chat_queued' });
+    await f.runtime.waitForIdle();
+    expect(f.creates).toHaveLength(1); expect(f.published).toHaveLength(1);
+  });
+
+  test('does not activate for a canonical mention of another npub', async () => {
+    const f = fixture(); const m1 = f.message('m1', '@Other hello', { type: 'agent', npub: 'npub1other' });
     expect(await f.handle([m1], 'm1')).toEqual({ handled: false, reason: 'not_activated' });
     expect(f.creates).toHaveLength(0);
   });

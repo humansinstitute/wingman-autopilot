@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   buildDirectChatBootstrapPrompt, buildDirectChatClientRequestId, buildDirectChatFollowUpPrompt,
-  buildDirectChatTurnId, hasCanonicalAgentMention, orderDirectChatMessages, parseDirectChatReply,
+  buildDirectChatTurnId, hasCanonicalNpubMention, orderDirectChatMessages, parseDirectChatReply,
   buildDirectChatRoutingKey,
   selectUndeliveredHumanMessages,
 } from './direct-chat-contract';
@@ -13,10 +13,19 @@ describe('Agent Direct Chat contract', () => {
     { id: 'a1', body: 'reply', created_at: '2026-01-01T00:00:03Z', created_by_actor_npub: 'npub1rick' },
   ]);
 
-  test('requires canonical mention metadata and orders authoritative history', () => {
+  test('requires canonical npub mention metadata and orders authoritative history', () => {
     expect(messages.map((message) => message.messageId)).toEqual(['m1', 'm2', 'a1']);
-    expect(hasCanonicalAgentMention(messages[0]!, 'npub1rick')).toBe(true);
-    expect(hasCanonicalAgentMention({ ...messages[0]!, mentions: [] }, 'npub1rick')).toBe(false);
+    expect(hasCanonicalNpubMention(messages[0]!, 'npub1rick')).toBe(true);
+    expect(hasCanonicalNpubMention({ ...messages[0]!, mentions: [] }, 'npub1rick')).toBe(false);
+  });
+
+  test('routes canonical npubs independently of actor presentation type', () => {
+    const base = messages[0]!;
+    for (const type of ['agent', 'person', 'actor', '']) {
+      expect(hasCanonicalNpubMention({ ...base, mentions: [{ type, npub: 'npub1rick', actorId: 'actor-rick', label: 'Rick' }] }, 'npub1rick')).toBe(true);
+    }
+    expect(hasCanonicalNpubMention({ ...base, mentions: [{ type: 'agent', npub: 'npub1other', actorId: null, label: 'Other' }] }, 'npub1rick')).toBe(false);
+    expect(hasCanonicalNpubMention({ ...base, message: '@Rick', mentions: [] }, 'npub1rick')).toBe(false);
   });
 
   test('selects only undelivered human deltas', () => {

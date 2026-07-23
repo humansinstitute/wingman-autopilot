@@ -56,8 +56,15 @@ export function channelDirectChatConfig(channel: FlightDeckPgChannel): { enabled
   };
 }
 
-export function hasCanonicalAgentMention(message: DirectChatMessage, botNpub: string): boolean {
-  return message.mentions.some((mention) => mention.type === 'agent' && mention.npub === botNpub);
+/**
+ * Match the addressed identity from structured mention metadata.
+ *
+ * The npub is the canonical identity. `type` is presentation metadata owned by
+ * Flight Deck/Tower and may describe the same identity as an agent, person, or
+ * actor. It must not affect Autopilot routing.
+ */
+export function hasCanonicalNpubMention(message: DirectChatMessage, botNpub: string): boolean {
+  return message.mentions.some((mention) => mention.npub === botNpub);
 }
 
 export function selectUndeliveredHumanMessages(

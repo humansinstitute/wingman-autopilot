@@ -11,7 +11,7 @@ import {
   buildDirectChatRoutingKey,
   buildDirectChatTurnId,
   channelDirectChatConfig,
-  hasCanonicalAgentMention,
+  hasCanonicalNpubMention,
   orderDirectChatMessages,
   parseDirectChatReply,
   selectUndeliveredHumanMessages,
@@ -68,7 +68,7 @@ export class AgentDirectChatRuntime {
       const routingKey = buildDirectChatRoutingKey({ towerServiceNpub: input.subscription.towerServiceNpub || input.subscription.backendBaseUrl,
         workspaceId: input.subscription.workspaceId || workspaceIdentity, channelId: input.channel.id, threadId, agentNpub: agent.botNpub });
       const existing = this.deps.interceptStore.getByRoutingKey(routingKey);
-      if (!existing && !hasCanonicalAgentMention(eventMessage, agent.botNpub)) continue;
+      if (!existing && !hasCanonicalNpubMention(eventMessage, agent.botNpub)) continue;
       const cursor = input.event.cursor ?? (input.event.row_version != null ? String(input.event.row_version) : null);
       const upsert = this.deps.interceptStore.upsertMessage({
         routingKey, subscriptionId: input.subscription.subscriptionId, agentId: agent.agentId,
