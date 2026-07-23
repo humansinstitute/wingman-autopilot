@@ -40,10 +40,16 @@ describe('Agent Direct Chat contract', () => {
     expect(bootstrap).toContain('tower_service_npub: npub1tower');
     expect(bootstrap).toContain('THREAD HISTORY JSON');
     expect(bootstrap).toContain('NEXT MESSAGE');
-    expect(bootstrap).toContain('final response is published verbatim');
+    expect(bootstrap).toContain('polished response using GitHub-Flavored Markdown');
+    expect(bootstrap).toContain('normal final response is published verbatim to Flight Deck');
+    expect(bootstrap).toContain('do not add a wrapper or envelope');
+    expect(bootstrap).toContain('or enclose the whole response in a code fence');
     expect(bootstrap).not.toContain('FLIGHTDECK_REPLY_BEGIN');
-    expect(buildDirectChatFollowUpPrompt('route', 't1', [messages[1]!])).toContain('flightdeck_agent_direct_follow_up_v1');
-    expect(buildDirectChatFollowUpPrompt('route', 't1', [messages[1]!])).not.toContain('FLIGHTDECK_REPLY_BEGIN');
+    const followUp = buildDirectChatFollowUpPrompt('route', 't1', [messages[1]!]);
+    expect(followUp).toContain('flightdeck_agent_direct_follow_up_v1');
+    expect(followUp).toContain('polished response using GitHub-Flavored Markdown');
+    expect(followUp).toContain('published verbatim to Flight Deck');
+    expect(followUp).not.toContain('FLIGHTDECK_REPLY_BEGIN');
   });
 
   test('derives stable turn and publication ids', () => {

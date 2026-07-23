@@ -3,6 +3,8 @@ import { createHash } from 'node:crypto';
 import type { FlightDeckPgChannel, FlightDeckPgMessage } from './tower-client';
 import type { ChatInterceptStateRecord, WorkspaceSubscriptionRecord } from './types';
 
+const FINAL_RESPONSE_GUIDANCE = 'Answer normally with a polished response using GitHub-Flavored Markdown where useful. Your normal final response is published verbatim to Flight Deck: do not add a wrapper or envelope, invoke a reply helper, or enclose the whole response in a code fence.';
+
 export interface DirectChatMessage {
   messageId: string;
   userId: string | null;
@@ -98,7 +100,7 @@ export function buildDirectChatBootstrapPrompt(input: {
   const recovery = input.recovery
     ? `\n\nCONTINUITY RECOVERY\nprevious_session_id: ${input.recovery.previousSessionId}\nreason: ${input.recovery.reason}`
     : '';
-  return `AGENT DIRECT CHAT\n\nCHANNEL CONTEXT\n${input.contextPrompt}\n\nFLIGHT DECK SOURCE\n${source}${recovery}\n\nTHREAD HISTORY JSON\n${JSON.stringify(input.history, null, 2)}\n\nNEXT MESSAGE\nmessage_id: ${latest.messageId}\nuser_id: ${latest.userId ?? ''}\nuser_npub: ${latest.userNpub ?? ''}\nmessage: ${latest.message}\nattachments: ${JSON.stringify(latest.attachments)}\n\nAnswer the user normally. Your final response is published verbatim to the Flight Deck thread; do not invoke a reply helper.`;
+  return `AGENT DIRECT CHAT\n\nCHANNEL CONTEXT\n${input.contextPrompt}\n\nFLIGHT DECK SOURCE\n${source}${recovery}\n\nTHREAD HISTORY JSON\n${JSON.stringify(input.history, null, 2)}\n\nNEXT MESSAGE\nmessage_id: ${latest.messageId}\nuser_id: ${latest.userId ?? ''}\nuser_npub: ${latest.userNpub ?? ''}\nmessage: ${latest.message}\nattachments: ${JSON.stringify(latest.attachments)}\n\n${FINAL_RESPONSE_GUIDANCE}`;
 }
 
 export function buildDirectChatFollowUpPrompt(routingKey: string, threadId: string, messages: DirectChatMessage[]): string {
@@ -106,6 +108,7 @@ export function buildDirectChatFollowUpPrompt(routingKey: string, threadId: stri
     type: 'flightdeck_agent_direct_follow_up_v1',
     routing_key: routingKey,
     thread_id: threadId,
+    guidance: FINAL_RESPONSE_GUIDANCE,
     messages: messages.map((message) => ({
       message_id: message.messageId,
       user_id: message.userId,

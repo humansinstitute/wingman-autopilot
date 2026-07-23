@@ -195,7 +195,7 @@ user_id: ...
 user_npub: ...
 message: ...
 
-Answer the user normally. The completed final response is published verbatim.
+Answer normally with a polished response using GitHub-Flavored Markdown where useful. Your normal final response is published verbatim to Flight Deck: do not add a wrapper or envelope, invoke a reply helper, or enclose the whole response in a code fence.
 ```
 
 Attachments should be represented with their typed Tower file/storage metadata and local resolved paths only when Autopilot has legitimately downloaded them. Do not silently omit attachment-only messages.
@@ -211,6 +211,7 @@ For a bound thread, fetch the authoritative thread and select only human message
   "type": "flightdeck_agent_direct_follow_up_v1",
   "routing_key": "...",
   "thread_id": "...",
+  "guidance": "Answer normally with a polished response using GitHub-Flavored Markdown where useful. Your normal final response is published verbatim to Flight Deck: do not add a wrapper or envelope, invoke a reply helper, or enclose the whole response in a code fence.",
   "messages": [
     {
       "message_id": "...",
@@ -229,7 +230,7 @@ Advance `last_human_message_id_delivered` only after the session adapter has acc
 
 ## Final Response and Publication
 
-Autopilot owns publication. The agent answers normally and must not invoke a reply command. Autopilot uses the session adapter's authoritative turn-completion state and publishes the completed final assistant/agent message card verbatim, including its Markdown. Streaming text, thinking, commentary, tool activity, `agent-working` progress, and combined terminal transcripts are never eligible replies. Autopilot must not infer completion from content stability or require marker envelopes.
+Autopilot owns publication. The agent answers normally with polished Flight Deck/GitHub-Flavored Markdown and must not invoke a reply command, add a wrapper/envelope, or enclose the whole answer in a code fence. Autopilot uses the session adapter's authoritative turn-completion state and publishes the completed final assistant/agent message card verbatim, preserving headings, paragraphs, lists, links, inline code, and fenced code without escaping or flattening them. Streaming text, thinking, commentary, tool activity, `agent-working` progress, and combined terminal transcripts are never eligible replies. Autopilot must not infer completion from content stability or require marker envelopes. Transport handling may safely normalize outer whitespace or newline encoding only when required; it must never semantically rewrite the Markdown body.
 
 On turn completion:
 

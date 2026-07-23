@@ -13,6 +13,7 @@ function fixture(options: {
   directChat?: { enabled: boolean; sessionAgent: string | null; directory: string; model: string | null; idleRetentionMinutes: number } | null;
   replyRole?: 'assistant' | 'agent';
   includeWorkingMessage?: boolean;
+  finalContent?: string;
 } = {}) {
   const db = join(tmpdir(), `agent-direct-${randomUUID()}.sqlite`);
   const agentStore = new AgentDefinitionStore(db);
@@ -28,7 +29,7 @@ function fixture(options: {
       sendMessage: async (prompt: string) => {
         prompts.push(prompt);
         if (options.includeWorkingMessage) sessions.get(id).messages.push({ role: 'agent-working', content: 'Thinking and tool progress', createdAt: new Date().toISOString() });
-        sessions.get(id).messages.push({ role: options.replyRole ?? 'assistant', content: '## Answer\n\nFinal **Markdown**.', createdAt: new Date().toISOString() });
+        sessions.get(id).messages.push({ role: options.replyRole ?? 'assistant', content: options.finalContent ?? '## Answer\n\nFinal **Markdown**.', createdAt: new Date().toISOString() });
       },
     }),
     createSession: async (...args: any[]) => {
@@ -66,10 +67,23 @@ describe('Agent Direct Chat runtime', () => {
   });
 
   test('publishes only the completed final card returned with the sessions API agent role', async () => {
-    const f = fixture({ replyRole: 'agent', includeWorkingMessage: true }); const m1 = f.message('m1', '@Rick hello', true);
+    const richMarkdown = [
+      '# Release notes',
+      '',
+      'A paragraph with [a link](https://example.com) and `inline code`.',
+      '',
+      '- First item',
+      '- **Second item**',
+      '',
+      '```ts',
+      'const ready = true;',
+      '```',
+    ].join('\n');
+    const f = fixture({ replyRole: 'agent', includeWorkingMessage: true, finalContent: richMarkdown }); const m1 = f.message('m1', '@Rick hello', true);
     expect(await f.handle([m1], 'm1')).toEqual({ handled: true, reason: 'direct_chat_queued' });
     await f.runtime.waitForIdle();
-    expect(f.published).toHaveLength(1); expect(f.published[0].body).toBe('## Answer\n\nFinal **Markdown**.');
+    expect(f.published).toHaveLength(1); expect(f.published[0].body).toBe(richMarkdown);
+    expect(f.published[0].body.startsWith('```\n')).toBe(false);
     expect(f.published[0].body).not.toContain('Thinking and tool progress');
     expect(f.interceptStore.listAll()[0]?.state).toBe('idle');
   });
