@@ -6,6 +6,7 @@ import { AgentDefinitionStore } from './agent-definition-store';
 import { ChatInterceptStateStore } from './chat-intercept-state-store';
 import { AgentDirectChatRuntime } from './direct-chat-runtime';
 import { DirectChatTurnStore } from './direct-chat-turn-store';
+import { buildDirectChatClientRequestId, buildDirectChatRoutingKey, buildDirectChatTurnId } from './direct-chat-contract';
 import type { FlightDeckPgMessage } from './tower-client';
 
 function fixture(options: {
@@ -41,8 +42,9 @@ function fixture(options: {
     },
   } as never;
   const published: any[] = [];
-  const runtime = new AgentDirectChatRuntime({ defaultAgent: 'codex', processManager: manager, agentStore, interceptStore, turnStore,
-    publish: async (input: any) => { published.push(input); return options.publish ? options.publish(input, published.length) : { message: { id: `agent-message-${published.length}` } }; } });
+  const publish = async (input: any) => { published.push(input); return options.publish ? options.publish(input, published.length) : { message: { id: `agent-message-${published.length}` } }; };
+  const makeRuntime = () => new AgentDirectChatRuntime({ defaultAgent: 'codex', processManager: manager, agentStore, interceptStore, turnStore, publish });
+  const runtime = makeRuntime();
   const now = new Date().toISOString();
   const defaultDirectChat = { enabled: true, sessionAgent: 'codex', directory: '/Users/mini/wingmen/wingman21', model: null, idleRetentionMinutes: 60 };
   agentStore.save({ agentId: 'rick', label: 'Rick', botNpub: 'npub1rick', workspaceOwnerNpub: 'npub1workspace', groupNpubs: [], workingDirectory: '/legacy', capabilities: ['chat_intercept'],
@@ -52,7 +54,7 @@ function fixture(options: {
   const botIdentity: any = { botNpub: 'npub1rick', botPubkeyHex: '00', botSecret: new Uint8Array([1]) };
   const message = (id: string, body: string, mention: false | { type?: string; npub?: string } | true = false, authorNpub = 'npub1human'): FlightDeckPgMessage => ({ id, workspace_id: 'workspace-1', channel_id: 'channel-1', thread_id: 'thread-1', body, created_at: `2026-01-01T00:00:0${id.slice(-1)}Z`, created_by_actor_id: `actor-${id}`, created_by_actor_npub: authorNpub, metadata: mention ? { mentions: [{ type: mention === true ? 'agent' : mention.type ?? '', npub: mention === true ? 'npub1rick' : mention.npub ?? 'npub1rick', label: 'Rick' }] } : {} });
   const handle = (messages: FlightDeckPgMessage[], entityId: string) => runtime.handle({ subscription, botIdentity, channel, messages, event: { entity_id: entityId, channel_id: 'channel-1', cursor: `cursor-${entityId}` } });
-  return { runtime, handle, message, prompts, creates, published, interceptStore, sessions };
+  return { runtime, makeRuntime, handle, message, prompts, creates, published, interceptStore, turnStore, sessions, subscription, channel, botIdentity };
 }
 
 describe('Agent Direct Chat runtime', () => {
@@ -153,8 +155,8 @@ describe('Agent Direct Chat runtime', () => {
     expect(f.prompts[0]).toContain('CHANNEL CONTEXT\nYou are Rick in Pete’s direct Flight Deck chat.');
   });
 
-  test('keeps a shared channel opt-in even when a canonical mention is present', async () => {
-    const f = fixture({ channel: { kind: 'channel', participant_npubs: ['npub1human', 'npub1rick'], metadata: { basePrompt: 'Legacy context' } } });
+  test('keeps an explicitly opted-out shared channel disabled even when a canonical mention is present', async () => {
+    const f = fixture({ channel: { kind: 'channel', participant_npubs: ['npub1human', 'npub1rick'], metadata: { agent_chat: { enabled: false }, basePrompt: 'Legacy context' } } });
     const m1 = f.message('m1', '@Rick hello', true);
     expect(await f.handle([m1], 'm1')).toEqual({ handled: false, reason: 'channel_disabled' });
     expect(f.creates).toHaveLength(0);
@@ -207,6 +209,36 @@ describe('Agent Direct Chat runtime', () => {
     await f.handle([m1], 'm1'); await f.runtime.waitForIdle();
     expect(f.published).toHaveLength(2); expect(f.published[1].clientRequestId).toBe(f.published[0].clientRequestId);
     expect(f.prompts).toHaveLength(1); expect(f.interceptStore.listAll()[0]!.lastAgentMessageIdPublished).toBe('agent-message-replayed');
+  });
+
+  test('recovers an accepted turn after restart from the existing clean final without resending its prompt', async () => {
+    const f = fixture();
+    const m1 = f.message('m1', '@Rick survive restart', true);
+    const routingKey = buildDirectChatRoutingKey({ towerServiceNpub: 'npub1tower', workspaceId: 'workspace-1', channelId: 'channel-1', threadId: 'thread-1', agentNpub: 'npub1rick' });
+    const turnId = buildDirectChatTurnId(routingKey, ['m1']);
+    const now = new Date().toISOString();
+    const seeded = f.interceptStore.upsertMessage({ routingKey, subscriptionId: 'sub1', agentId: 'rick', workspaceOwnerNpub: 'npub1workspace',
+      sourceAppNpub: 'npub1app', towerServiceNpub: 'npub1tower', workspaceId: 'workspace-1', channelId: 'channel-1', threadId: 'thread-1',
+      botNpub: 'npub1rick', messageId: 'm1', eventCursor: 'cursor-m1', at: now }).record;
+    f.interceptStore.save({ ...seeded, sessionId: 'surviving-session', state: 'active', lastHumanMessageIdDelivered: 'm1', pendingMessageCount: 0 });
+    f.turnStore.save({ turnId, routingKey, sourceMessageIds: ['m1'], clientRequestId: buildDirectChatClientRequestId(routingKey, turnId),
+      replyBody: null, publishedMessageId: null, state: 'accepted', createdAt: now, updatedAt: now });
+    f.sessions.set('surviving-session', { id: 'surviving-session', agent: 'codex', workingDirectory: '/Users/mini/wingmen/wingman21', name: 'Rick Direct Chat',
+      status: 'running', startedAt: now, port: 1, command: [], logs: [], metadata: {}, messages: [
+        { role: 'user', content: 'AGENT DIRECT CHAT\ntrigger_message_id: m1', createdAt: now },
+        { role: 'assistant', content: '## Recovered final\n\nPublished once.', createdAt: now },
+      ] });
+
+    const restarted = f.makeRuntime();
+    expect(restarted.recover({ subscription: f.subscription, botIdentity: f.botIdentity, channel: f.channel, messages: [m1],
+      event: { entity_id: 'm1', channel_id: 'channel-1', cursor: 'cursor-m1' } }, routingKey))
+      .toEqual({ handled: true, reason: 'direct_chat_recovery_queued' });
+    await restarted.waitForIdle();
+    expect(f.prompts).toHaveLength(0); expect(f.published).toHaveLength(1);
+    expect(f.published[0].body).toBe('## Recovered final\n\nPublished once.');
+    expect(f.published[0].clientRequestId).toBe(buildDirectChatClientRequestId(routingKey, turnId));
+    expect(f.turnStore.getPending(routingKey)).toBeNull();
+    expect(f.interceptStore.getByRoutingKey(routingKey)?.lastCompletedTurnId).toBe(turnId);
   });
 
   test('blocks on Tower auth failure without publishing speculative output', async () => {

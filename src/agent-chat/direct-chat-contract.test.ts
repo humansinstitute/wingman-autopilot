@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   buildDirectChatBootstrapPrompt, buildDirectChatClientRequestId, buildDirectChatFollowUpPrompt,
-  buildDirectChatTurnId, hasCanonicalNpubMention, isImplicitTwoPartyDirectMessage, orderDirectChatMessages,
+  buildDirectChatTurnId, channelDirectChatConfig, hasCanonicalNpubMention, isImplicitTwoPartyDirectMessage, orderDirectChatMessages,
   buildDirectChatRoutingKey,
   selectUndeliveredHumanMessages,
 } from './direct-chat-contract';
@@ -35,6 +35,13 @@ describe('Agent Direct Chat contract', () => {
     expect(isImplicitTwoPartyDirectMessage({ ...strictDm, participant_npubs: ['npub1human', 'npub1other'] }, 'npub1rick', 'npub1human')).toBe(false);
     expect(isImplicitTwoPartyDirectMessage({ ...strictDm, participant_npubs: ['npub1rick', 'npub1human', 'npub1other'] }, 'npub1rick', 'npub1human')).toBe(false);
     expect(isImplicitTwoPartyDirectMessage({ ...strictDm, kind: 'channel' }, 'npub1rick', 'npub1human')).toBe(false);
+  });
+
+  test('defaults channels to Direct enabled with explicit false as the opt-out and legacy context fallback', () => {
+    expect(channelDirectChatConfig({ id: 'c1', metadata: {} })).toEqual({ enabled: true, contextPrompt: '' });
+    expect(channelDirectChatConfig({ id: 'c2', metadata: { contextPrompt: 'Legacy context' } })).toEqual({ enabled: true, contextPrompt: 'Legacy context' });
+    expect(channelDirectChatConfig({ id: 'c3', metadata: { basePrompt: 'Base', agent_chat: { context_prompt: 'Direct' } } })).toEqual({ enabled: true, contextPrompt: 'Direct' });
+    expect(channelDirectChatConfig({ id: 'c4', metadata: { agent_chat: { enabled: false } } })).toEqual({ enabled: false, contextPrompt: '' });
   });
 
   test('selects only undelivered human deltas', () => {

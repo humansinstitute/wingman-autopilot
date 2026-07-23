@@ -175,6 +175,55 @@ export async function sendPromptAndAwaitFinalResponse(
   throw new Error(`Timed out waiting for session ${sessionId} to produce a final response.`);
 }
 
+export async function awaitAcceptedFinalResponse(
+  manager: ProcessManager,
+  sessionId: string,
+  prompt: string,
+  sourceMessageIds: string[],
+  waitOptions?: Pick<AssistantReplyWaitOptions, 'timeoutMs' | 'pollIntervalMs'> & { acceptedAt?: string },
+): Promise<AssistantReplyResult> {
+  const acceptedAtMs = Date.parse(waitOptions?.acceptedAt ?? '');
+  await manager.captureAgentapiCodexSessionIdFromPrompt?.(sessionId, prompt, {
+    sentAtMs: Number.isFinite(acceptedAtMs) ? acceptedAtMs : Date.now(), attempts: 2,
+  });
+  const pollIntervalMs = Math.max(10, waitOptions?.pollIntervalMs ?? ASSISTANT_REPLY_POLL_INTERVAL_MS);
+  const deadline = Date.now() + Math.max(pollIntervalMs, waitOptions?.timeoutMs ?? ASSISTANT_REPLY_TIMEOUT_MS);
+  while (Date.now() < deadline) {
+    const session = manager.getSession(sessionId);
+    if (!session) throw new Error(`Accepted Direct Chat session ${sessionId} is missing.`);
+    const adapter = manager.getAdapter(sessionId);
+    let liveMessages: Array<{ role: string; content: string; createdAt: string }> = [];
+    let runtimeStatus: Awaited<ReturnType<NonNullable<typeof adapter>['fetchStatus']>> | null = null;
+    if (adapter) {
+      try {
+        [liveMessages, runtimeStatus] = await Promise.all([adapter.fetchMessages(), adapter.fetchStatus()]);
+      } catch {}
+    }
+    const nativeCodexReady = session.agent === 'codex'
+      && session.metadata?.nativeAgentSession?.agent === 'codex'
+      && Boolean(session.metadata.nativeAgentSession.sessionId);
+    const authoritativeMessages = nativeCodexReady
+      ? await resolveAuthoritativeSessionMessages(session, liveMessages, { requireNative: true })
+      : adapter?.deliversPromptsDirectly?.() ? liveMessages : [];
+    const boundaryIndex = authoritativeMessages.findLastIndex((message) => {
+      if (message.role !== 'user') return false;
+      if (message.content === prompt) return true;
+      return sourceMessageIds.some((id) => message.content.includes(id));
+    });
+    const finalMessage = (boundaryIndex >= 0 ? authoritativeMessages.slice(boundaryIndex + 1) : [])
+      .filter((message) => (message.role === 'assistant' || message.role === 'agent') && message.content.trim().length > 0)
+      .at(-1);
+    if (finalMessage && (nativeCodexReady || runtimeStatus === 'stable')) {
+      return { content: finalMessage.content, createdAt: finalMessage.createdAt };
+    }
+    if (!adapter && session.status !== 'running' && session.status !== 'starting') {
+      throw new Error(`Accepted Direct Chat session ${sessionId} stopped without a recoverable final response.`);
+    }
+    await sleep(pollIntervalMs);
+  }
+  throw new Error(`Timed out waiting for accepted Direct Chat session ${sessionId} to produce a final response.`);
+}
+
 export function hasExpiredRetention(intercept: ChatInterceptStateRecord, idleRetentionMs: number): boolean {
   const lastActivityAt = Date.parse(intercept.lastActivityAt);
   if (!Number.isFinite(lastActivityAt)) {

@@ -49,9 +49,14 @@ export function orderDirectChatMessages(messages: FlightDeckPgMessage[]): Direct
 export function channelDirectChatConfig(channel: FlightDeckPgChannel): { enabled: boolean; contextPrompt: string } {
   const metadata = objectValue(channel.metadata);
   const config = objectValue(metadata.agent_chat);
+  const contextPrompt = typeof config.context_prompt === 'string'
+    ? config.context_prompt
+    : typeof metadata.contextPrompt === 'string'
+      ? metadata.contextPrompt
+      : typeof metadata.basePrompt === 'string' ? metadata.basePrompt : '';
   return {
-    enabled: config.enabled === true && (config.activation === undefined || config.activation === 'mention_then_continue'),
-    contextPrompt: typeof config.context_prompt === 'string' ? config.context_prompt : '',
+    enabled: config.enabled !== false,
+    contextPrompt,
   };
 }
 

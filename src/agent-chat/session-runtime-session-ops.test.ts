@@ -6,7 +6,7 @@ import { describe, expect, test } from 'bun:test';
 import type { AgentAdapter } from '../agents/agent-adapter';
 import type { ProcessManager, SessionSnapshot } from '../agents/process-manager';
 import { resolveAuthoritativeSessionMessages } from '../agents/authoritative-session-messages';
-import { sendPromptAndAwaitAssistantReply, sendPromptAndAwaitFinalResponse } from './session-runtime-session-ops';
+import { awaitAcceptedFinalResponse, sendPromptAndAwaitAssistantReply, sendPromptAndAwaitFinalResponse } from './session-runtime-session-ops';
 
 class FakeAdapter implements AgentAdapter {
   private sent = false;
@@ -271,6 +271,40 @@ describe('sendPromptAndAwaitFinalResponse', () => {
       expect(authoritative.map((message) => message.role)).toEqual(['user', 'agent-working', 'agent']);
       expect(authoritative[1]?.content).toContain('Tool call: exec_command `bun test`');
       expect(authoritative[2]?.content).toBe('## Clean final\n\nEverything passed.');
+    } finally {
+      if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = previousCodexHome;
+      await rm(codexHome, { recursive: true, force: true });
+    }
+  });
+
+  test('recovers an accepted PM2-surviving turn from its later native final without resending', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'accepted-native-final-'));
+    const previousCodexHome = process.env.CODEX_HOME;
+    process.env.CODEX_HOME = codexHome;
+    const nativeId = 'native-accepted-1';
+    try {
+      const sessionDir = join(codexHome, 'sessions', '2026', '07', '23');
+      await mkdir(sessionDir, { recursive: true });
+      await writeFile(join(sessionDir, `rollout-${nativeId}.jsonl`), [
+        JSON.stringify({ type: 'session_meta', timestamp: '2026-07-23T09:00:00.000Z', payload: { id: nativeId, cwd: '/repo' } }),
+        JSON.stringify({ type: 'event_msg', timestamp: '2026-07-23T09:00:01.000Z', payload: { type: 'user_message', message: 'AGENT DIRECT CHAT\ntrigger_message_id: source-m1' } }),
+        JSON.stringify({ type: 'event_msg', timestamp: '2026-07-23T09:00:02.000Z', payload: { type: 'agent_message', phase: 'commentary', message: 'Still working.' } }),
+        JSON.stringify({ type: 'event_msg', timestamp: '2026-07-23T09:00:05.000Z', payload: { type: 'agent_message', phase: 'final_answer', message: '## Survived restart\n\nClean final.' } }),
+      ].join('\n'));
+      const session = { id: 'pm2-survivor', agent: 'codex', port: 1, name: 'Direct', status: 'running', startedAt: new Date(),
+        command: [], workingDirectory: '/repo', logs: [], metadata: { nativeAgentSession: { agent: 'codex', sessionId: nativeId,
+          workingDirectory: '/repo', capturedAt: new Date().toISOString(), source: 'agentapi' } } } as unknown as SessionSnapshot;
+      let sendCalls = 0;
+      const adapter = { fetchStatus: async () => 'stable', fetchMessages: async () => [
+        { role: 'agent', content: 'combined terminal\nStill working.\n## Survived restart', createdAt: '2026-07-23T09:00:05.000Z' },
+      ], sendMessage: async () => { sendCalls += 1; }, waitForReady: async () => {}, interruptCurrentTurn: async () => false,
+        getEventsUrl: () => null, dispose: async () => {} } as AgentAdapter;
+      const manager = { getSession: () => session, getAdapter: () => adapter,
+        captureAgentapiCodexSessionIdFromPrompt: async () => false } as unknown as ProcessManager;
+      const reply = await awaitAcceptedFinalResponse(manager, session.id, 'reconstructed prompt', ['source-m1'], { timeoutMs: 100, pollIntervalMs: 10 });
+      expect(reply.content).toBe('## Survived restart\n\nClean final.');
+      expect(reply.content).not.toContain('combined terminal'); expect(sendCalls).toBe(0);
     } finally {
       if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
       else process.env.CODEX_HOME = previousCodexHome;

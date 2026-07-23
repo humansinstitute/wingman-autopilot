@@ -5331,7 +5331,8 @@ export class WorkspaceSubscriptionManager {
 
     const pendingIntercepts = this.routingEvaluator
       .listInterceptsForSubscription(record.subscriptionId)
-      .filter((intercept) => this.shouldReplayPendingIntercept(intercept));
+      .filter((intercept) => this.chatRuntime?.hasRecoverableDirectChat(intercept.routingKey)
+        || this.shouldReplayPendingIntercept(intercept));
 
     if (pendingIntercepts.length === 0) {
       return;
@@ -5343,6 +5344,11 @@ export class WorkspaceSubscriptionManager {
           const hydrated = await hydrateDirectChatThread({ subscription: record, botIdentity,
             channelId: intercept.channelId, threadId: intercept.threadId },
             { fetchChannel: this.fetchFlightDeckPgChannelImpl, fetchMessages: this.fetchFlightDeckPgChannelMessagesImpl });
+          const recovery = this.chatRuntime.recoverDirectChat({ subscription: record, botIdentity,
+            channel: hydrated.channel, messages: hydrated.messages,
+            event: { entity_id: intercept.lastMessageIdSeen, channel_id: intercept.channelId, cursor: intercept.lastEventCursorSeen } },
+            intercept.routingKey);
+          if (recovery.handled) continue;
           await this.chatRuntime.handleDirectChat({ subscription: record, botIdentity, channel: hydrated.channel, messages: hydrated.messages,
             event: { entity_id: intercept.lastMessageIdSeen, channel_id: intercept.channelId, cursor: intercept.lastEventCursorSeen } });
         } catch (error) {

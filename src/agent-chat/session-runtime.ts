@@ -63,6 +63,14 @@ export class AgentChatSessionRuntime {
     return this.directRuntime.handle(input);
   }
 
+  recoverDirectChat(input: DirectChatRuntimeInput, routingKey: string): { handled: boolean; reason: string } {
+    return this.directRuntime.recover(input, routingKey);
+  }
+
+  hasRecoverableDirectChat(routingKey: string): boolean {
+    return this.directRuntime.hasRecoverableTurn(routingKey);
+  }
+
   waitForDirectChatIdle(): Promise<void> {
     return this.directRuntime.waitForIdle();
   }

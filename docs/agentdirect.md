@@ -59,7 +59,7 @@ The legacy `activation: mention_then_continue` configuration value remains accep
 
 - ordinary `channel` and `system` channels: every human message must canonically mention this agent, regardless of an existing binding;
 - strict two-party `dm`: an unmentioned message is eligible only when `participant_npubs` contains exactly two distinct non-empty npubs, includes this agent, and the event author is the other participant;
-- a strict two-party DM is intrinsically Direct-enabled and does not require `metadata.agent_chat.enabled`; shared and system channels remain explicitly opt-in;
+- all channels are Direct-enabled by product default; `metadata.agent_chat.enabled: false` is the explicit opt-out;
 - malformed or multi-party DMs, DMs missing this agent, and messages authored outside the declared pair require a canonical mention;
 - an existing binding or live session never makes an otherwise ineligible message actionable;
 - target agent authored the message: ignore;
@@ -203,7 +203,7 @@ Answer normally with a polished response using GitHub-Flavored Markdown where us
 
 Attachments should be represented with their typed Tower file/storage metadata and local resolved paths only when Autopilot has legitimately downloaded them. Do not silently omit attachment-only messages.
 
-For an intrinsically enabled strict two-party DM, use `metadata.agent_chat.context_prompt` when present; otherwise fall back to the legacy channel `metadata.basePrompt`. This fallback does not intrinsically enable shared or system channels.
+Context priority is `metadata.agent_chat.context_prompt`, then legacy `metadata.contextPrompt`, then `metadata.basePrompt`. Shared/system channels still require a canonical agent mention on every actionable message even though Direct is enabled by default.
 
 The complete source coordinates also remain in session metadata so later turns do not depend on the bootstrap prompt being visible.
 
@@ -285,6 +285,8 @@ A continuity replacement increments `session_generation`, appends the old sessio
 Do not claim native continuity when a replacement session was created.
 
 Idle retention may stop/archive the process, but it must not delete the routing binding or human-message delivery cursors. A later human message should transparently resume or recover.
+
+On Autopilot startup, subscription recovery enumerates persisted non-completed Direct turns and hydrates their authoritative Tower channel/thread without waiting for a new event. A `reply_ready` turn retries its stored body with its stored `client_request_id`. An `accepted` turn observes the surviving session/native transcript after the stored source-message boundary, never resends the prompt, and promotes only a clean authoritative final to `reply_ready` before idempotent publication. If the final has not arrived, recovery waits safely. Repeated restarts must remain safe at every state.
 
 Session metadata `nextAction: stop` means the current turn is complete. It does not mean the Flight Deck thread is unbound.
 
@@ -386,7 +388,7 @@ The existing native session/process-manager implementation is the MVP adapter. A
 6. A later unmentioned shared-channel reply is ignored and leaves the existing session binding intact; a later mentioned reply reuses it.
 7. An unmentioned message from the sole other participant in a strict two-party DM creates or reuses the session.
 8. A strict two-party DM works without `metadata.agent_chat`; its legacy `metadata.basePrompt` supplies context when no Direct context prompt exists.
-9. Missing-agent, multi-party, malformed, or outsider-authored DMs require a canonical mention and remain metadata opt-in.
+9. Missing-agent, multi-party, malformed, or outsider-authored DMs require a canonical mention unless explicitly opted out.
 10. Two quick eligible human replies are delivered once, in order, without overlapping turns.
 11. Duplicate Tower events do not produce duplicate sessions, prompts, or replies.
 12. Publication retries with the same client request ID produce one Tower message.
@@ -395,6 +397,7 @@ The existing native session/process-manager implementation is the MVP adapter. A
 15. Another agent in the same thread uses a separate routing key and session.
 16. Access/auth failures retain undelivered eligible human messages and publish no speculative reply.
 17. Restarting Autopilot restores bindings and cursors but does not waive per-message eligibility.
+18. Restarting after a turn is persisted `accepted` recovers and publishes the surviving session's clean native final without resending the prompt or requiring a new human message.
 
 ## Cross-Project Delivery Contract
 

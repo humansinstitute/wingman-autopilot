@@ -18,7 +18,7 @@ import {
   selectUndeliveredHumanMessages,
 } from './direct-chat-contract';
 import { directChatTurnStore, type DirectChatTurnStore } from './direct-chat-turn-store';
-import { sendPromptAndAwaitFinalResponse } from './session-runtime-session-ops';
+import { awaitAcceptedFinalResponse, sendPromptAndAwaitFinalResponse } from './session-runtime-session-ops';
 import { createFlightDeckPgChannelMessage, type FlightDeckPgChannel, type FlightDeckPgEvent, type FlightDeckPgMessage } from './tower-client';
 import type { AgentDefinitionRecord, RuntimeBotIdentity, WorkspaceSubscriptionRecord } from './types';
 
@@ -100,20 +100,46 @@ export class AgentDirectChatRuntime {
       });
       if (upsert.wasDuplicate && !this.turnStore.getPending(routingKey)) continue;
       handled = true;
-      const idleTimer = this.idleTimers.get(routingKey);
-      if (idleTimer) { clearTimeout(idleTimer); this.idleTimers.delete(routingKey); }
-      this.queued.set(routingKey, input);
-      if (!this.running.has(routingKey)) {
-        const work = this.run(routingKey, agent, contextPrompt).finally(() => this.running.delete(routingKey));
-        this.running.set(routingKey, work);
-        void work.catch(() => undefined);
-      }
+      this.enqueue(routingKey, agent, contextPrompt, input);
     }
     return { handled, reason: handled ? 'direct_chat_queued' : 'not_activated' };
   }
 
+  recover(input: DirectChatRuntimeInput, routingKey: string): { handled: boolean; reason: string } {
+    const pending = this.turnStore.getPending(routingKey);
+    const intercept = this.deps.interceptStore.getByRoutingKey(routingKey);
+    if (!pending || !intercept || (pending.state !== 'accepted' && pending.state !== 'reply_ready')) {
+      return { handled: false, reason: 'no_recoverable_turn' };
+    }
+    const workspaceIdentity = input.subscription.workspaceServiceNpub?.trim() || input.subscription.workspaceOwnerNpub;
+    const agent = this.deps.agentStore.getByAgentId(intercept.agentId);
+    if (!agent || !agent.enabled || agent.botNpub !== intercept.botNpub || agent.workspaceOwnerNpub !== workspaceIdentity) {
+      return { handled: false, reason: 'recovery_agent_missing' };
+    }
+    const resolvedAgent = withMvpDirectChatDefault(agent);
+    if (!resolvedAgent.directChat?.enabled) return { handled: false, reason: 'recovery_agent_disabled' };
+    const contextPrompt = channelDirectChatConfig(input.channel).contextPrompt || channelLegacyBasePrompt(input.channel);
+    this.enqueue(routingKey, resolvedAgent, contextPrompt, input);
+    return { handled: true, reason: 'direct_chat_recovery_queued' };
+  }
+
+  hasRecoverableTurn(routingKey: string): boolean {
+    const pending = this.turnStore.getPending(routingKey);
+    return pending?.state === 'accepted' || pending?.state === 'reply_ready';
+  }
+
   async waitForIdle(): Promise<void> {
     await Promise.all([...this.running.values()]);
+  }
+
+  private enqueue(routingKey: string, agent: AgentDefinitionRecord, contextPrompt: string, input: DirectChatRuntimeInput): void {
+    const idleTimer = this.idleTimers.get(routingKey);
+    if (idleTimer) { clearTimeout(idleTimer); this.idleTimers.delete(routingKey); }
+    this.queued.set(routingKey, input);
+    if (this.running.has(routingKey)) return;
+    const work = this.run(routingKey, agent, contextPrompt).finally(() => this.running.delete(routingKey));
+    this.running.set(routingKey, work);
+    void work.catch(() => undefined);
   }
 
   private async run(routingKey: string, agent: AgentDefinitionRecord, contextPrompt: string): Promise<void> {
@@ -131,8 +157,28 @@ export class AgentDirectChatRuntime {
         const undelivered = pending?.state === 'accepted'
           ? history.filter((message) => pending.sourceMessageIds.includes(message.messageId))
           : selectUndeliveredHumanMessages(history, intercept, agent.botNpub, [input.subscription.wsKeyNpub ?? '']);
-        const delta = undelivered.filter((message) => isAgentDirectMessageEligible(input.channel, message, agent.botNpub));
+        const delta = pending?.state === 'accepted'
+          ? undelivered
+          : undelivered.filter((message) => isAgentDirectMessageEligible(input.channel, message, agent.botNpub));
         if (delta.length === 0) continue;
+        if (pending?.state === 'accepted') {
+          if (!intercept.sessionId) throw new Error('Accepted Agent Direct Chat turn has no bound session.');
+          const recoveryPrompt = intercept.lastCompletedTurnId
+            ? buildDirectChatFollowUpPrompt(routingKey, intercept.threadId, delta)
+            : buildDirectChatBootstrapPrompt({ contextPrompt, subscription: input.subscription, intercept,
+                scopeId: input.channel.scope_id ?? null, history, nextMessages: delta });
+          const recovered = await awaitAcceptedFinalResponse(
+            this.deps.processManager,
+            intercept.sessionId,
+            recoveryPrompt,
+            pending.sourceMessageIds,
+            { acceptedAt: pending.createdAt },
+          );
+          this.turnStore.save({ ...pending, replyBody: recovered.content, state: 'reply_ready', updatedAt: new Date().toISOString() });
+          await this.publishTurn(input, intercept, agent, pending.turnId, pending.sourceMessageIds,
+            pending.clientRequestId, recovered.content);
+          continue;
+        }
         const sessionResolution = await this.resolveSession(agent, intercept, input.subscription, input.channel.scope_id ?? null);
         const session = sessionResolution.session;
         intercept = this.deps.interceptStore.save({ ...intercept, sessionId: session.id,
