@@ -59,6 +59,7 @@ The legacy `activation: mention_then_continue` configuration value remains accep
 
 - ordinary `channel` and `system` channels: every human message must canonically mention this agent, regardless of an existing binding;
 - strict two-party `dm`: an unmentioned message is eligible only when `participant_npubs` contains exactly two distinct non-empty npubs, includes this agent, and the event author is the other participant;
+- a strict two-party DM is intrinsically Direct-enabled and does not require `metadata.agent_chat.enabled`; shared and system channels remain explicitly opt-in;
 - malformed or multi-party DMs, DMs missing this agent, and messages authored outside the declared pair require a canonical mention;
 - an existing binding or live session never makes an otherwise ineligible message actionable;
 - target agent authored the message: ignore;
@@ -201,6 +202,8 @@ Answer normally with a polished response using GitHub-Flavored Markdown where us
 ```
 
 Attachments should be represented with their typed Tower file/storage metadata and local resolved paths only when Autopilot has legitimately downloaded them. Do not silently omit attachment-only messages.
+
+For an intrinsically enabled strict two-party DM, use `metadata.agent_chat.context_prompt` when present; otherwise fall back to the legacy channel `metadata.basePrompt`. This fallback does not intrinsically enable shared or system channels.
 
 The complete source coordinates also remain in session metadata so later turns do not depend on the bootstrap prompt being visible.
 
@@ -382,15 +385,16 @@ The existing native session/process-manager implementation is the MVP adapter. A
 5. A Rick-authored message event does not retrigger Rick.
 6. A later unmentioned shared-channel reply is ignored and leaves the existing session binding intact; a later mentioned reply reuses it.
 7. An unmentioned message from the sole other participant in a strict two-party DM creates or reuses the session.
-8. Missing-agent, multi-party, malformed, or outsider-authored DMs require a canonical mention.
-9. Two quick eligible human replies are delivered once, in order, without overlapping turns.
-10. Duplicate Tower events do not produce duplicate sessions, prompts, or replies.
-11. Publication retries with the same client request ID produce one Tower message.
-12. A stopped resumable session uses native resume and preserves context.
-13. An unrecoverable session creates a generation-two continuity replacement and records the old session ID.
-14. Another agent in the same thread uses a separate routing key and session.
-15. Access/auth failures retain undelivered eligible human messages and publish no speculative reply.
-16. Restarting Autopilot restores bindings and cursors but does not waive per-message eligibility.
+8. A strict two-party DM works without `metadata.agent_chat`; its legacy `metadata.basePrompt` supplies context when no Direct context prompt exists.
+9. Missing-agent, multi-party, malformed, or outsider-authored DMs require a canonical mention and remain metadata opt-in.
+10. Two quick eligible human replies are delivered once, in order, without overlapping turns.
+11. Duplicate Tower events do not produce duplicate sessions, prompts, or replies.
+12. Publication retries with the same client request ID produce one Tower message.
+13. A stopped resumable session uses native resume and preserves context.
+14. An unrecoverable session creates a generation-two continuity replacement and records the old session ID.
+15. Another agent in the same thread uses a separate routing key and session.
+16. Access/auth failures retain undelivered eligible human messages and publish no speculative reply.
+17. Restarting Autopilot restores bindings and cursors but does not waive per-message eligibility.
 
 ## Cross-Project Delivery Contract
 

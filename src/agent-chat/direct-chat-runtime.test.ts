@@ -140,6 +140,26 @@ describe('Agent Direct Chat runtime', () => {
     expect(f.creates).toHaveLength(1); expect(f.prompts).toHaveLength(2); expect(f.published).toHaveLength(2);
   });
 
+  test('intrinsically enables a live-shape strict DM and falls back to its legacy basePrompt', async () => {
+    const f = fixture({ channel: {
+      kind: 'dm',
+      participant_npubs: ['npub1human', 'npub1rick'],
+      metadata: { basePrompt: 'You are Rick in Pete’s direct Flight Deck chat.' },
+    } });
+    const m1 = f.message('m1', 'Can you track this?');
+    expect(await f.handle([m1], 'm1')).toEqual({ handled: true, reason: 'direct_chat_queued' });
+    await f.runtime.waitForIdle();
+    expect(f.creates).toHaveLength(1); expect(f.prompts).toHaveLength(1);
+    expect(f.prompts[0]).toContain('CHANNEL CONTEXT\nYou are Rick in Pete’s direct Flight Deck chat.');
+  });
+
+  test('keeps a shared channel opt-in even when a canonical mention is present', async () => {
+    const f = fixture({ channel: { kind: 'channel', participant_npubs: ['npub1human', 'npub1rick'], metadata: { basePrompt: 'Legacy context' } } });
+    const m1 = f.message('m1', '@Rick hello', true);
+    expect(await f.handle([m1], 'm1')).toEqual({ handled: false, reason: 'channel_disabled' });
+    expect(f.creates).toHaveLength(0);
+  });
+
   test('requires a mention for malformed, multi-party, or outsider-authored DMs', async () => {
     const cases = [
       { participants: ['npub1human', 'npub1other'], author: 'npub1human' },

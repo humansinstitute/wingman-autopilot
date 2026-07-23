@@ -11,7 +11,9 @@ import {
   buildDirectChatRoutingKey,
   buildDirectChatTurnId,
   channelDirectChatConfig,
+  channelLegacyBasePrompt,
   isAgentDirectMessageEligible,
+  isImplicitTwoPartyDirectMessage,
   orderDirectChatMessages,
   selectUndeliveredHumanMessages,
 } from './direct-chat-contract';
@@ -65,7 +67,15 @@ export class AgentDirectChatRuntime {
 
   async handle(input: DirectChatRuntimeInput): Promise<{ handled: boolean; reason: string }> {
     const config = channelDirectChatConfig(input.channel);
-    if (!config.enabled) return { handled: false, reason: 'channel_disabled' };
+    const ordered = orderDirectChatMessages(input.messages);
+    const eventMessage = ordered.find((message) => message.messageId === input.event.entity_id) ?? ordered.at(-1);
+    const implicitDm = Boolean(eventMessage && isImplicitTwoPartyDirectMessage(
+      input.channel,
+      input.subscription.botNpub,
+      eventMessage.userNpub,
+    ));
+    if (!config.enabled && !implicitDm) return { handled: false, reason: 'channel_disabled' };
+    const contextPrompt = config.contextPrompt || (implicitDm ? channelLegacyBasePrompt(input.channel) : '');
     const workspaceIdentity = input.subscription.workspaceServiceNpub?.trim() || input.subscription.workspaceOwnerNpub;
     const agents = this.deps.agentStore.listByWorkspaceAndBot(workspaceIdentity, input.subscription.botNpub)
       .filter((agent) => agent.enabled && agent.capabilities.includes('chat_intercept'))
@@ -74,8 +84,6 @@ export class AgentDirectChatRuntime {
     if (agents.length === 0) return { handled: false, reason: 'no_direct_chat_agent' };
     let handled = false;
     for (const agent of agents) {
-      const ordered = orderDirectChatMessages(input.messages);
-      const eventMessage = ordered.find((message) => message.messageId === input.event.entity_id) ?? ordered.at(-1);
       if (!eventMessage || eventMessage.userNpub === agent.botNpub || eventMessage.userNpub === input.subscription.wsKeyNpub) continue;
       if (!isAgentDirectMessageEligible(input.channel, eventMessage, agent.botNpub)) continue;
       const threadId = input.messages.find((message) => message.id === eventMessage.messageId)?.thread_id
@@ -96,7 +104,7 @@ export class AgentDirectChatRuntime {
       if (idleTimer) { clearTimeout(idleTimer); this.idleTimers.delete(routingKey); }
       this.queued.set(routingKey, input);
       if (!this.running.has(routingKey)) {
-        const work = this.run(routingKey, agent, config.contextPrompt).finally(() => this.running.delete(routingKey));
+        const work = this.run(routingKey, agent, contextPrompt).finally(() => this.running.delete(routingKey));
         this.running.set(routingKey, work);
         void work.catch(() => undefined);
       }

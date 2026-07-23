@@ -55,6 +55,11 @@ export function channelDirectChatConfig(channel: FlightDeckPgChannel): { enabled
   };
 }
 
+export function channelLegacyBasePrompt(channel: FlightDeckPgChannel): string {
+  const metadata = objectValue(channel.metadata);
+  return typeof metadata.basePrompt === 'string' ? metadata.basePrompt : '';
+}
+
 /**
  * Match the addressed identity from structured mention metadata.
  *
