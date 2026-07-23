@@ -259,7 +259,7 @@ async function awaitAssistantReply(
 
     const assistantMessages = messages
       .slice(initialMessageCount)
-      .filter((message) => message.role === 'assistant' && message.content.trim().length > 0);
+      .filter((message) => (message.role === 'assistant' || message.role === 'agent') && message.content.trim().length > 0);
     const newAssistantMessage = assistantMessages[assistantMessages.length - 1];
 
     if (!newAssistantMessage) {

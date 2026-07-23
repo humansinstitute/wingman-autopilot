@@ -11,6 +11,7 @@ import type { FlightDeckPgMessage } from './tower-client';
 function fixture(options: {
   publish?: (input: any, attempt: number) => Promise<any>;
   directChat?: { enabled: boolean; sessionAgent: string | null; directory: string; model: string | null; idleRetentionMinutes: number } | null;
+  replyRole?: 'assistant' | 'agent';
 } = {}) {
   const db = join(tmpdir(), `agent-direct-${randomUUID()}.sqlite`);
   const agentStore = new AgentDefinitionStore(db);
@@ -23,7 +24,7 @@ function fixture(options: {
     getSession: (id: string) => sessions.get(id) ?? null,
     getAdapter: (id: string) => ({
       waitForReady: async () => {}, fetchMessages: async () => [...(sessions.get(id).messages ?? [])],
-      sendMessage: async (prompt: string) => { prompts.push(prompt); sessions.get(id).messages.push({ role: 'assistant', content: 'FLIGHTDECK_REPLY_BEGIN\nAnswer\nFLIGHTDECK_REPLY_END', createdAt: new Date().toISOString() }); },
+      sendMessage: async (prompt: string) => { prompts.push(prompt); sessions.get(id).messages.push({ role: options.replyRole ?? 'assistant', content: 'FLIGHTDECK_REPLY_BEGIN\nAnswer\nFLIGHTDECK_REPLY_END', createdAt: new Date().toISOString() }); },
     }),
     createSession: async (...args: any[]) => {
       creates.push(args);
@@ -57,6 +58,14 @@ describe('Agent Direct Chat runtime', () => {
     expect(f.published[0].clientRequestId).toMatch(/^agentdirect:/);
     const state = f.interceptStore.listAll()[0]!;
     expect(state.lastHumanMessageIdDelivered).toBe('m1'); expect(state.lastAgentMessageIdPublished).toBe('agent-message-1'); expect(state.lastCompletedTurnId).toBeTruthy();
+  });
+
+  test('publishes a completed Direct Chat envelope returned with the sessions API agent role', async () => {
+    const f = fixture({ replyRole: 'agent' }); const m1 = f.message('m1', '@Rick hello', true);
+    expect(await f.handle([m1], 'm1')).toEqual({ handled: true, reason: 'direct_chat_queued' });
+    await f.runtime.waitForIdle();
+    expect(f.published).toHaveLength(1); expect(f.published[0].body).toBe('Answer');
+    expect(f.interceptStore.listAll()[0]?.state).toBe('idle');
   });
 
   test('defaults a legacy null-config chat agent to Direct Chat in its working directory', async () => {

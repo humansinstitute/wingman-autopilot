@@ -8,7 +8,7 @@ class FakeAdapter implements AgentAdapter {
   private sent = false;
   private readonly assistantContent: string;
 
-  constructor(content: string) {
+  constructor(content: string, private readonly replyRole = 'assistant') {
     this.assistantContent = content;
   }
 
@@ -26,7 +26,7 @@ class FakeAdapter implements AgentAdapter {
     }
     return [
       {
-        role: 'assistant',
+        role: this.replyRole,
         content: this.assistantContent,
         createdAt: new Date().toISOString(),
       },
@@ -54,6 +54,20 @@ function buildManager(session: SessionSnapshot, adapter: AgentAdapter): ProcessM
 }
 
 describe('sendPromptAndAwaitAssistantReply', () => {
+  test('accepts the canonical agent role returned by the sessions API', async () => {
+    const session: SessionSnapshot = {
+      id: 'session-agent-role', agent: 'codex', port: 0, name: 'Agent Chat', status: 'running',
+      agentRuntimeStatus: 'stable', startedAt: new Date().toISOString(), command: [], workingDirectory: '/tmp', logs: [],
+    };
+    const reply = await sendPromptAndAwaitAssistantReply(
+      buildManager(session, new FakeAdapter('FLIGHTDECK_REPLY_BEGIN\nDone\nFLIGHTDECK_REPLY_END', 'agent')),
+      session.id,
+      'prompt',
+      { timeoutMs: 250, pollIntervalMs: 10, stablePolls: 1 },
+    );
+    expect(reply.content).toBe('FLIGHTDECK_REPLY_BEGIN\nDone\nFLIGHTDECK_REPLY_END');
+  });
+
   test('settles a stable parseable decision even when runtime status stays running', async () => {
     const session: SessionSnapshot = {
       id: 'session-1',
