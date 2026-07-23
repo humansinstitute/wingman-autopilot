@@ -3,9 +3,6 @@ import { createHash } from 'node:crypto';
 import type { FlightDeckPgChannel, FlightDeckPgMessage } from './tower-client';
 import type { ChatInterceptStateRecord, WorkspaceSubscriptionRecord } from './types';
 
-export const REPLY_BEGIN = 'FLIGHTDECK_REPLY_BEGIN';
-export const REPLY_END = 'FLIGHTDECK_REPLY_END';
-
 export interface DirectChatMessage {
   messageId: string;
   userId: string | null;
@@ -101,7 +98,7 @@ export function buildDirectChatBootstrapPrompt(input: {
   const recovery = input.recovery
     ? `\n\nCONTINUITY RECOVERY\nprevious_session_id: ${input.recovery.previousSessionId}\nreason: ${input.recovery.reason}`
     : '';
-  return `AGENT DIRECT CHAT\n\nCHANNEL CONTEXT\n${input.contextPrompt}\n\nFLIGHT DECK SOURCE\n${source}${recovery}\n\nTHREAD HISTORY JSON\n${JSON.stringify(input.history, null, 2)}\n\nNEXT MESSAGE\nmessage_id: ${latest.messageId}\nuser_id: ${latest.userId ?? ''}\nuser_npub: ${latest.userNpub ?? ''}\nmessage: ${latest.message}\nattachments: ${JSON.stringify(latest.attachments)}\n\nRESPONSE CONTRACT\nReturn exactly one ${REPLY_BEGIN}/${REPLY_END} block. Autopilot publishes the block; do not invoke a reply helper.`;
+  return `AGENT DIRECT CHAT\n\nCHANNEL CONTEXT\n${input.contextPrompt}\n\nFLIGHT DECK SOURCE\n${source}${recovery}\n\nTHREAD HISTORY JSON\n${JSON.stringify(input.history, null, 2)}\n\nNEXT MESSAGE\nmessage_id: ${latest.messageId}\nuser_id: ${latest.userId ?? ''}\nuser_npub: ${latest.userNpub ?? ''}\nmessage: ${latest.message}\nattachments: ${JSON.stringify(latest.attachments)}\n\nAnswer the user normally. Your final response is published verbatim to the Flight Deck thread; do not invoke a reply helper.`;
 }
 
 export function buildDirectChatFollowUpPrompt(routingKey: string, threadId: string, messages: DirectChatMessage[]): string {
@@ -117,18 +114,7 @@ export function buildDirectChatFollowUpPrompt(routingKey: string, threadId: stri
       message: message.message,
       attachments: message.attachments,
     })),
-    response_contract: `Return exactly one ${REPLY_BEGIN}/${REPLY_END} block.`,
   }, null, 2);
-}
-
-export function parseDirectChatReply(content: string): string | null {
-  const begin = content.indexOf(REPLY_BEGIN);
-  const end = content.indexOf(REPLY_END);
-  if (begin < 0 || end < 0 || end <= begin || content.indexOf(REPLY_BEGIN, begin + REPLY_BEGIN.length) >= 0 || content.indexOf(REPLY_END, end + REPLY_END.length) >= 0) return null;
-  const before = content.slice(0, begin).trim();
-  const after = content.slice(end + REPLY_END.length).trim();
-  const body = content.slice(begin + REPLY_BEGIN.length, end).trim();
-  return before || after || !body ? null : body;
 }
 
 export function buildDirectChatTurnId(routingKey: string, sourceMessageIds: string[]): string {

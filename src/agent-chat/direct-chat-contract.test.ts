@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   buildDirectChatBootstrapPrompt, buildDirectChatClientRequestId, buildDirectChatFollowUpPrompt,
-  buildDirectChatTurnId, hasCanonicalNpubMention, orderDirectChatMessages, parseDirectChatReply,
+  buildDirectChatTurnId, hasCanonicalNpubMention, orderDirectChatMessages,
   buildDirectChatRoutingKey,
   selectUndeliveredHumanMessages,
 } from './direct-chat-contract';
@@ -40,14 +40,10 @@ describe('Agent Direct Chat contract', () => {
     expect(bootstrap).toContain('tower_service_npub: npub1tower');
     expect(bootstrap).toContain('THREAD HISTORY JSON');
     expect(bootstrap).toContain('NEXT MESSAGE');
-    expect(bootstrap).toContain('FLIGHTDECK_REPLY_BEGIN/FLIGHTDECK_REPLY_END');
+    expect(bootstrap).toContain('final response is published verbatim');
+    expect(bootstrap).not.toContain('FLIGHTDECK_REPLY_BEGIN');
     expect(buildDirectChatFollowUpPrompt('route', 't1', [messages[1]!])).toContain('flightdeck_agent_direct_follow_up_v1');
-  });
-
-  test('accepts exactly one non-empty reply envelope', () => {
-    expect(parseDirectChatReply('FLIGHTDECK_REPLY_BEGIN\nHello\nFLIGHTDECK_REPLY_END')).toBe('Hello');
-    expect(parseDirectChatReply('prefix\nFLIGHTDECK_REPLY_BEGIN\nHello\nFLIGHTDECK_REPLY_END')).toBeNull();
-    expect(parseDirectChatReply('FLIGHTDECK_REPLY_BEGIN\n\nFLIGHTDECK_REPLY_END')).toBeNull();
+    expect(buildDirectChatFollowUpPrompt('route', 't1', [messages[1]!])).not.toContain('FLIGHTDECK_REPLY_BEGIN');
   });
 
   test('derives stable turn and publication ids', () => {

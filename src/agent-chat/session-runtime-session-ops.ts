@@ -111,6 +111,55 @@ export async function sendPromptAndAwaitAssistantReply(
   return await awaitAssistantReply(manager, sessionId, initialMessages.length, waitOptions);
 }
 
+/**
+ * Deliver a prompt and return only the adapter's completed final response.
+ * Streaming assistant text and `agent-working` progress are not eligible: the
+ * adapter must report the turn stable and expose a new assistant/agent card.
+ */
+export async function sendPromptAndAwaitFinalResponse(
+  manager: ProcessManager,
+  sessionId: string,
+  prompt: string,
+  waitOptions?: Pick<AssistantReplyWaitOptions, 'timeoutMs' | 'pollIntervalMs' | 'onAccepted'>,
+): Promise<AssistantReplyResult> {
+  const adapter = manager.getAdapter(sessionId);
+  if (!adapter) throw new Error(`No adapter available for session ${sessionId}.`);
+  await adapter.waitForReady({ timeoutMs: SESSION_READY_TIMEOUT_MS, pollIntervalMs: 250 });
+  const initialMessages = await adapter.fetchMessages().catch(() => []);
+  await adapter.sendMessage(prompt, 'user');
+  await waitOptions?.onAccepted?.();
+
+  const pollIntervalMs = Math.max(10, waitOptions?.pollIntervalMs ?? ASSISTANT_REPLY_POLL_INTERVAL_MS);
+  const deadline = Date.now() + Math.max(pollIntervalMs, waitOptions?.timeoutMs ?? ASSISTANT_REPLY_TIMEOUT_MS);
+  while (Date.now() < deadline) {
+    const session = manager.getSession(sessionId);
+    const currentAdapter = manager.getAdapter(sessionId);
+    if (!currentAdapter) throw new Error(`Session ${sessionId} no longer has an adapter.`);
+    let messages: Array<{ role: string; content: string; createdAt: string }>;
+    let runtimeStatus: Awaited<ReturnType<typeof currentAdapter.fetchStatus>>;
+    try {
+      [messages, runtimeStatus] = await Promise.all([
+        currentAdapter.fetchMessages(),
+        currentAdapter.fetchStatus(),
+      ]);
+    } catch {
+      await sleep(pollIntervalMs);
+      continue;
+    }
+    const finalMessage = messages.slice(initialMessages.length)
+      .filter((message) => (message.role === 'assistant' || message.role === 'agent') && message.content.trim().length > 0)
+      .at(-1);
+    if (runtimeStatus === 'stable' && finalMessage) {
+      return { content: finalMessage.content, createdAt: finalMessage.createdAt };
+    }
+    if (!session || (session.status !== 'running' && session.status !== 'starting')) {
+      throw new Error(`Session ${sessionId} stopped before producing a final response.`);
+    }
+    await sleep(pollIntervalMs);
+  }
+  throw new Error(`Timed out waiting for session ${sessionId} to produce a final response.`);
+}
+
 export function hasExpiredRetention(intercept: ChatInterceptStateRecord, idleRetentionMs: number): boolean {
   const lastActivityAt = Date.parse(intercept.lastActivityAt);
   if (!Number.isFinite(lastActivityAt)) {

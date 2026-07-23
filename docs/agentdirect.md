@@ -10,7 +10,7 @@ This feature should harden and simplify the existing `src/agent-chat/` runtime. 
 
 - Flight Deck authors structured mentions and channel configuration and renders normal messages.
 - Tower authorizes and stores chat records, emits ordered visible events, provides authoritative thread reads, and accepts idempotent agent-authored messages.
-- Autopilot owns routing, local agent/project configuration, thread/session binding, session lifecycle, prompt delivery, output parsing, and reply publication.
+- Autopilot owns routing, local agent/project configuration, thread/session binding, session lifecycle, prompt delivery, final-response selection, and reply publication.
 
 ## MVP Behavior
 
@@ -19,7 +19,7 @@ This feature should harden and simplify the existing `src/agent-chat/` runtime. 
 3. Ignore self-authored, duplicate, inaccessible, disabled, or unrelated messages.
 4. If no binding exists, require a canonical mention of the target agent.
 5. Create a normal session in the configured project directory and deliver the bootstrap prompt.
-6. Parse the agent's final reply and publish it through Tower's typed message API.
+6. Select the agent adapter's authoritative completed final response and publish it verbatim through Tower's typed message API.
 7. Persist delivery and publication cursors.
 8. Route later human messages in the bound thread without requiring another mention.
 9. Reuse a live session, natively resume a stopped session, or create a continuity replacement when recovery is impossible.
@@ -195,8 +195,7 @@ user_id: ...
 user_npub: ...
 message: ...
 
-RESPONSE CONTRACT
-Return one FLIGHTDECK_REPLY_BEGIN/FLIGHTDECK_REPLY_END block.
+Answer the user normally. The completed final response is published verbatim.
 ```
 
 Attachments should be represented with their typed Tower file/storage metadata and local resolved paths only when Autopilot has legitimately downloaded them. Do not silently omit attachment-only messages.
@@ -228,22 +227,14 @@ The existing pending-turn queue and merged follow-up logic should be retained. I
 
 Advance `last_human_message_id_delivered` only after the session adapter has accepted the turn. A process crash before acceptance must leave the message recoverable.
 
-## Response Contract and Publication
+## Final Response and Publication
 
-The agent returns exactly one reply envelope:
-
-```text
-FLIGHTDECK_REPLY_BEGIN
-The answer shown to the human.
-FLIGHTDECK_REPLY_END
-```
-
-Autopilot owns publication. The core contract must no longer require the agent to invoke a reply command as its final action.
+Autopilot owns publication. The agent answers normally and must not invoke a reply command. Autopilot uses the session adapter's authoritative turn-completion state and publishes the completed final assistant/agent message card verbatim, including its Markdown. Streaming text, thinking, commentary, tool activity, `agent-working` progress, and combined terminal transcripts are never eligible replies. Autopilot must not infer completion from content stability or require marker envelopes.
 
 On turn completion:
 
-1. parse exactly one envelope;
-2. reject an empty or malformed reply and record a failed turn without publishing tool output;
+1. wait for authoritative adapter turn completion and select the new non-empty final assistant/agent message;
+2. if the turn completes without a final message, record a failed turn without publishing progress or tool output;
 3. derive a deterministic turn ID;
 4. create a Tower PG message signed by the agent;
 5. use `client_request_id = agentdirect:<routing-key-hash>:<turn-id>`;
@@ -295,7 +286,7 @@ Session metadata `nextAction: stop` means the current turn is complete. It does 
 - Thread fetch failure: do not answer from stale event content; retry through the subscription runtime.
 - Session creation failure: keep the binding pending with no false delivered cursor.
 - Prompt acceptance failure: leave human messages undelivered.
-- Malformed agent response: record failure; do not publish raw output.
+- Missing final agent response: record failure; do not publish thinking, progress, tools, or transcript output.
 - Tower publication failure: retry with the same idempotency key.
 - Duplicate event: do not create another session or turn.
 - Self-authored event: skip without adding a response.
@@ -325,7 +316,7 @@ Turn the existing `src/agent-chat/` foundation into the complete direct conversa
 - bootstrap and follow-up prompt contracts;
 - reuse, native resume, and continuity replacement lifecycle;
 - pending-turn queue/merge behavior without overlapping turns;
-- reply-envelope parsing and runtime-owned Tower publication;
+- authoritative final-response selection and runtime-owned Tower publication;
 - deterministic idempotency keys and publication recovery;
 - self-authored/duplicate/access failure suppression;
 - focused, migration, lifecycle, and integrated runtime tests.
@@ -382,7 +373,7 @@ The existing native session/process-manager implementation is the MVP adapter. A
 1. A canonical Rick mention in an enabled channel creates exactly one normal session in `/Users/mini/wingmen/wingman21`.
 2. Literal mention-like text without canonical mention metadata does not activate an unbound thread.
 3. The bootstrap prompt contains channel context, source coordinates, complete ordered history, and a clearly marked next message.
-4. A valid reply envelope produces exactly one Tower message authored by Rick.
+4. A completed final response produces exactly one Tower message authored by Rick, with Markdown preserved verbatim.
 5. A Rick-authored message event does not retrigger Rick.
 6. A later unmentioned human reply in the same bound thread reuses the session.
 7. Two quick human replies are delivered once, in order, without overlapping turns.

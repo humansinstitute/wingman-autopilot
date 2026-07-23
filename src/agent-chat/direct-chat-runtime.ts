@@ -13,11 +13,10 @@ import {
   channelDirectChatConfig,
   hasCanonicalNpubMention,
   orderDirectChatMessages,
-  parseDirectChatReply,
   selectUndeliveredHumanMessages,
 } from './direct-chat-contract';
 import { directChatTurnStore, type DirectChatTurnStore } from './direct-chat-turn-store';
-import { sendPromptAndAwaitAssistantReply } from './session-runtime-session-ops';
+import { sendPromptAndAwaitFinalResponse } from './session-runtime-session-ops';
 import { createFlightDeckPgChannelMessage, type FlightDeckPgChannel, type FlightDeckPgEvent, type FlightDeckPgMessage } from './tower-client';
 import type { AgentDefinitionRecord, RuntimeBotIdentity, WorkspaceSubscriptionRecord } from './types';
 
@@ -139,7 +138,7 @@ export class AgentDirectChatRuntime {
         const turnId = pending?.turnId ?? buildDirectChatTurnId(routingKey, sourceMessageIds);
         const clientRequestId = pending?.clientRequestId ?? buildDirectChatClientRequestId(routingKey, turnId);
         const now = pending?.createdAt ?? new Date().toISOString();
-        const reply = await sendPromptAndAwaitAssistantReply(this.deps.processManager, session.id, prompt, {
+        const reply = await sendPromptAndAwaitFinalResponse(this.deps.processManager, session.id, prompt, {
           onAccepted: () => {
             this.turnStore.save({ turnId, routingKey, sourceMessageIds, clientRequestId, replyBody: null,
               publishedMessageId: null, state: 'accepted', createdAt: now, updatedAt: new Date().toISOString() });
@@ -148,8 +147,7 @@ export class AgentDirectChatRuntime {
               updatedAt: new Date().toISOString() });
           },
         });
-        const body = parseDirectChatReply(reply.content);
-        if (!body) throw new Error('Agent Direct Chat reply was missing exactly one non-empty reply envelope.');
+        const body = reply.content;
         this.turnStore.save({ turnId, routingKey, sourceMessageIds, clientRequestId, replyBody: body,
           publishedMessageId: null, state: 'reply_ready', createdAt: now, updatedAt: new Date().toISOString() });
         await this.publishTurn(input, intercept, agent, turnId, sourceMessageIds, clientRequestId, body);
