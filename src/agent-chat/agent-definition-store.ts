@@ -160,7 +160,7 @@ class AgentDefinitionStore {
       normalisePromptTemplate(record.flowDispatchPromptTemplate, DEFAULT_FLOW_DISPATCH_PROMPT_TEMPLATE),
       normalisePromptTemplate(record.taskReviewPromptTemplate, DEFAULT_TASK_REVIEW_PROMPT_TEMPLATE),
       normalisePromptTemplate(record.approvalDispatchPromptTemplate, DEFAULT_APPROVAL_DISPATCH_PROMPT_TEMPLATE),
-      JSON.stringify(normaliseDirectChat(record)),
+      record.directChat ? JSON.stringify(normaliseDirectChat(record)) : null,
       record.enabled ? 1 : 0,
       record.createdAt,
       record.updatedAt,
@@ -241,8 +241,9 @@ class AgentDefinitionStore {
       groupNpubs: normaliseGroupNpubs(parseJsonArray(typeof row.group_npubs_json === 'string' ? row.group_npubs_json : null)),
       workingDirectory: String(row.working_directory ?? ''),
       directChat: (() => {
+        if (typeof row.direct_chat_json !== 'string' || row.direct_chat_json.trim().length === 0) return undefined;
         try {
-          const parsed = JSON.parse(typeof row.direct_chat_json === 'string' ? row.direct_chat_json : '{}') as Record<string, unknown>;
+          const parsed = JSON.parse(row.direct_chat_json) as Record<string, unknown>;
           return normaliseDirectChat({
             workingDirectory: String(row.working_directory ?? ''),
             directChat: {
@@ -254,7 +255,7 @@ class AgentDefinitionStore {
             },
           } as AgentDefinitionRecord);
         } catch {
-          return normaliseDirectChat({ workingDirectory: String(row.working_directory ?? '') } as AgentDefinitionRecord);
+          return undefined;
         }
       })(),
       capabilities: normaliseCapabilities(parseJsonArray(typeof row.capabilities_json === 'string' ? row.capabilities_json : null)),

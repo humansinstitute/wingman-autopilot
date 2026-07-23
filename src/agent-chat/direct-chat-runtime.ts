@@ -38,6 +38,20 @@ interface DirectChatRuntimeDependencies {
   publish?: typeof createFlightDeckPgChannelMessage;
 }
 
+function withMvpDirectChatDefault(agent: AgentDefinitionRecord): AgentDefinitionRecord {
+  if (agent.directChat) return agent;
+  return {
+    ...agent,
+    directChat: {
+      enabled: true,
+      sessionAgent: null,
+      directory: agent.workingDirectory,
+      model: null,
+      idleRetentionMinutes: 60,
+    },
+  };
+}
+
 export class AgentDirectChatRuntime {
   private readonly running = new Map<string, Promise<void>>();
   private readonly queued = new Map<string, DirectChatRuntimeInput>();
@@ -55,7 +69,9 @@ export class AgentDirectChatRuntime {
     if (!config.enabled) return { handled: false, reason: 'channel_disabled' };
     const workspaceIdentity = input.subscription.workspaceServiceNpub?.trim() || input.subscription.workspaceOwnerNpub;
     const agents = this.deps.agentStore.listByWorkspaceAndBot(workspaceIdentity, input.subscription.botNpub)
-      .filter((agent) => agent.enabled && agent.capabilities.includes('chat_intercept') && agent.directChat?.enabled);
+      .filter((agent) => agent.enabled && agent.capabilities.includes('chat_intercept'))
+      .map(withMvpDirectChatDefault)
+      .filter((agent) => agent.directChat?.enabled);
     if (agents.length === 0) return { handled: false, reason: 'no_direct_chat_agent' };
     let handled = false;
     for (const agent of agents) {

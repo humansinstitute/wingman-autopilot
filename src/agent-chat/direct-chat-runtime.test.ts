@@ -8,7 +8,10 @@ import { AgentDirectChatRuntime } from './direct-chat-runtime';
 import { DirectChatTurnStore } from './direct-chat-turn-store';
 import type { FlightDeckPgMessage } from './tower-client';
 
-function fixture(options: { publish?: (input: any, attempt: number) => Promise<any> } = {}) {
+function fixture(options: {
+  publish?: (input: any, attempt: number) => Promise<any>;
+  directChat?: { enabled: boolean; sessionAgent: string | null; directory: string; model: string | null; idleRetentionMinutes: number } | null;
+} = {}) {
   const db = join(tmpdir(), `agent-direct-${randomUUID()}.sqlite`);
   const agentStore = new AgentDefinitionStore(db);
   const interceptStore = new ChatInterceptStateStore(db);
@@ -33,8 +36,9 @@ function fixture(options: { publish?: (input: any, attempt: number) => Promise<a
   const runtime = new AgentDirectChatRuntime({ defaultAgent: 'codex', processManager: manager, agentStore, interceptStore, turnStore,
     publish: async (input: any) => { published.push(input); return options.publish ? options.publish(input, published.length) : { message: { id: `agent-message-${published.length}` } }; } });
   const now = new Date().toISOString();
+  const defaultDirectChat = { enabled: true, sessionAgent: 'codex', directory: '/Users/mini/wingmen/wingman21', model: null, idleRetentionMinutes: 60 };
   agentStore.save({ agentId: 'rick', label: 'Rick', botNpub: 'npub1rick', workspaceOwnerNpub: 'npub1workspace', groupNpubs: [], workingDirectory: '/legacy', capabilities: ['chat_intercept'],
-    directChat: { enabled: true, sessionAgent: 'codex', directory: '/Users/mini/wingmen/wingman21', model: null, idleRetentionMinutes: 60 }, enabled: true, createdAt: now, updatedAt: now, managedByNpub: 'npub1manager' });
+    directChat: options.directChat === null ? undefined : options.directChat ?? defaultDirectChat, enabled: true, createdAt: now, updatedAt: now, managedByNpub: 'npub1manager' });
   const subscription: any = { subscriptionId: 'sub1', workspaceOwnerNpub: 'npub1owner', workspaceServiceNpub: 'npub1workspace', workspaceId: 'workspace-1', towerServiceNpub: 'npub1tower', backendBaseUrl: 'https://tower', sourceAppNpub: 'npub1app', botNpub: 'npub1rick', wsKeyNpub: 'npub1mapped', managedByNpub: 'npub1manager' };
   const channel: any = { id: 'channel-1', scope_id: 'scope-1', metadata: { agent_chat: { enabled: true, activation: 'mention_then_continue', context_prompt: 'Context' } } };
   const botIdentity: any = { botNpub: 'npub1rick', botPubkeyHex: '00', botSecret: new Uint8Array([1]) };
@@ -53,6 +57,20 @@ describe('Agent Direct Chat runtime', () => {
     expect(f.published[0].clientRequestId).toMatch(/^agentdirect:/);
     const state = f.interceptStore.listAll()[0]!;
     expect(state.lastHumanMessageIdDelivered).toBe('m1'); expect(state.lastAgentMessageIdPublished).toBe('agent-message-1'); expect(state.lastCompletedTurnId).toBeTruthy();
+  });
+
+  test('defaults a legacy null-config chat agent to Direct Chat in its working directory', async () => {
+    const f = fixture({ directChat: null }); const m1 = f.message('m1', '@Rick hello', { type: 'person' });
+    expect(await f.handle([m1], 'm1')).toEqual({ handled: true, reason: 'direct_chat_queued' });
+    await f.runtime.waitForIdle();
+    expect(f.creates).toHaveLength(1); expect(f.creates[0][0]).toBe('codex'); expect(f.creates[0][1]).toBe('/legacy');
+  });
+
+  test('preserves an explicit Direct Chat opt-out', async () => {
+    const f = fixture({ directChat: { enabled: false, sessionAgent: null, directory: '/legacy', model: null, idleRetentionMinutes: 60 } });
+    const m1 = f.message('m1', '@Rick hello', { type: 'person' });
+    expect(await f.handle([m1], 'm1')).toEqual({ handled: false, reason: 'no_direct_chat_agent' });
+    expect(f.creates).toHaveLength(0);
   });
 
   test('literal mention text does not activate an unbound thread', async () => {

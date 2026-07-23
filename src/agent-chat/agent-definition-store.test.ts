@@ -59,6 +59,7 @@ describe('AgentDefinitionStore', () => {
     const workspaceBotAgents = store.listByWorkspaceAndBot('npub1workspace', 'npub1botalpha');
     expect(workspaceBotAgents).toHaveLength(1);
     expect(workspaceBotAgents[0]?.workingDirectory).toBe('/tmp/alpha');
+    expect(managedAgents[1]?.directChat).toBeUndefined();
   });
 
   test('normalises capabilities backward-compatibly', () => {
