@@ -302,6 +302,55 @@ Session metadata `nextAction: stop` means the current turn is complete. It does 
 
 The runtime may expose response activity to Tower for UI feedback, but the chat reply itself remains a normal message.
 
+## Single Implementation Work Package
+
+Implement this MVP as one Autopilot work package named **Agent Direct Chat: durable Flight Deck thread session runtime**. Assign the complete package to one worker/session in this repository. Do not split routing, state migration, prompting, lifecycle recovery, publication, and tests into separate independently handed-off tasks: correctness depends on their shared cursor and idempotency semantics.
+
+### Package objective
+
+Turn the existing `src/agent-chat/` foundation into the complete direct conversational runtime: canonical first-mention activation, one durable thread/agent binding, normal session create/resume, delta follow-ups, runtime-owned response parsing, and idempotent Tower publication.
+
+### Prerequisites
+
+- The Tower channel, mention, thread-read, event, and idempotent message-write contracts are agreed and represented in this document.
+- Rick's local direct-chat profile resolves to `/Users/mini/wingmen/wingman21` with a valid agent identity and Tower workspace subscription.
+- The implementation may use Tower contract fixtures during development, but final acceptance requires a compatible live Tower.
+
+### Included work
+
+- canonical routing identity and mention-first activation;
+- persisted binding/cursor schema migration and startup recovery;
+- local direct-chat launch profile resolution;
+- authoritative Tower channel/message/thread hydration;
+- bootstrap and follow-up prompt contracts;
+- reuse, native resume, and continuity replacement lifecycle;
+- pending-turn queue/merge behavior without overlapping turns;
+- reply-envelope parsing and runtime-owned Tower publication;
+- deterministic idempotency keys and publication recovery;
+- self-authored/duplicate/access failure suppression;
+- focused, migration, lifecycle, and integrated runtime tests.
+
+### Explicit exclusions
+
+- no pipeline-based implementation of the chat turn;
+- no ACP adapter in the MVP;
+- no Flight Deck UI work;
+- no Tower schema implementation beyond client/fixture changes in this repository;
+- no general redesign of unrelated task, document invocation, or workroom dispatch paths.
+
+### Deliverables
+
+- migrated durable binding state with backward-compatible startup behavior;
+- updated agent profile/configuration surface;
+- direct-chat runtime and extracted PG-native Tower client/publisher primitives;
+- automated tests covering every acceptance case below;
+- an integration fixture or smoke path demonstrating create, reply, follow-up, stop/resume, and retry;
+- a handoff stating the compatible Tower and Flight Deck commits used for the vertical slice.
+
+### Validation and definition of done
+
+Run focused `agent-chat` tests throughout implementation and the repository's full relevant test suite before handoff. The package is done only when every Autopilot acceptance test below passes, restart recovery is verified against persisted state, Tower publication is idempotent, Rick's configured directory is used, and the integrated Flight Deck mention-to-follow-up flow succeeds without a pipeline or agent-owned reply helper.
+
 ## Implementation Directions
 
 1. Update PG event normalization in `src/agent-chat/subscription-runtime.ts` to preserve workspace ID, canonical mentions, author identity, and event cursor.
