@@ -11,7 +11,7 @@ import {
   buildDirectChatRoutingKey,
   buildDirectChatTurnId,
   channelDirectChatConfig,
-  hasCanonicalNpubMention,
+  isAgentDirectMessageEligible,
   orderDirectChatMessages,
   selectUndeliveredHumanMessages,
 } from './direct-chat-contract';
@@ -77,13 +77,12 @@ export class AgentDirectChatRuntime {
       const ordered = orderDirectChatMessages(input.messages);
       const eventMessage = ordered.find((message) => message.messageId === input.event.entity_id) ?? ordered.at(-1);
       if (!eventMessage || eventMessage.userNpub === agent.botNpub || eventMessage.userNpub === input.subscription.wsKeyNpub) continue;
+      if (!isAgentDirectMessageEligible(input.channel, eventMessage, agent.botNpub)) continue;
       const threadId = input.messages.find((message) => message.id === eventMessage.messageId)?.thread_id
         ?? input.messages.find((message) => message.id === eventMessage.messageId)?.thread_source_message_id
         ?? eventMessage.messageId;
       const routingKey = buildDirectChatRoutingKey({ towerServiceNpub: input.subscription.towerServiceNpub || input.subscription.backendBaseUrl,
         workspaceId: input.subscription.workspaceId || workspaceIdentity, channelId: input.channel.id, threadId, agentNpub: agent.botNpub });
-      const existing = this.deps.interceptStore.getByRoutingKey(routingKey);
-      if (!existing && !hasCanonicalNpubMention(eventMessage, agent.botNpub)) continue;
       const cursor = input.event.cursor ?? (input.event.row_version != null ? String(input.event.row_version) : null);
       const upsert = this.deps.interceptStore.upsertMessage({
         routingKey, subscriptionId: input.subscription.subscriptionId, agentId: agent.agentId,
@@ -121,9 +120,10 @@ export class AgentDirectChatRuntime {
           continue;
         }
         const history = orderDirectChatMessages(input.messages);
-        const delta = pending?.state === 'accepted'
+        const undelivered = pending?.state === 'accepted'
           ? history.filter((message) => pending.sourceMessageIds.includes(message.messageId))
           : selectUndeliveredHumanMessages(history, intercept, agent.botNpub, [input.subscription.wsKeyNpub ?? '']);
+        const delta = undelivered.filter((message) => isAgentDirectMessageEligible(input.channel, message, agent.botNpub));
         if (delta.length === 0) continue;
         const sessionResolution = await this.resolveSession(agent, intercept, input.subscription, input.channel.scope_id ?? null);
         const session = sessionResolution.session;

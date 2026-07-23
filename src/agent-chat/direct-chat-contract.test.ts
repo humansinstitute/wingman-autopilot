@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   buildDirectChatBootstrapPrompt, buildDirectChatClientRequestId, buildDirectChatFollowUpPrompt,
-  buildDirectChatTurnId, hasCanonicalNpubMention, orderDirectChatMessages,
+  buildDirectChatTurnId, hasCanonicalNpubMention, isImplicitTwoPartyDirectMessage, orderDirectChatMessages,
   buildDirectChatRoutingKey,
   selectUndeliveredHumanMessages,
 } from './direct-chat-contract';
@@ -26,6 +26,15 @@ describe('Agent Direct Chat contract', () => {
     }
     expect(hasCanonicalNpubMention({ ...base, mentions: [{ type: 'agent', npub: 'npub1other', actorId: null, label: 'Other' }] }, 'npub1rick')).toBe(false);
     expect(hasCanonicalNpubMention({ ...base, message: '@Rick', mentions: [] }, 'npub1rick')).toBe(false);
+  });
+
+  test('recognises only an authored strict two-party DM as implicit activation', () => {
+    const strictDm = { id: 'dm', kind: 'dm', participant_npubs: ['npub1rick', 'npub1human'] };
+    expect(isImplicitTwoPartyDirectMessage(strictDm, 'npub1rick', 'npub1human')).toBe(true);
+    expect(isImplicitTwoPartyDirectMessage(strictDm, 'npub1rick', 'npub1outsider')).toBe(false);
+    expect(isImplicitTwoPartyDirectMessage({ ...strictDm, participant_npubs: ['npub1human', 'npub1other'] }, 'npub1rick', 'npub1human')).toBe(false);
+    expect(isImplicitTwoPartyDirectMessage({ ...strictDm, participant_npubs: ['npub1rick', 'npub1human', 'npub1other'] }, 'npub1rick', 'npub1human')).toBe(false);
+    expect(isImplicitTwoPartyDirectMessage({ ...strictDm, kind: 'channel' }, 'npub1rick', 'npub1human')).toBe(false);
   });
 
   test('selects only undelivered human deltas', () => {

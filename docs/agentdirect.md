@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Agent Direct Chat connects a Flight Deck channel thread directly to a normal Autopilot agent session. A human mentions a channel agent such as Rick; Autopilot consumes the Tower PG message event, creates one session for that workspace/channel/thread/agent tuple, supplies the authoritative conversation context, and publishes the agent's answer to Tower as an ordinary chat message. Later human messages continue the same conversational session without a pipeline.
+Agent Direct Chat connects a Flight Deck channel thread directly to a normal Autopilot agent session. In shared channels a human canonically mentions an agent such as Rick on each message intended for it; in a strict two-party DM the sole human participant may speak without a mention. Autopilot consumes the Tower PG message event, creates or reuses one session for that workspace/channel/thread/agent tuple, supplies the authoritative conversation context, and publishes the agent's answer to Tower as an ordinary chat message without a pipeline.
 
 This feature should harden and simplify the existing `src/agent-chat/` runtime. It is not a new pipeline and does not require ACP. ACP may later implement an internal conversational session adapter, but event routing, delivery cursors, lifecycle recovery, and Tower publication remain Autopilot responsibilities.
 
@@ -17,11 +17,11 @@ This feature should harden and simplify the existing `src/agent-chat/` runtime. 
 1. Receive a Tower PG `message.created` event visible to the registered agent subscription.
 2. Fetch the authoritative message, channel, and thread state.
 3. Ignore self-authored, duplicate, inaccessible, disabled, or unrelated messages.
-4. If no binding exists, require a canonical mention of the target agent.
+4. Require a canonical mention of the target agent on every shared/system-channel message, or verify strict two-party DM eligibility.
 5. Create a normal session in the configured project directory and deliver the bootstrap prompt.
 6. Select the agent adapter's authoritative completed final response and publish it verbatim through Tower's typed message API.
 7. Persist delivery and publication cursors.
-8. Route later human messages in the bound thread without requiring another mention.
+8. Reuse the binding for later eligible messages; the binding provides continuity, never trigger eligibility.
 9. Reuse a live session, natively resume a stopped session, or create a continuity replacement when recovery is impossible.
 
 ## Existing Runtime to Reuse
@@ -55,10 +55,12 @@ The target agent is resolved from the canonical structured mentions stored by To
 
 ## Activation Rules
 
-For `activation: mention_then_continue`:
+The legacy `activation: mention_then_continue` configuration value remains accepted for compatibility, but runtime eligibility is:
 
-- no existing binding: route only a human message that canonically mentions this agent;
-- existing binding: route subsequent human messages in the thread without another mention;
+- ordinary `channel` and `system` channels: every human message must canonically mention this agent, regardless of an existing binding;
+- strict two-party `dm`: an unmentioned message is eligible only when `participant_npubs` contains exactly two distinct non-empty npubs, includes this agent, and the event author is the other participant;
+- malformed or multi-party DMs, DMs missing this agent, and messages authored outside the declared pair require a canonical mention;
+- an existing binding or live session never makes an otherwise ineligible message actionable;
 - target agent authored the message: ignore;
 - mapped workspace/session key for the target agent authored the message: ignore;
 - another agent alone is mentioned: do not activate this agent;
@@ -204,7 +206,7 @@ The complete source coordinates also remain in session metadata so later turns d
 
 ## Follow-Up Prompt Contract
 
-For a bound thread, fetch the authoritative thread and select only human messages after `last_human_message_id_delivered`. Exclude the target agent's published replies from the prompt delta. Preserve all human messages in arrival order.
+For a bound thread, fetch the authoritative thread and consider human messages after `last_human_message_id_delivered`. Exclude the target agent's published replies and filter the actionable prompt delta through the same per-message eligibility rule: canonical mention in shared/system channels, or the sole other participant in a strict two-party DM. Intervening unmentioned shared-channel messages may remain in authoritative history/context but must never enter `nextMessages` or the follow-up delta. Preserve eligible messages in arrival order.
 
 ```json
 {
@@ -302,7 +304,7 @@ Implement this MVP as one Autopilot work package named **Agent Direct Chat: dura
 
 ### Package objective
 
-Turn the existing `src/agent-chat/` foundation into the complete direct conversational runtime: canonical first-mention activation, one durable thread/agent binding, normal session create/resume, delta follow-ups, runtime-owned response parsing, and idempotent Tower publication.
+Turn the existing `src/agent-chat/` foundation into the complete direct conversational runtime: per-message shared-channel mentions plus strict two-party DM activation, one durable thread/agent binding, normal session create/resume, eligible delta follow-ups, authoritative final-response selection, and idempotent Tower publication.
 
 ### Prerequisites
 
@@ -312,7 +314,7 @@ Turn the existing `src/agent-chat/` foundation into the complete direct conversa
 
 ### Included work
 
-- canonical routing identity and mention-first activation;
+- canonical routing identity, mention-each-shared-message activation, and strict two-party DM activation;
 - persisted binding/cursor schema migration and startup recovery;
 - local direct-chat launch profile resolution;
 - authoritative Tower channel/message/thread hydration;
@@ -348,12 +350,12 @@ Run focused `agent-chat` tests throughout implementation and the repository's fu
 ## Implementation Directions
 
 1. Update PG event normalization in `src/agent-chat/subscription-runtime.ts` to preserve workspace ID, canonical mentions, author identity, and event cursor.
-2. Update routing evaluation to implement mention-first activation and bound-thread continuation.
+2. Update routing evaluation to implement mention-each-shared-message activation, strict two-party DM eligibility, and binding-only continuity.
 3. Migrate `src/agent-chat/chat-intercept-state-store.ts` to the stronger binding/cursor model.
 4. Extend `src/agent-chat/agent-definition-store.ts` and its configuration/API surface with the direct-chat launch profile.
 5. Refactor `src/agent-chat/session-runtime.ts` and session operations so stopped bindings attempt native resume before replacement creation.
 6. Update prompt builders in `src/agent-chat/session-runtime-prompts.ts` to use the bootstrap and follow-up contracts above.
-7. Replace agent-owned reply-current instructions in the core direct-chat path with a runtime-owned response envelope and publisher.
+7. Replace agent-owned reply-current instructions in the core direct-chat path with authoritative final-response selection and a runtime-owned publisher.
 8. Reuse the PG-native Tower publisher/client code in `src/agent-chat/dispatch-pipelines/flightdeck-publisher.ts` where appropriate, but move or extract primitives so direct chat does not conceptually depend on a pipeline.
 9. Retain queue, merge, interrupt, auth-block, and self-suppression behavior.
 10. Add migrations and tests before enabling the feature for existing subscriptions.
@@ -378,29 +380,31 @@ The existing native session/process-manager implementation is the MVP adapter. A
 3. The bootstrap prompt contains channel context, source coordinates, complete ordered history, and a clearly marked next message.
 4. A completed final response produces exactly one Tower message authored by Rick, with Markdown preserved verbatim.
 5. A Rick-authored message event does not retrigger Rick.
-6. A later unmentioned human reply in the same bound thread reuses the session.
-7. Two quick human replies are delivered once, in order, without overlapping turns.
-8. Duplicate Tower events do not produce duplicate sessions, prompts, or replies.
-9. Publication retries with the same client request ID produce one Tower message.
-10. A stopped resumable session uses native resume and preserves context.
-11. An unrecoverable session creates a generation-two continuity replacement and records the old session ID.
-12. Another agent in the same thread uses a separate routing key and session.
-13. Access/auth failures retain undelivered human messages and publish no speculative reply.
-14. Restarting Autopilot restores bindings and cursors without requiring a new mention.
+6. A later unmentioned shared-channel reply is ignored and leaves the existing session binding intact; a later mentioned reply reuses it.
+7. An unmentioned message from the sole other participant in a strict two-party DM creates or reuses the session.
+8. Missing-agent, multi-party, malformed, or outsider-authored DMs require a canonical mention.
+9. Two quick eligible human replies are delivered once, in order, without overlapping turns.
+10. Duplicate Tower events do not produce duplicate sessions, prompts, or replies.
+11. Publication retries with the same client request ID produce one Tower message.
+12. A stopped resumable session uses native resume and preserves context.
+13. An unrecoverable session creates a generation-two continuity replacement and records the old session ID.
+14. Another agent in the same thread uses a separate routing key and session.
+15. Access/auth failures retain undelivered eligible human messages and publish no speculative reply.
+16. Restarting Autopilot restores bindings and cursors but does not waive per-message eligibility.
 
 ## Cross-Project Delivery Contract
 
 The MVP is complete only when the integrated path works:
 
 ```text
-Flight Deck canonical mention
+Flight Deck canonical mention (shared/system) or strict two-party DM message
 → Tower message.created event
 → authoritative Autopilot thread hydration
 → normal agent session create/resume
-→ parsed response envelope
+→ authoritative completed final response
 → idempotent Tower message write
 → ordinary Flight Deck agent reply
-→ unmentioned human follow-up delivered to the same binding
+→ next eligible human message delivered to the same binding
 ```
 
 See the corresponding `docs/agentdirect.md` documents in Flight Deck and Tower for their portions of the contract.

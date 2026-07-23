@@ -113,6 +113,7 @@ export interface FlightDeckPgChannel {
   description?: string | null;
   metadata?: Record<string, unknown> | null;
   kind?: string | null;
+  participant_npubs?: string[] | null;
   row_version?: number | null;
   created_at?: string | null;
   updated_at?: string | null;

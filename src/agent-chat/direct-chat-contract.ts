@@ -66,6 +66,27 @@ export function hasCanonicalNpubMention(message: DirectChatMessage, botNpub: str
   return message.mentions.some((mention) => mention.npub === botNpub);
 }
 
+export function isImplicitTwoPartyDirectMessage(
+  channel: FlightDeckPgChannel,
+  botNpub: string,
+  authorNpub: string | null,
+): boolean {
+  if (channel.kind !== 'dm' || !authorNpub) return false;
+  const participants = [...new Set((channel.participant_npubs ?? []).map((npub) => npub.trim()).filter(Boolean))];
+  if (participants.length !== 2 || !participants.includes(botNpub)) return false;
+  const otherParticipant = participants.find((npub) => npub !== botNpub);
+  return Boolean(otherParticipant && authorNpub === otherParticipant);
+}
+
+export function isAgentDirectMessageEligible(
+  channel: FlightDeckPgChannel,
+  message: DirectChatMessage,
+  botNpub: string,
+): boolean {
+  return hasCanonicalNpubMention(message, botNpub)
+    || isImplicitTwoPartyDirectMessage(channel, botNpub, message.userNpub);
+}
+
 export function selectUndeliveredHumanMessages(
   messages: DirectChatMessage[],
   intercept: ChatInterceptStateRecord | null,

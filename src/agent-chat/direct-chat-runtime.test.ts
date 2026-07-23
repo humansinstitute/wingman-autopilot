@@ -14,6 +14,7 @@ function fixture(options: {
   replyRole?: 'assistant' | 'agent';
   includeWorkingMessage?: boolean;
   finalContent?: string;
+  channel?: Record<string, unknown>;
 } = {}) {
   const db = join(tmpdir(), `agent-direct-${randomUUID()}.sqlite`);
   const agentStore = new AgentDefinitionStore(db);
@@ -47,9 +48,9 @@ function fixture(options: {
   agentStore.save({ agentId: 'rick', label: 'Rick', botNpub: 'npub1rick', workspaceOwnerNpub: 'npub1workspace', groupNpubs: [], workingDirectory: '/legacy', capabilities: ['chat_intercept'],
     directChat: options.directChat === null ? undefined : options.directChat ?? defaultDirectChat, enabled: true, createdAt: now, updatedAt: now, managedByNpub: 'npub1manager' });
   const subscription: any = { subscriptionId: 'sub1', workspaceOwnerNpub: 'npub1owner', workspaceServiceNpub: 'npub1workspace', workspaceId: 'workspace-1', towerServiceNpub: 'npub1tower', backendBaseUrl: 'https://tower', sourceAppNpub: 'npub1app', botNpub: 'npub1rick', wsKeyNpub: 'npub1mapped', managedByNpub: 'npub1manager' };
-  const channel: any = { id: 'channel-1', scope_id: 'scope-1', metadata: { agent_chat: { enabled: true, activation: 'mention_then_continue', context_prompt: 'Context' } } };
+  const channel: any = { id: 'channel-1', scope_id: 'scope-1', kind: 'channel', participant_npubs: [], metadata: { agent_chat: { enabled: true, activation: 'mention_then_continue', context_prompt: 'Context' } }, ...(options.channel ?? {}) };
   const botIdentity: any = { botNpub: 'npub1rick', botPubkeyHex: '00', botSecret: new Uint8Array([1]) };
-  const message = (id: string, body: string, mention: false | { type?: string; npub?: string } | true = false): FlightDeckPgMessage => ({ id, workspace_id: 'workspace-1', channel_id: 'channel-1', thread_id: 'thread-1', body, created_at: `2026-01-01T00:00:0${id.slice(-1)}Z`, created_by_actor_id: `actor-${id}`, created_by_actor_npub: 'npub1human', metadata: mention ? { mentions: [{ type: mention === true ? 'agent' : mention.type ?? '', npub: mention === true ? 'npub1rick' : mention.npub ?? 'npub1rick', label: 'Rick' }] } : {} });
+  const message = (id: string, body: string, mention: false | { type?: string; npub?: string } | true = false, authorNpub = 'npub1human'): FlightDeckPgMessage => ({ id, workspace_id: 'workspace-1', channel_id: 'channel-1', thread_id: 'thread-1', body, created_at: `2026-01-01T00:00:0${id.slice(-1)}Z`, created_by_actor_id: `actor-${id}`, created_by_actor_npub: authorNpub, metadata: mention ? { mentions: [{ type: mention === true ? 'agent' : mention.type ?? '', npub: mention === true ? 'npub1rick' : mention.npub ?? 'npub1rick', label: 'Rick' }] } : {} });
   const handle = (messages: FlightDeckPgMessage[], entityId: string) => runtime.handle({ subscription, botIdentity, channel, messages, event: { entity_id: entityId, channel_id: 'channel-1', cursor: `cursor-${entityId}` } });
   return { runtime, handle, message, prompts, creates, published, interceptStore, sessions };
 }
@@ -121,30 +122,56 @@ describe('Agent Direct Chat runtime', () => {
     expect(f.creates).toHaveLength(0);
   });
 
-  test('reuses a bound session for an unmentioned follow-up and suppresses duplicate events', async () => {
+  test('skips an unmentioned shared-thread follow-up without disturbing the binding, then reuses it when mentioned', async () => {
     const f = fixture(); const m1 = f.message('m1', 'hello', true); await f.handle([m1], 'm1'); await f.runtime.waitForIdle();
     const m2 = f.message('m2', 'follow up'); await f.handle([m1, m2], 'm2'); await f.runtime.waitForIdle();
+    expect(f.creates).toHaveLength(1); expect(f.prompts).toHaveLength(1); expect(f.published).toHaveLength(1);
+    expect(f.interceptStore.listAll()[0]?.lastHumanMessageIdDelivered).toBe('m1');
+    const m3 = f.message('m3', '@Rick follow up', true); await f.handle([m1, m2, m3], 'm3'); await f.runtime.waitForIdle();
     expect(f.creates).toHaveLength(1); expect(f.prompts).toHaveLength(2); expect(f.prompts[1]).toContain('flightdeck_agent_direct_follow_up_v1');
-    await f.handle([m1, m2], 'm2'); await f.runtime.waitForIdle();
-    expect(f.prompts).toHaveLength(2); expect(f.published).toHaveLength(2);
+    expect(f.prompts[1]).toContain('"message_id": "m3"'); expect(f.prompts[1]).not.toContain('"message_id": "m2"');
+    expect(f.interceptStore.listAll()[0]?.lastHumanMessageIdDelivered).toBe('m3');
+  });
+
+  test('routes unmentioned messages only in a strict two-party DM and reuses its session', async () => {
+    const f = fixture({ channel: { kind: 'dm', participant_npubs: ['npub1rick', 'npub1human'] } });
+    const m1 = f.message('m1', 'hello'); expect(await f.handle([m1], 'm1')).toEqual({ handled: true, reason: 'direct_chat_queued' }); await f.runtime.waitForIdle();
+    const m2 = f.message('m2', 'follow up'); expect(await f.handle([m1, m2], 'm2')).toEqual({ handled: true, reason: 'direct_chat_queued' }); await f.runtime.waitForIdle();
+    expect(f.creates).toHaveLength(1); expect(f.prompts).toHaveLength(2); expect(f.published).toHaveLength(2);
+  });
+
+  test('requires a mention for malformed, multi-party, or outsider-authored DMs', async () => {
+    const cases = [
+      { participants: ['npub1human', 'npub1other'], author: 'npub1human' },
+      { participants: ['npub1rick', 'npub1human', 'npub1other'], author: 'npub1human' },
+      { participants: ['npub1rick', 'npub1human'], author: 'npub1outsider' },
+    ];
+    for (const [index, item] of cases.entries()) {
+      const f = fixture({ channel: { kind: 'dm', participant_npubs: item.participants } });
+      const unmentioned = f.message(`m${index + 1}`, 'hello', false, item.author);
+      expect(await f.handle([unmentioned], unmentioned.id)).toEqual({ handled: false, reason: 'not_activated' });
+      const mentioned = f.message(`m${index + 4}`, '@Rick hello', true, item.author);
+      expect(await f.handle([mentioned], mentioned.id)).toEqual({ handled: true, reason: 'direct_chat_queued' });
+      await f.runtime.waitForIdle(); expect(f.creates).toHaveLength(1);
+    }
   });
 
   test('natively resumes a stopped session without increasing generation', async () => {
     const f = fixture(); const m1 = f.message('m1', 'hello', true); await f.handle([m1], 'm1'); await f.runtime.waitForIdle();
-    f.sessions.get('session-1').status = 'stopped'; const m2 = f.message('m2', 'again'); await f.handle([m1, m2], 'm2'); await f.runtime.waitForIdle();
+    f.sessions.get('session-1').status = 'stopped'; const m2 = f.message('m2', 'again', true); await f.handle([m1, m2], 'm2'); await f.runtime.waitForIdle();
     expect(f.creates).toHaveLength(2); expect(f.creates[1][3].type).toBe('native-resume');
     expect(f.interceptStore.listAll()[0]!.sessionGeneration).toBe(1);
   });
 
   test('creates a generation-two continuity replacement when the session is missing', async () => {
     const f = fixture(); const m1 = f.message('m1', 'hello', true); await f.handle([m1], 'm1'); await f.runtime.waitForIdle();
-    f.sessions.delete('session-1'); const m2 = f.message('m2', 'recover'); await f.handle([m1, m2], 'm2'); await f.runtime.waitForIdle();
+    f.sessions.delete('session-1'); const m2 = f.message('m2', 'recover', true); await f.handle([m1, m2], 'm2'); await f.runtime.waitForIdle();
     const state = f.interceptStore.listAll()[0]!; expect(state.sessionGeneration).toBe(2); expect(state.previousSessionIds).toEqual(['session-1']);
     expect(f.prompts[1]).toContain('CONTINUITY RECOVERY');
   });
 
   test('queues quick replies without overlapping turns and preserves order', async () => {
-    const f = fixture(); const m1 = f.message('m1', 'one', true); const m2 = f.message('m2', 'two');
+    const f = fixture(); const m1 = f.message('m1', 'one', true); const m2 = f.message('m2', 'two', true);
     await Promise.all([f.handle([m1], 'm1'), f.handle([m1, m2], 'm2')]); await f.runtime.waitForIdle();
     expect(f.creates).toHaveLength(1); expect(f.prompts).toHaveLength(2);
     expect(f.prompts[0]).toContain('message_id: m1'); expect(f.prompts[1]).toContain('"message_id": "m2"');
