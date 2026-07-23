@@ -59,6 +59,7 @@ import {
   buildSuccessDiagnostic,
   checkBackendConnectionHealth,
   fetchFlightDeckPgChannelMessages,
+  fetchFlightDeckPgChannel,
   fetchFlightDeckPgWorkroomContext,
   fetchFlightDeckPgEvents,
   fetchFlightDeckPgWorkspaceMe,
@@ -73,6 +74,7 @@ import {
 } from './tower-client';
 import { loadYokeBotHelpers } from './yoke-bot-helpers';
 import { decryptRecordPayloadWithYoke } from './yoke-record-payload';
+import { hydrateDirectChatThread } from './direct-chat-tower-hydration';
 import {
   DEFAULT_APPROVAL_DISPATCH_PROMPT_TEMPLATE,
   DEFAULT_CHAT_DISPATCH_PROMPT_TEMPLATE,
@@ -848,6 +850,7 @@ export interface WorkspaceSubscriptionManagerDependencies {
   fetchFlightDeckPgEvents?: typeof fetchFlightDeckPgEvents;
   connectFlightDeckPgEventStream?: typeof connectFlightDeckPgEventStream;
   fetchFlightDeckPgChannelMessages?: typeof fetchFlightDeckPgChannelMessages;
+  fetchFlightDeckPgChannel?: typeof fetchFlightDeckPgChannel;
   fetchFlightDeckPgWorkroomContext?: typeof fetchFlightDeckPgWorkroomContext;
   decryptRecordPayload?: typeof decryptRecordPayloadWithYoke;
   checkBackendHealth?: typeof checkBackendConnectionHealth;
@@ -993,6 +996,7 @@ export class WorkspaceSubscriptionManager {
   private readonly fetchFlightDeckPgEventsImpl: typeof fetchFlightDeckPgEvents;
   private readonly connectFlightDeckPgEventStreamImpl: typeof connectFlightDeckPgEventStream;
   private readonly fetchFlightDeckPgChannelMessagesImpl: typeof fetchFlightDeckPgChannelMessages;
+  private readonly fetchFlightDeckPgChannelImpl: typeof fetchFlightDeckPgChannel;
   private readonly fetchFlightDeckPgWorkroomContextImpl: typeof fetchFlightDeckPgWorkroomContext;
   private readonly decryptRecordPayloadImpl: typeof decryptRecordPayloadWithYoke;
   private readonly checkBackendHealthImpl: typeof checkBackendConnectionHealth;
@@ -1026,6 +1030,7 @@ export class WorkspaceSubscriptionManager {
     this.fetchFlightDeckPgEventsImpl = deps.fetchFlightDeckPgEvents ?? fetchFlightDeckPgEvents;
     this.connectFlightDeckPgEventStreamImpl = deps.connectFlightDeckPgEventStream ?? connectFlightDeckPgEventStream;
     this.fetchFlightDeckPgChannelMessagesImpl = deps.fetchFlightDeckPgChannelMessages ?? fetchFlightDeckPgChannelMessages;
+    this.fetchFlightDeckPgChannelImpl = deps.fetchFlightDeckPgChannel ?? fetchFlightDeckPgChannel;
     this.fetchFlightDeckPgWorkroomContextImpl = deps.fetchFlightDeckPgWorkroomContext ?? fetchFlightDeckPgWorkroomContext;
     this.decryptRecordPayloadImpl = deps.decryptRecordPayload ?? decryptRecordPayloadWithYoke;
     this.checkBackendHealthImpl = deps.checkBackendHealth ?? checkBackendConnectionHealth;
@@ -1712,6 +1717,7 @@ export class WorkspaceSubscriptionManager {
       workspaceOwnerNpub: this.getEffectiveWorkspaceNpub(subscription),
       groupNpubs,
       workingDirectory,
+      directChat: input.agentProfile?.directChat ?? existingById?.directChat,
       capabilities,
       chatPromptTemplate: existingById?.chatPromptTemplate ?? DEFAULT_CHAT_DISPATCH_PROMPT_TEMPLATE,
       taskPromptTemplate: existingById?.taskPromptTemplate ?? DEFAULT_TASK_DISPATCH_PROMPT_TEMPLATE,
@@ -1777,6 +1783,7 @@ export class WorkspaceSubscriptionManager {
       groupNpubs,
       workingDirectory,
       capabilities,
+      directChat: input.directChat ?? existing?.directChat,
       chatPromptTemplate,
       taskPromptTemplate,
       flowDispatchPromptTemplate,
@@ -3399,16 +3406,6 @@ export class WorkspaceSubscriptionManager {
       });
     }
 
-    if (!this.dispatchPipelineRuntime) {
-      record.lastRoutingResult = buildFailureDiagnostic(
-        'flightdeck_pg_chat_pipeline_unavailable',
-        'No dispatch pipeline runtime is configured for Flight Deck PG chat events.',
-        'flightdeck_pg_chat_pipeline_unavailable',
-        { subscription_id: record.subscriptionId, event_id: event.event_id ?? event.id ?? null },
-      );
-      return this.saveRecord(this.recomputeHealth(record));
-    }
-
     try {
       const messagesResult = await this.fetchFlightDeckPgChannelMessagesImpl({
         backendBaseUrl: record.backendBaseUrl,
@@ -3431,6 +3428,43 @@ export class WorkspaceSubscriptionManager {
             entity_id: eventEntityId,
             entity_type: event.entity_type ?? null,
           },
+        );
+        return this.saveRecord(this.recomputeHealth(record));
+      }
+
+      if (this.chatRuntime) {
+        const authoritativeThreadId = message.thread_id ?? message.thread_source_message_id ?? null;
+        const hydrated = authoritativeThreadId
+          ? await hydrateDirectChatThread({ subscription: record, botIdentity: runtime.botIdentity, channelId, threadId: authoritativeThreadId },
+              { fetchChannel: this.fetchFlightDeckPgChannelImpl, fetchMessages: this.fetchFlightDeckPgChannelMessagesImpl })
+          : { channel: await this.fetchFlightDeckPgChannelImpl({ backendBaseUrl: record.backendBaseUrl, workspaceId,
+              channelId, appNpub: record.sourceAppNpub, botIdentity: runtime.botIdentity }), messages };
+        const direct = await this.chatRuntime.handleDirectChat({
+          subscription: record,
+          botIdentity: runtime.botIdentity,
+          event,
+          channel: hydrated.channel,
+          messages: hydrated.messages,
+        });
+        if (direct.reason !== 'channel_disabled') {
+          record.lastRoutingResult = buildSuccessDiagnostic('Flight Deck PG Agent Direct Chat event evaluated.', {
+            subscription_id: record.subscriptionId,
+            event_id: event.event_id ?? event.id ?? null,
+            record_id: message.id,
+            channel_id: channelId,
+            direct_chat_handled: direct.handled,
+            direct_chat_reason: direct.reason,
+          });
+          return this.saveRecord(this.recomputeHealth(record));
+        }
+      }
+
+      if (!this.dispatchPipelineRuntime) {
+        record.lastRoutingResult = buildFailureDiagnostic(
+          'flightdeck_pg_chat_pipeline_unavailable',
+          'No dispatch pipeline runtime is configured for this non-direct Flight Deck PG chat event.',
+          'flightdeck_pg_chat_pipeline_unavailable',
+          { subscription_id: record.subscriptionId, event_id: event.event_id ?? event.id ?? null },
         );
         return this.saveRecord(this.recomputeHealth(record));
       }
@@ -5291,7 +5325,7 @@ export class WorkspaceSubscriptionManager {
     }
 
     const runtime = this.runtimes.get(record.subscriptionId);
-    if (!runtime || !runtime.wsSession) {
+    if (!runtime) {
       return;
     }
 
@@ -5300,6 +5334,25 @@ export class WorkspaceSubscriptionManager {
       .filter((intercept) => this.shouldReplayPendingIntercept(intercept));
 
     if (pendingIntercepts.length === 0) {
+      return;
+    }
+
+    if (record.workspaceId) {
+      for (const intercept of pendingIntercepts) {
+        try {
+          const hydrated = await hydrateDirectChatThread({ subscription: record, botIdentity,
+            channelId: intercept.channelId, threadId: intercept.threadId },
+            { fetchChannel: this.fetchFlightDeckPgChannelImpl, fetchMessages: this.fetchFlightDeckPgChannelMessagesImpl });
+          await this.chatRuntime.handleDirectChat({ subscription: record, botIdentity, channel: hydrated.channel, messages: hydrated.messages,
+            event: { entity_id: intercept.lastMessageIdSeen, channel_id: intercept.channelId, cursor: intercept.lastEventCursorSeen } });
+        } catch (error) {
+          console.warn(`[agent-chat] failed to replay direct turn ${intercept.routingKey}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      return;
+    }
+
+    if (!runtime.wsSession) {
       return;
     }
 
@@ -5377,7 +5430,10 @@ export class WorkspaceSubscriptionManager {
     if (!intercept.lastMessageIdSeen) {
       return false;
     }
-    if (intercept.lastDecision !== 'pending') {
+    if (intercept.workspaceId && intercept.lastCompletedTurnId && intercept.state === 'idle') {
+      return false;
+    }
+    if (!intercept.workspaceId && intercept.lastDecision !== 'pending') {
       return false;
     }
     return intercept.state === 'idle'

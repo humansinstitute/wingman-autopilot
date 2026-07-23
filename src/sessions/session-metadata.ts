@@ -23,6 +23,15 @@ export interface SessionMetadata {
   routedBy?: string;
   agentChatAgentId?: string;
   agentChatBotNpub?: string;
+  sessionClass?: "flightdeck_chat";
+  flightdeckTowerServiceNpub?: string;
+  flightdeckWorkspaceId?: string;
+  flightdeckScopeId?: string;
+  flightdeckChannelId?: string;
+  flightdeckThreadId?: string;
+  flightdeckAgentNpub?: string;
+  flightdeckRoutingKey?: string;
+  sessionGeneration?: number;
   ownerNpub?: string;
   createdByNpub?: string;
   lastManagedByNpub?: string;
@@ -64,6 +73,10 @@ export const SESSION_METADATA_BINDING_TYPES = [
 
 export type SessionBindingType =
   (typeof SESSION_METADATA_BINDING_TYPES)[number];
+
+function cleanString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
 
 export const DEFAULT_SESSION_METADATA: SessionMetadata = Object.freeze({
   AGENT: false,
@@ -133,6 +146,7 @@ export const normaliseSessionMetadata = (
     typeof metadata?.nextActionPayload === "string" ? metadata.nextActionPayload.trim() : "";
   const nextActionTemplate =
     typeof metadata?.nextActionTemplate === "string" ? metadata.nextActionTemplate.trim() : "";
+  const sessionGeneration = Number(metadata?.sessionGeneration);
   const bindingTypeValue =
     typeof metadata?.bindingType === "string" ? metadata.bindingType.trim().toLowerCase() : "";
   const bindingType = SESSION_METADATA_BINDING_TYPES.includes(
@@ -180,6 +194,15 @@ export const normaliseSessionMetadata = (
     nextAction,
     nextActionPayload: nextActionPayload || undefined,
     nextActionTemplate: nextActionTemplate || undefined,
+    sessionClass: metadata?.sessionClass === "flightdeck_chat" ? metadata.sessionClass : undefined,
+    flightdeckTowerServiceNpub: cleanString(metadata?.flightdeckTowerServiceNpub) || undefined,
+    flightdeckWorkspaceId: cleanString(metadata?.flightdeckWorkspaceId) || undefined,
+    flightdeckScopeId: cleanString(metadata?.flightdeckScopeId) || undefined,
+    flightdeckChannelId: cleanString(metadata?.flightdeckChannelId) || undefined,
+    flightdeckThreadId: cleanString(metadata?.flightdeckThreadId) || undefined,
+    flightdeckAgentNpub: cleanString(metadata?.flightdeckAgentNpub) || undefined,
+    flightdeckRoutingKey: cleanString(metadata?.flightdeckRoutingKey) || undefined,
+    sessionGeneration: Number.isFinite(sessionGeneration) && sessionGeneration > 0 ? Math.floor(sessionGeneration) : undefined,
     bindingType,
     bindingId: bindingId || undefined,
     flowId: flowId || undefined,

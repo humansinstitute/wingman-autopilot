@@ -29,6 +29,7 @@ describe('AgentDefinitionStore', () => {
       workspaceOwnerNpub: 'npub1workspace',
       groupNpubs: ['npub1groupb', 'npub1groupa', 'npub1groupa'],
       workingDirectory: '/tmp/alpha',
+      directChat: { enabled: true, sessionAgent: 'codex', directory: '/Users/mini/wingmen/wingman21', model: null, idleRetentionMinutes: 60 },
       capabilities: ['chat_intercept'],
       enabled: true,
       createdAt: now,
@@ -53,6 +54,7 @@ describe('AgentDefinitionStore', () => {
     expect(managedAgents).toHaveLength(2);
     expect(managedAgents[0]?.agentId).toBe('agent_alpha');
     expect(managedAgents[0]?.groupNpubs).toEqual(['npub1groupa', 'npub1groupb']);
+    expect(managedAgents[0]?.directChat).toEqual({ enabled: true, sessionAgent: 'codex', directory: '/Users/mini/wingmen/wingman21', model: null, idleRetentionMinutes: 60 });
 
     const workspaceBotAgents = store.listByWorkspaceAndBot('npub1workspace', 'npub1botalpha');
     expect(workspaceBotAgents).toHaveLength(1);

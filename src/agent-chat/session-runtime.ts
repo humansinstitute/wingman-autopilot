@@ -19,6 +19,8 @@ import type {
   WorkspaceSubscriptionRecord,
 } from './types';
 import { handoffAgentChatReply, prepareAgentChatYokeRuntime } from './yoke-runtime';
+import { AgentDirectChatRuntime, type DirectChatRuntimeInput } from './direct-chat-runtime';
+import { agentDefinitionStore } from './agent-definition-store';
 
 const DEFAULT_IDLE_RETENTION_MINUTES = 60;
 
@@ -45,13 +47,24 @@ export class AgentChatSessionRuntime {
   private readonly idleRetentionMs: number;
   private readonly idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly routingStates = new Map<string, RoutingRuntimeState>();
+  private readonly directRuntime: AgentDirectChatRuntime;
 
   constructor(deps: AgentChatSessionRuntimeDependencies) {
     this.defaultAgent = deps.defaultAgent;
     this.manager = deps.processManager;
     this.interceptStore = deps.interceptStore ?? chatInterceptStateStore;
     this.idleRetentionMs = Math.max(1, deps.idleRetentionMinutes ?? DEFAULT_IDLE_RETENTION_MINUTES) * 60_000;
+    this.directRuntime = new AgentDirectChatRuntime({ defaultAgent: this.defaultAgent, processManager: this.manager,
+      agentStore: agentDefinitionStore, interceptStore: this.interceptStore });
     this.restorePersistedStates();
+  }
+
+  handleDirectChat(input: DirectChatRuntimeInput): Promise<{ handled: boolean; reason: string }> {
+    return this.directRuntime.handle(input);
+  }
+
+  waitForDirectChatIdle(): Promise<void> {
+    return this.directRuntime.waitForIdle();
   }
 
   async handleRoutedChat(input: AgentChatSessionRuntimeInput): Promise<void> {

@@ -22,6 +22,7 @@ export interface AssistantReplyWaitOptions {
   pollIntervalMs?: number;
   stablePolls?: number;
   decisionFallbackStablePolls?: number;
+  onAccepted?: () => void | Promise<void>;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -106,6 +107,7 @@ export async function sendPromptAndAwaitAssistantReply(
   });
   const initialMessages = await adapter.fetchMessages().catch(() => []);
   await adapter.sendMessage(prompt, 'user');
+  await waitOptions?.onAccepted?.();
   return await awaitAssistantReply(manager, sessionId, initialMessages.length, waitOptions);
 }
 

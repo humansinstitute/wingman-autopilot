@@ -41,6 +41,18 @@ function serialiseJsonArray(values: string[]): string {
   return JSON.stringify(values);
 }
 
+function normaliseDirectChat(record: AgentDefinitionRecord): NonNullable<AgentDefinitionRecord['directChat']> {
+  const profile = record.directChat;
+  const idleRetention = Number(profile?.idleRetentionMinutes ?? 60);
+  return {
+    enabled: profile?.enabled ?? false,
+    sessionAgent: profile?.sessionAgent?.trim() || null,
+    directory: profile?.directory?.trim() || record.workingDirectory,
+    model: profile?.model?.trim() || null,
+    idleRetentionMinutes: Number.isFinite(idleRetention) ? Math.max(1, Math.floor(idleRetention)) : 60,
+  };
+}
+
 function normaliseCapabilities(values: string[]): AgentCapability[] {
   const set = new Set<AgentCapability>();
   for (const value of values) {
@@ -114,10 +126,10 @@ class AgentDefinitionStore {
          agent_id, label, bot_npub, workspace_owner_npub, group_npubs_json,
          working_directory, capabilities_json, chat_prompt_template, task_prompt_template,
          flow_dispatch_prompt_template, task_review_prompt_template, approval_dispatch_prompt_template,
-         enabled, created_at, updated_at, managed_by_npub
+         direct_chat_json, enabled, created_at, updated_at, managed_by_npub
        ) VALUES (
          ?1, ?2, ?3, ?4, ?5,
-         ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16
+         ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17
        )
        ON CONFLICT(agent_id) DO UPDATE SET
          label = excluded.label,
@@ -131,6 +143,7 @@ class AgentDefinitionStore {
          flow_dispatch_prompt_template = excluded.flow_dispatch_prompt_template,
          task_review_prompt_template = excluded.task_review_prompt_template,
          approval_dispatch_prompt_template = excluded.approval_dispatch_prompt_template,
+         direct_chat_json = excluded.direct_chat_json,
          enabled = excluded.enabled,
          updated_at = excluded.updated_at,
          managed_by_npub = excluded.managed_by_npub`,
@@ -147,6 +160,7 @@ class AgentDefinitionStore {
       normalisePromptTemplate(record.flowDispatchPromptTemplate, DEFAULT_FLOW_DISPATCH_PROMPT_TEMPLATE),
       normalisePromptTemplate(record.taskReviewPromptTemplate, DEFAULT_TASK_REVIEW_PROMPT_TEMPLATE),
       normalisePromptTemplate(record.approvalDispatchPromptTemplate, DEFAULT_APPROVAL_DISPATCH_PROMPT_TEMPLATE),
+      JSON.stringify(normaliseDirectChat(record)),
       record.enabled ? 1 : 0,
       record.createdAt,
       record.updatedAt,
@@ -176,6 +190,7 @@ class AgentDefinitionStore {
            flow_dispatch_prompt_template,
            task_review_prompt_template,
            approval_dispatch_prompt_template,
+           direct_chat_json,
            enabled,
            created_at,
            updated_at,
@@ -204,6 +219,7 @@ class AgentDefinitionStore {
            flow_dispatch_prompt_template,
            task_review_prompt_template,
            approval_dispatch_prompt_template,
+           direct_chat_json,
            enabled,
            created_at,
            updated_at,
@@ -224,6 +240,23 @@ class AgentDefinitionStore {
       workspaceOwnerNpub: String(row.workspace_owner_npub ?? ''),
       groupNpubs: normaliseGroupNpubs(parseJsonArray(typeof row.group_npubs_json === 'string' ? row.group_npubs_json : null)),
       workingDirectory: String(row.working_directory ?? ''),
+      directChat: (() => {
+        try {
+          const parsed = JSON.parse(typeof row.direct_chat_json === 'string' ? row.direct_chat_json : '{}') as Record<string, unknown>;
+          return normaliseDirectChat({
+            workingDirectory: String(row.working_directory ?? ''),
+            directChat: {
+              enabled: parsed.enabled === true,
+              sessionAgent: typeof parsed.sessionAgent === 'string' ? parsed.sessionAgent : null,
+              directory: typeof parsed.directory === 'string' ? parsed.directory : '',
+              model: typeof parsed.model === 'string' ? parsed.model : null,
+              idleRetentionMinutes: Number(parsed.idleRetentionMinutes ?? 60),
+            },
+          } as AgentDefinitionRecord);
+        } catch {
+          return normaliseDirectChat({ workingDirectory: String(row.working_directory ?? '') } as AgentDefinitionRecord);
+        }
+      })(),
       capabilities: normaliseCapabilities(parseJsonArray(typeof row.capabilities_json === 'string' ? row.capabilities_json : null)),
       chatPromptTemplate: normalisePromptTemplate(
         typeof row.chat_prompt_template === 'string' ? row.chat_prompt_template : null,
@@ -267,6 +300,7 @@ class AgentDefinitionStore {
         flow_dispatch_prompt_template TEXT,
         task_review_prompt_template TEXT,
         approval_dispatch_prompt_template TEXT,
+        direct_chat_json TEXT,
         enabled INTEGER NOT NULL DEFAULT 1,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
@@ -285,6 +319,7 @@ class AgentDefinitionStore {
     const hasFlowDispatchTemplate = columns.some((row) => row.name === 'flow_dispatch_prompt_template');
     const hasTaskReviewTemplate = columns.some((row) => row.name === 'task_review_prompt_template');
     const hasApprovalDispatchTemplate = columns.some((row) => row.name === 'approval_dispatch_prompt_template');
+    const hasDirectChat = columns.some((row) => row.name === 'direct_chat_json');
     if (!hasChatTemplate) {
       this.db.exec('ALTER TABLE agent_definitions ADD COLUMN chat_prompt_template TEXT');
     }
@@ -299,6 +334,9 @@ class AgentDefinitionStore {
     }
     if (!hasApprovalDispatchTemplate) {
       this.db.exec('ALTER TABLE agent_definitions ADD COLUMN approval_dispatch_prompt_template TEXT');
+    }
+    if (!hasDirectChat) {
+      this.db.exec('ALTER TABLE agent_definitions ADD COLUMN direct_chat_json TEXT');
     }
   }
 }

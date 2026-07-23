@@ -189,6 +189,13 @@ export interface AgentDefinitionRecord {
   workspaceOwnerNpub: string;
   groupNpubs: string[];
   workingDirectory: string;
+  directChat?: {
+    enabled: boolean;
+    sessionAgent: string | null;
+    directory: string;
+    model: string | null;
+    idleRetentionMinutes: number;
+  };
   capabilities: AgentCapability[];
   chatPromptTemplate?: string;
   taskPromptTemplate?: string;
@@ -206,13 +213,21 @@ export interface ChatInterceptStateRecord {
   subscriptionId: string;
   agentId: string;
   sessionId: string | null;
+  sessionGeneration?: number;
+  previousSessionIds?: string[];
   sessionClass: 'chat';
   workspaceOwnerNpub: string;
   sourceAppNpub: string;
+  towerServiceNpub?: string;
+  workspaceId?: string;
   channelId: string;
   threadId: string;
   botNpub: string;
   lastMessageIdSeen: string | null;
+  lastEventCursorSeen?: string | null;
+  lastHumanMessageIdDelivered?: string | null;
+  lastAgentMessageIdPublished?: string | null;
+  lastCompletedTurnId?: string | null;
   pendingMessageCount: number;
   state: ChatInterceptStateStatus;
   lastDecision: AgentInterceptDecision;
@@ -256,6 +271,7 @@ export interface CreateAgentDefinitionInput {
   flowDispatchPromptTemplate?: string;
   taskReviewPromptTemplate?: string;
   approvalDispatchPromptTemplate?: string;
+  directChat?: AgentDefinitionRecord['directChat'];
   enabled?: boolean;
 }
 

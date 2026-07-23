@@ -526,8 +526,8 @@ describe('WorkspaceSubscriptionManager', () => {
       sourceAppNpub: 'npub1sourceapp',
       relayOnboardingStatus: 'ready',
     });
-    expect(profilePolicyStore.listPolicies(firstWorkspaces[0]!.profileWorkspaceId)).toHaveLength(10);
-    expect(profilePolicyStore.listPolicies(secondWorkspaces[0]!.profileWorkspaceId)).toHaveLength(10);
+    expect(profilePolicyStore.listPolicies(firstWorkspaces[0]!.profileWorkspaceId)).toHaveLength(12);
+    expect(profilePolicyStore.listPolicies(secondWorkspaces[0]!.profileWorkspaceId)).toHaveLength(12);
   });
 
   test('imports wrapped Agent Connect text without a profile when WINGMAN_PRIV is configured', async () => {
@@ -567,7 +567,7 @@ describe('WorkspaceSubscriptionManager', () => {
       sourceAppNpub: 'npub1sourceapp',
       relayOnboardingStatus: 'ready',
     });
-    expect(profilePolicyStore.listPolicies(identityWorkspaces[0]!.profileWorkspaceId)).toHaveLength(10);
+    expect(profilePolicyStore.listPolicies(identityWorkspaces[0]!.profileWorkspaceId)).toHaveLength(12);
     expect(agentStore.listByWorkspaceAndBot('npub1workspace', instanceIdentity.npub)).toHaveLength(0);
   });
 

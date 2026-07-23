@@ -3,6 +3,15 @@ import { describe, expect, test } from "bun:test";
 import { normaliseSessionMetadata } from "./session-metadata";
 
 describe("normaliseSessionMetadata", () => {
+  test("preserves Agent Direct Chat source coordinates", () => {
+    expect(normaliseSessionMetadata({ AGENT: true, billingMode: "subscription", sessionClass: "flightdeck_chat",
+      flightdeckTowerServiceNpub: " tower ", flightdeckWorkspaceId: " workspace ", flightdeckScopeId: " scope ",
+      flightdeckChannelId: " channel ", flightdeckThreadId: " thread ", flightdeckAgentNpub: " agent ",
+      flightdeckRoutingKey: " route ", sessionGeneration: 2 })).toMatchObject({ sessionClass: "flightdeck_chat",
+      flightdeckTowerServiceNpub: "tower", flightdeckWorkspaceId: "workspace", flightdeckScopeId: "scope",
+      flightdeckChannelId: "channel", flightdeckThreadId: "thread", flightdeckAgentNpub: "agent",
+      flightdeckRoutingKey: "route", sessionGeneration: 2 });
+  });
   test("normalises autonomous hook metadata fields", () => {
     expect(
       normaliseSessionMetadata({

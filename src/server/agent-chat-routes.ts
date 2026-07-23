@@ -896,6 +896,18 @@ export async function handleAgentChatApi(
     const approvalDispatchPromptTemplate = typeof body.approvalDispatchPromptTemplate === 'string'
       ? body.approvalDispatchPromptTemplate
       : undefined;
+    const directChatInput = body.directChat && typeof body.directChat === 'object' && !Array.isArray(body.directChat)
+      ? body.directChat as Record<string, unknown>
+      : null;
+    const directChat = directChatInput ? {
+      enabled: directChatInput.enabled === true,
+      sessionAgent: typeof directChatInput.sessionAgent === 'string' ? directChatInput.sessionAgent.trim() || null : null,
+      directory: typeof directChatInput.directory === 'string' ? directChatInput.directory.trim() : workingDirectory,
+      model: typeof directChatInput.model === 'string' ? directChatInput.model.trim() || null : null,
+      idleRetentionMinutes: Number.isFinite(Number(directChatInput.idleRetentionMinutes ?? 60))
+        ? Math.max(1, Math.floor(Number(directChatInput.idleRetentionMinutes ?? 60)))
+        : 60,
+    } : undefined;
 
     if (!agentId || !botNpub || !workspaceOwnerNpub || !workingDirectory) {
       return Response.json(
@@ -919,6 +931,7 @@ export async function handleAgentChatApi(
         flowDispatchPromptTemplate,
         taskReviewPromptTemplate,
         approvalDispatchPromptTemplate,
+        directChat,
         enabled,
       });
       return Response.json({ agent: serialiseAgent(agent) });
