@@ -112,7 +112,7 @@ class CodexMessageImporter {
       });
     } else if (this.commentary.length > 0) {
       this.messages.push({
-        role: "agent",
+        role: "agent-working",
         content: joinMessageParts(this.commentary),
         createdAt: this.commentary[0]!.createdAt,
       });

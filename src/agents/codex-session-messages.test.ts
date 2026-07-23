@@ -109,7 +109,7 @@ describe("Codex session message importer", () => {
     }
   });
 
-  test("keeps commentary visible as an agent bubble when there is no final answer", async () => {
+  test("keeps commentary as working output when there is no final answer", async () => {
     const root = await mkdtemp(join(tmpdir(), "codex-messages-test-"));
     const filePath = join(root, "rollout.jsonl");
     try {
@@ -128,7 +128,7 @@ describe("Codex session message importer", () => {
 
       await expect(readCodexSessionMessagesFromFile(filePath)).resolves.toEqual([
         { role: "user", content: "Status?", createdAt: "2026-06-26T00:00:01.000Z" },
-        { role: "agent", content: "Still checking.", createdAt: "2026-06-26T00:00:02.000Z" },
+        { role: "agent-working", content: "Still checking.", createdAt: "2026-06-26T00:00:02.000Z" },
       ]);
     } finally {
       await rm(root, { recursive: true, force: true });

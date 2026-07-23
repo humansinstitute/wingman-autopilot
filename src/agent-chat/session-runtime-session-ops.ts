@@ -1,4 +1,5 @@
 import type { AgentType } from '../config';
+import { resolveAuthoritativeSessionMessages } from '../agents/authoritative-session-messages';
 import type { ProcessManager, SessionOrigin, SessionSnapshot } from '../agents/process-manager';
 import { scheduleSessionArchive } from '../storage/session-archiver';
 import { parseAgentChatReply } from './session-runtime-decision';
@@ -126,8 +127,10 @@ export async function sendPromptAndAwaitFinalResponse(
   if (!adapter) throw new Error(`No adapter available for session ${sessionId}.`);
   await adapter.waitForReady({ timeoutMs: SESSION_READY_TIMEOUT_MS, pollIntervalMs: 250 });
   const initialMessages = await adapter.fetchMessages().catch(() => []);
+  const sentAtMs = Date.now();
   await adapter.sendMessage(prompt, 'user');
   await waitOptions?.onAccepted?.();
+  await manager.captureAgentapiCodexSessionIdFromPrompt?.(sessionId, prompt, { sentAtMs });
 
   const pollIntervalMs = Math.max(10, waitOptions?.pollIntervalMs ?? ASSISTANT_REPLY_POLL_INTERVAL_MS);
   const deadline = Date.now() + Math.max(pollIntervalMs, waitOptions?.timeoutMs ?? ASSISTANT_REPLY_TIMEOUT_MS);
@@ -146,7 +149,19 @@ export async function sendPromptAndAwaitFinalResponse(
       await sleep(pollIntervalMs);
       continue;
     }
-    const finalMessage = messages.slice(initialMessages.length)
+    const agentapiCodex = session?.agent === 'codex' && !currentAdapter.deliversPromptsDirectly?.();
+    const nativeCodexReady = session?.metadata?.nativeAgentSession?.agent === 'codex'
+      && Boolean(session.metadata.nativeAgentSession.sessionId);
+    const authoritativeMessages = agentapiCodex
+      ? nativeCodexReady
+        ? await resolveAuthoritativeSessionMessages(session, messages, { requireNative: true })
+        : []
+      : messages;
+    const promptIndex = authoritativeMessages.findLastIndex((message) => message.role === 'user' && message.content === prompt);
+    const turnMessages = promptIndex >= 0
+      ? authoritativeMessages.slice(promptIndex + 1)
+      : authoritativeMessages.slice(initialMessages.length);
+    const finalMessage = turnMessages
       .filter((message) => (message.role === 'assistant' || message.role === 'agent') && message.content.trim().length > 0)
       .at(-1);
     if (runtimeStatus === 'stable' && finalMessage) {

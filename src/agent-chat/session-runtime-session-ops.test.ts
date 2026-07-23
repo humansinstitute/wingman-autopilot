@@ -1,7 +1,11 @@
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 
 import type { AgentAdapter } from '../agents/agent-adapter';
 import type { ProcessManager, SessionSnapshot } from '../agents/process-manager';
+import { resolveAuthoritativeSessionMessages } from '../agents/authoritative-session-messages';
 import { sendPromptAndAwaitAssistantReply, sendPromptAndAwaitFinalResponse } from './session-runtime-session-ops';
 
 class FakeAdapter implements AgentAdapter {
@@ -192,7 +196,7 @@ describe('sendPromptAndAwaitFinalResponse', () => {
     let sent = false;
     const adapter = {
       waitForReady: async () => {}, sendMessage: async () => { sent = true; },
-      fetchMessages: async () => sent ? messages : [], fetchStatus: async () => status,
+      fetchMessages: async () => sent ? messages : [], fetchStatus: async () => status, deliversPromptsDirectly: () => true,
       interruptCurrentTurn: async () => false, getEventsUrl: () => null, dispose: async () => {},
     } as AgentAdapter;
     return { session, manager: buildManager(session, adapter) };
@@ -216,5 +220,61 @@ describe('sendPromptAndAwaitFinalResponse', () => {
   test('times out when a completed turn exposes progress but no final card', async () => {
     const { session, manager } = finalManager([{ role: 'agent-working', content: 'Only progress', createdAt: '2026-01-01T00:00:01Z' }]);
     await expect(sendPromptAndAwaitFinalResponse(manager, session.id, 'prompt', { timeoutMs: 30, pollIntervalMs: 10 })).rejects.toThrow('final response');
+  });
+
+  test('captures AgentAPI Codex native history and rejects the combined terminal transcript as final', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'direct-native-final-'));
+    const previousCodexHome = process.env.CODEX_HOME;
+    process.env.CODEX_HOME = codexHome;
+    const prompt = 'Explain the result';
+    const nativeId = 'native-direct-1';
+    try {
+      const sessionDir = join(codexHome, 'sessions', '2026', '07', '23');
+      await mkdir(sessionDir, { recursive: true });
+      await writeFile(join(sessionDir, `rollout-2026-07-23T08-00-00-${nativeId}.jsonl`), [
+        JSON.stringify({ type: 'session_meta', timestamp: '2026-07-23T08:00:00.000Z', payload: { id: nativeId, cwd: '/repo' } }),
+        JSON.stringify({ type: 'event_msg', timestamp: '2026-07-23T08:00:01.000Z', payload: { type: 'user_message', message: prompt } }),
+        JSON.stringify({ type: 'event_msg', timestamp: '2026-07-23T08:00:02.000Z', payload: { type: 'agent_message', phase: 'commentary', message: 'Inspecting the implementation.' } }),
+        JSON.stringify({ type: 'response_item', timestamp: '2026-07-23T08:00:03.000Z', payload: { type: 'function_call', name: 'exec_command', call_id: 'call-1', arguments: JSON.stringify({ cmd: 'bun test' }) } }),
+        JSON.stringify({ type: 'response_item', timestamp: '2026-07-23T08:00:04.000Z', payload: { type: 'function_call_output', call_id: 'call-1', output: 'Process exited with code 0\nOutput:\npass' } }),
+        JSON.stringify({ type: 'event_msg', timestamp: '2026-07-23T08:00:05.000Z', payload: { type: 'agent_message', phase: 'final_answer', message: '## Clean final\n\nEverything passed.' } }),
+      ].join('\n'));
+
+      let sent = false;
+      let captureCalls = 0;
+      const rawMessages = [
+        { role: 'user', content: prompt, createdAt: '2026-07-23T08:00:01.000Z' },
+        { role: 'agent', content: 'terminal startup\nthinking\ntool output\n## Clean final\nEverything passed.', createdAt: '2026-07-23T08:00:05.000Z' },
+      ];
+      const session = { id: 'agentapi-direct', agent: 'codex', port: 1, name: 'Direct', status: 'running',
+        startedAt: new Date(), command: [], workingDirectory: '/repo', logs: [], metadata: {} } as unknown as SessionSnapshot;
+      const adapter = {
+        waitForReady: async () => {}, sendMessage: async () => { sent = true; }, fetchStatus: async () => 'stable',
+        fetchMessages: async () => sent ? rawMessages : [], deliversPromptsDirectly: () => false,
+        interruptCurrentTurn: async () => false, getEventsUrl: () => null, dispose: async () => {},
+      } as AgentAdapter;
+      const manager = {
+        getSession: () => session, getAdapter: () => adapter,
+        captureAgentapiCodexSessionIdFromPrompt: async (_id: string, capturedPrompt: string) => {
+          captureCalls += 1;
+          expect(capturedPrompt).toBe(prompt);
+          session.metadata = { nativeAgentSession: { agent: 'codex', sessionId: nativeId, workingDirectory: '/repo', capturedAt: new Date().toISOString(), source: 'agentapi' } };
+          return true;
+        },
+      } as unknown as ProcessManager;
+
+      const reply = await sendPromptAndAwaitFinalResponse(manager, session.id, prompt, { timeoutMs: 200, pollIntervalMs: 10 });
+      expect(captureCalls).toBe(1);
+      expect(reply.content).toBe('## Clean final\n\nEverything passed.');
+      expect(reply.content).not.toContain('terminal startup');
+      const authoritative = await resolveAuthoritativeSessionMessages(session, rawMessages, { requireNative: true });
+      expect(authoritative.map((message) => message.role)).toEqual(['user', 'agent-working', 'agent']);
+      expect(authoritative[1]?.content).toContain('Tool call: exec_command `bun test`');
+      expect(authoritative[2]?.content).toBe('## Clean final\n\nEverything passed.');
+    } finally {
+      if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = previousCodexHome;
+      await rm(codexHome, { recursive: true, force: true });
+    }
   });
 });

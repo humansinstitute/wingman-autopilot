@@ -25,7 +25,7 @@ function fixture(options: {
   const manager = {
     getSession: (id: string) => sessions.get(id) ?? null,
     getAdapter: (id: string) => ({
-      waitForReady: async () => {}, fetchStatus: async () => 'stable', fetchMessages: async () => [...(sessions.get(id).messages ?? [])],
+      waitForReady: async () => {}, fetchStatus: async () => 'stable', deliversPromptsDirectly: () => true, fetchMessages: async () => [...(sessions.get(id).messages ?? [])],
       sendMessage: async (prompt: string) => {
         prompts.push(prompt);
         if (options.includeWorkingMessage) sessions.get(id).messages.push({ role: 'agent-working', content: 'Thinking and tool progress', createdAt: new Date().toISOString() });

@@ -232,6 +232,8 @@ Advance `last_human_message_id_delivered` only after the session adapter has acc
 
 Autopilot owns publication. The agent answers normally with polished Flight Deck/GitHub-Flavored Markdown and must not invoke a reply command, add a wrapper/envelope, or enclose the whole answer in a code fence. Autopilot uses the session adapter's authoritative turn-completion state and publishes the completed final assistant/agent message card verbatim, preserving headings, paragraphs, lists, links, inline code, and fenced code without escaping or flattening them. Streaming text, thinking, commentary, tool activity, `agent-working` progress, and combined terminal transcripts are never eligible replies. Autopilot must not infer completion from content stability or require marker envelopes. Transport handling may safely normalize outer whitespace or newline encoding only when required; it must never semantically rewrite the Markdown body.
 
+For Codex sessions running through AgentAPI, Autopilot must capture the native Codex session ID after prompt delivery and read the native JSONL transcript. The shared native parser exposes commentary and tool activity as `agent-working` and only `phase=final_answer` as the clean `agent` card. Both live UI synchronization and Direct Chat publication use this authoritative representation. If native Codex output is expected but its session/transcript cannot yet be resolved, Direct Chat waits or fails; it must never fall back to publishing AgentAPI's combined terminal transcript.
+
 On turn completion:
 
 1. wait for authoritative adapter turn completion and select the new non-empty final assistant/agent message;

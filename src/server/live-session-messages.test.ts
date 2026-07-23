@@ -37,7 +37,7 @@ const makeSession = (): SessionSnapshot => ({
 });
 
 describe("syncLiveSessionMessages", () => {
-  test("uses Codex JSONL history when native transcript is richer than live adapter messages", async () => {
+  test("uses phase-aware Codex JSONL history instead of a larger combined live transcript", async () => {
     const codexHome = await mkdtemp(join(tmpdir(), "codex-sync-test-"));
     const previousCodexHome = process.env.CODEX_HOME;
     process.env.CODEX_HOME = codexHome;
@@ -58,7 +58,12 @@ describe("syncLiveSessionMessages", () => {
         JSON.stringify({
           type: "event_msg",
           timestamp: "2026-06-26T00:00:02.000Z",
-          payload: { type: "agent_message", message: "Second" },
+          payload: { type: "agent_message", phase: "commentary", message: "Checking." },
+        }),
+        JSON.stringify({
+          type: "event_msg",
+          timestamp: "2026-06-26T00:00:03.000Z",
+          payload: { type: "agent_message", phase: "final_answer", message: "Second" },
         }),
       ].join("\n"));
 
@@ -71,7 +76,12 @@ describe("syncLiveSessionMessages", () => {
         manager: {
           getSession: () => session,
           getAdapter: () => ({
-            fetchMessages: async () => [{ role: "agent", content: "startup", createdAt: "2026-06-26T00:00:03.000Z" }],
+            fetchMessages: async () => [
+              { role: "agent", content: "startup", createdAt: "2026-06-26T00:00:00.000Z" },
+              { role: "user", content: "First", createdAt: "2026-06-26T00:00:01.000Z" },
+              { role: "agent", content: "Checking.\ntool output\nSecond", createdAt: "2026-06-26T00:00:03.000Z" },
+              { role: "system", content: "stable", createdAt: "2026-06-26T00:00:04.000Z" },
+            ],
           }),
         } as never,
         messageStore: {
@@ -85,7 +95,8 @@ describe("syncLiveSessionMessages", () => {
 
       expect(messages).toEqual([
         { role: "user", content: "First", createdAt: "2026-06-26T00:00:01.000Z" },
-        { role: "agent", content: "Second", createdAt: "2026-06-26T00:00:02.000Z" },
+        { role: "agent-working", content: "Checking.", createdAt: "2026-06-26T00:00:02.000Z" },
+        { role: "agent", content: "Second", createdAt: "2026-06-26T00:00:03.000Z" },
       ]);
     } finally {
       if (previousCodexHome === undefined) {
