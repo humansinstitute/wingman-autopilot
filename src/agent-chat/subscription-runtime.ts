@@ -346,6 +346,11 @@ function isFlightDeckPgSubscription(record: WorkspaceSubscriptionRecord): boolea
   return record.onboardingSource === 'nostr_33357' && Boolean(record.workspaceId);
 }
 
+function isFlightDeckPgMessageRevisionEvent(event: FlightDeckPgEvent): boolean {
+  return event.event_type === 'flightdeck_pg.message.revised'
+    || event.payload?.event_type === 'message.revised';
+}
+
 function findFlightDeckPgDispatchMessage(
   messages: FlightDeckPgMessage[],
   event: FlightDeckPgEvent,
@@ -3457,6 +3462,17 @@ export class WorkspaceSubscriptionManager {
           });
           return this.saveRecord(this.recomputeHealth(record));
         }
+      }
+
+      if (isFlightDeckPgMessageRevisionEvent(event)) {
+        record.lastRoutingResult = buildSuccessDiagnostic('Flight Deck PG message revision did not activate Agent Direct Chat.', {
+          subscription_id: record.subscriptionId,
+          event_id: event.event_id ?? event.id ?? null,
+          record_id: message.id,
+          channel_id: channelId,
+          suppression_reason: 'revision_not_eligible_for_direct_chat',
+        });
+        return this.saveRecord(this.recomputeHealth(record));
       }
 
       if (!this.dispatchPipelineRuntime) {

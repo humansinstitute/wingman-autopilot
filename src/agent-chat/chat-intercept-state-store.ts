@@ -162,6 +162,7 @@ class ChatInterceptStateStore {
     threadId: string;
     botNpub: string;
     messageId: string;
+    messageRevision?: number | null;
     eventCursor?: string | null;
     at?: string;
   }): { record: ChatInterceptStateRecord; wasDuplicate: boolean } {
@@ -177,7 +178,10 @@ class ChatInterceptStateStore {
       && existing.routingKey !== input.routingKey
       && existing.routingKey === input.legacyRoutingKey,
     );
-    const wasDuplicate = existing?.lastMessageIdSeen === input.messageId;
+    const deliveryWasDuplicate = input.messageRevision == null
+      ? false
+      : !this.claimMessageRevision(input.routingKey, input.messageId, input.messageRevision, now);
+    const wasDuplicate = deliveryWasDuplicate || (input.messageRevision == null && existing?.lastMessageIdSeen === input.messageId);
     if (existing && wasDuplicate) {
       if (!shouldMigrateLegacy) {
         const acknowledged = input.eventCursor && input.eventCursor !== existing.lastEventCursorSeen
@@ -228,6 +232,14 @@ class ChatInterceptStateStore {
       this.deleteByRoutingKey(existing!.routingKey);
     }
     return { record, wasDuplicate };
+  }
+
+  private claimMessageRevision(routingKey: string, messageId: string, revision: number, createdAt: string): boolean {
+    const result = this.db.query(
+      `INSERT OR IGNORE INTO chat_intercept_message_revisions
+       (routing_key, message_id, message_revision, created_at) VALUES (?1, ?2, ?3, ?4)`,
+    ).run(routingKey, messageId, revision, createdAt);
+    return Number(result.changes) === 1;
   }
 
   private deleteByRoutingKey(routingKey: string): void {

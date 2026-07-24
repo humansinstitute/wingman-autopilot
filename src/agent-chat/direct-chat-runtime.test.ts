@@ -58,7 +58,13 @@ function fixture(options: {
   const channel: any = { id: 'channel-1', scope_id: 'scope-1', kind: 'channel', participant_npubs: [], metadata: { agent_chat: { enabled: true, activation: 'mention_then_continue', context_prompt: 'Context' } }, ...(options.channel ?? {}) };
   const botIdentity: any = { botNpub: 'npub1rick', botPubkeyHex: '00', botSecret: new Uint8Array([1]) };
   const message = (id: string, body: string, mention: false | { type?: string; npub?: string } | true = false, authorNpub = 'npub1human'): FlightDeckPgMessage => ({ id, workspace_id: 'workspace-1', channel_id: 'channel-1', thread_id: 'thread-1', body, created_at: `2026-01-01T00:00:0${id.slice(-1)}Z`, created_by_actor_id: `actor-${id}`, created_by_actor_npub: authorNpub, metadata: mention ? { mentions: [{ type: mention === true ? 'agent' : mention.type ?? '', npub: mention === true ? 'npub1rick' : mention.npub ?? 'npub1rick', label: 'Rick' }] } : {} });
-  const handle = (messages: FlightDeckPgMessage[], entityId: string) => runtime.handle({ subscription, botIdentity, channel, messages, event: { entity_id: entityId, channel_id: 'channel-1', cursor: `cursor-${entityId}` } });
+  const handle = (messages: FlightDeckPgMessage[], entityId: string, event: Record<string, unknown> = {}) => runtime.handle({
+    subscription,
+    botIdentity,
+    channel,
+    messages,
+    event: { entity_id: entityId, channel_id: 'channel-1', cursor: `cursor-${entityId}`, ...event },
+  });
   return { runtime, makeRuntime, handle, message, prompts, captures, creates, published, activities, interceptStore, turnStore, sessions, subscription, channel, botIdentity };
 }
 
@@ -126,6 +132,75 @@ describe('Agent Direct Chat runtime', () => {
   test('does not activate for a canonical mention of another npub', async () => {
     const f = fixture(); const m1 = f.message('m1', '@Other hello', { type: 'agent', npub: 'npub1other' });
     expect(await f.handle([m1], 'm1')).toEqual({ handled: false, reason: 'not_activated' });
+    expect(f.creates).toHaveLength(0);
+  });
+
+  test('dispatches a newly added agent mention once for each saved message revision', async () => {
+    const f = fixture();
+    const original = f.message('m1', 'Initial text');
+    expect(await f.handle([original], 'm1', { event_type: 'message.created' }))
+      .toEqual({ handled: false, reason: 'not_activated' });
+
+    const revised = f.message('m1', 'Initial text @Rick', true);
+    revised.row_version = 2;
+    const revisionEvent = {
+      event_type: 'flightdeck_pg.message.revised',
+      entity_row_version: 2,
+      payload: {
+        event_type: 'message.revised',
+        message_id: 'm1',
+        revision: 2,
+        revision_idempotency_key: 'message:m1:revision:2',
+        newly_added_mentions: [{ type: 'agent', npub: 'npub1rick', label: 'Rick' }],
+      },
+    };
+    expect(await f.handle([revised], 'm1', revisionEvent)).toEqual({ handled: true, reason: 'direct_chat_queued' });
+    await f.runtime.waitForIdle();
+    expect(f.prompts).toHaveLength(1);
+    expect(f.published).toHaveLength(1);
+
+    expect(await f.handle([revised], 'm1', revisionEvent)).toEqual({ handled: false, reason: 'not_activated' });
+    await f.runtime.waitForIdle();
+    expect(f.prompts).toHaveLength(1);
+    expect(f.published).toHaveLength(1);
+
+    const revisionThree = { ...revisionEvent, entity_row_version: 3, payload: { ...revisionEvent.payload, revision: 3,
+      revision_idempotency_key: 'message:m1:revision:3' } };
+    expect(await f.handle([revised], 'm1', revisionThree)).toEqual({ handled: true, reason: 'direct_chat_queued' });
+    await f.runtime.waitForIdle();
+    expect(f.prompts).toHaveLength(2);
+    expect(f.published).toHaveLength(2);
+    expect(f.published[1].clientRequestId).not.toBe(f.published[0].clientRequestId);
+  });
+
+  test('does not dispatch text-only revisions or existing agent mentions', async () => {
+    const f = fixture();
+    const revised = f.message('m1', 'Edited wording @Rick', true);
+    const baseEvent = { event_type: 'flightdeck_pg.message.revised', entity_row_version: 2, payload: { event_type: 'message.revised',
+      message_id: 'm1', revision: 2, revision_idempotency_key: 'message:m1:revision:2', newly_added_mentions: [] } };
+    expect(await f.handle([revised], 'm1', baseEvent)).toEqual({ handled: false, reason: 'no_new_agent_mentions' });
+    expect(await f.handle([revised], 'm1', { event_type: 'flightdeck_pg.message.revised', entity_row_version: 3, payload: { revision: 3,
+      event_type: 'message.revised', message_id: 'm1', revision_idempotency_key: 'message:m1:revision:3',
+      newly_added_mentions: [{ type: 'person', npub: 'npub1human', label: 'Pete' }] } }))
+      .toEqual({ handled: false, reason: 'no_new_agent_mentions' });
+    expect(f.creates).toHaveLength(0);
+    expect(f.prompts).toHaveLength(0);
+  });
+
+  test('rejects a revision event whose stable identity fields disagree', async () => {
+    const f = fixture();
+    const revised = f.message('m1', '@Rick edited', true);
+    expect(await f.handle([revised], 'm1', {
+      event_type: 'flightdeck_pg.message.revised',
+      entity_row_version: 2,
+      payload: {
+        event_type: 'message.revised',
+        message_id: 'm1',
+        revision: 2,
+        revision_idempotency_key: 'message:m1:revision:3',
+        newly_added_mentions: [{ type: 'agent', npub: 'npub1rick' }],
+      },
+    })).toEqual({ handled: false, reason: 'invalid_message_revision_event' });
     expect(f.creates).toHaveLength(0);
   });
 

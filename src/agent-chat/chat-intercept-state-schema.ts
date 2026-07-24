@@ -28,5 +28,14 @@ export function initialiseChatInterceptStateSchema(db: Database): void {
   }
   db.exec(`CREATE INDEX IF NOT EXISTS idx_chat_intercept_state_subscription ON chat_intercept_state(subscription_id, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_chat_intercept_state_agent ON chat_intercept_state(agent_id, updated_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_chat_intercept_state_session ON chat_intercept_state(session_id)`);
+    CREATE INDEX IF NOT EXISTS idx_chat_intercept_state_session ON chat_intercept_state(session_id);
+    CREATE TABLE IF NOT EXISTS chat_intercept_message_revisions (
+      routing_key TEXT NOT NULL,
+      message_id TEXT NOT NULL,
+      message_revision INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (routing_key, message_id, message_revision)
+    );
+    CREATE INDEX IF NOT EXISTS idx_chat_intercept_message_revisions_created
+      ON chat_intercept_message_revisions(created_at DESC)`);
 }

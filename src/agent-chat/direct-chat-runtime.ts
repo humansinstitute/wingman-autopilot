@@ -41,6 +41,35 @@ interface DirectChatRuntimeDependencies {
   createActivityPublisher?: (context: AgentActivityContext) => AgentActivityPublisher;
 }
 
+interface MessageRevisionDispatch {
+  revision: number;
+  newlyAddedAgentNpubs: Set<string>;
+}
+
+function messageRevisionDispatch(event: FlightDeckPgEvent): MessageRevisionDispatch | null {
+  const payload = event.payload && typeof event.payload === 'object' && !Array.isArray(event.payload)
+    ? event.payload
+    : {};
+  if (event.event_type !== 'flightdeck_pg.message.revised' && payload.event_type !== 'message.revised') return null;
+  const revision = Number(payload.revision);
+  if (!Number.isSafeInteger(revision) || revision < 1) return null;
+  const messageId = typeof event.entity_id === 'string' ? event.entity_id : null;
+  const revisionKey = typeof payload.revision_idempotency_key === 'string' ? payload.revision_idempotency_key : null;
+  if (!messageId
+    || payload.message_id !== messageId
+    || (event.entity_row_version != null && event.entity_row_version !== revision)
+    || revisionKey !== `message:${messageId}:revision:${revision}`) return null;
+  const mentions = Array.isArray(payload.newly_added_mentions) ? payload.newly_added_mentions : [];
+  return {
+    revision,
+    newlyAddedAgentNpubs: new Set(mentions.flatMap((entry) => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
+      const mention = entry as Record<string, unknown>;
+      return mention.type === 'agent' && typeof mention.npub === 'string' ? [mention.npub] : [];
+    })),
+  };
+}
+
 function withMvpDirectChatDefault(agent: AgentDefinitionRecord): AgentDefinitionRecord {
   if (agent.directChat) return agent;
   return {
@@ -80,6 +109,15 @@ export class AgentDirectChatRuntime {
     ));
     if (!config.enabled && !implicitDm) return { handled: false, reason: 'channel_disabled' };
     const contextPrompt = config.contextPrompt || (implicitDm ? channelLegacyBasePrompt(input.channel) : '');
+    const revisionDispatch = messageRevisionDispatch(input.event);
+    const isRevisionEvent = input.event.event_type === 'flightdeck_pg.message.revised'
+      || input.event.payload?.event_type === 'message.revised';
+    if (isRevisionEvent && !revisionDispatch) {
+      return { handled: false, reason: 'invalid_message_revision_event' };
+    }
+    if (revisionDispatch?.newlyAddedAgentNpubs.size === 0) {
+      return { handled: false, reason: 'no_new_agent_mentions' };
+    }
     const workspaceIdentity = input.subscription.workspaceServiceNpub?.trim() || input.subscription.workspaceOwnerNpub;
     const agents = this.deps.agentStore.listByWorkspaceAndBot(workspaceIdentity, input.subscription.botNpub)
       .filter((agent) => agent.enabled && agent.capabilities.includes('chat_intercept'))
@@ -89,7 +127,9 @@ export class AgentDirectChatRuntime {
     let handled = false;
     for (const agent of agents) {
       if (!eventMessage || eventMessage.userNpub === agent.botNpub || eventMessage.userNpub === input.subscription.wsKeyNpub) continue;
-      if (!isAgentDirectMessageEligible(input.channel, eventMessage, agent.botNpub)) continue;
+      if (revisionDispatch
+        ? !revisionDispatch.newlyAddedAgentNpubs.has(agent.botNpub)
+        : !isAgentDirectMessageEligible(input.channel, eventMessage, agent.botNpub)) continue;
       const threadId = input.messages.find((message) => message.id === eventMessage.messageId)?.thread_id
         ?? input.messages.find((message) => message.id === eventMessage.messageId)?.thread_source_message_id
         ?? eventMessage.messageId;
@@ -100,7 +140,8 @@ export class AgentDirectChatRuntime {
         routingKey, subscriptionId: input.subscription.subscriptionId, agentId: agent.agentId,
         workspaceOwnerNpub: workspaceIdentity, sourceAppNpub: input.subscription.sourceAppNpub,
         towerServiceNpub: input.subscription.towerServiceNpub ?? '', workspaceId: input.subscription.workspaceId ?? '',
-        channelId: input.channel.id, threadId, botNpub: agent.botNpub, messageId: eventMessage.messageId, eventCursor: cursor,
+        channelId: input.channel.id, threadId, botNpub: agent.botNpub, messageId: eventMessage.messageId,
+        messageRevision: revisionDispatch?.revision ?? null, eventCursor: cursor,
       });
       if (upsert.wasDuplicate && !this.turnStore.getPending(routingKey)) continue;
       handled = true;
@@ -162,8 +203,11 @@ export class AgentDirectChatRuntime {
         const undelivered = pending?.state === 'accepted'
           ? history.filter((message) => pending.sourceMessageIds.includes(message.messageId))
           : selectUndeliveredHumanMessages(history, intercept, agent.botNpub, [input.subscription.wsKeyNpub ?? '']);
+        const revisionDispatch = messageRevisionDispatch(input.event);
         const delta = pending?.state === 'accepted'
           ? undelivered
+          : revisionDispatch
+            ? history.filter((message) => message.messageId === input.event.entity_id)
           : undelivered.filter((message) => isAgentDirectMessageEligible(input.channel, message, agent.botNpub));
         if (delta.length === 0) continue;
         if (pending?.state === 'accepted') {
@@ -202,7 +246,10 @@ export class AgentDirectChatRuntime {
               scopeId: input.channel.scope_id ?? null, history, nextMessages: delta, recovery: sessionResolution.recovery })
           : buildDirectChatFollowUpPrompt({ routingKey, threadId: intercept.threadId, history, actionableMessages: delta });
         const sourceMessageIds = delta.map((message) => message.messageId);
-        const turnId = pending?.turnId ?? buildDirectChatTurnId(routingKey, sourceMessageIds);
+        const revisionKeys = revisionDispatch
+          ? sourceMessageIds.map((messageId) => `${messageId}:revision:${revisionDispatch.revision}`)
+          : sourceMessageIds;
+        const turnId = pending?.turnId ?? buildDirectChatTurnId(routingKey, revisionKeys);
         const clientRequestId = pending?.clientRequestId ?? buildDirectChatClientRequestId(routingKey, turnId);
         const now = pending?.createdAt ?? new Date().toISOString();
         activity = this.createActivityPublisher({
