@@ -18,6 +18,7 @@ import {
   selectUndeliveredHumanMessages,
 } from './direct-chat-contract';
 import { directChatTurnStore, type DirectChatTurnStore } from './direct-chat-turn-store';
+import { AgentActivityPublisher, type AgentActivityContext } from './agent-activity-publisher';
 import { awaitAcceptedFinalResponse, sendPromptAndAwaitFinalResponse } from './session-runtime-session-ops';
 import { createFlightDeckPgChannelMessage, type FlightDeckPgChannel, type FlightDeckPgEvent, type FlightDeckPgMessage } from './tower-client';
 import type { AgentDefinitionRecord, RuntimeBotIdentity, WorkspaceSubscriptionRecord } from './types';
@@ -37,6 +38,7 @@ interface DirectChatRuntimeDependencies {
   interceptStore: ChatInterceptStateStore;
   turnStore?: DirectChatTurnStore;
   publish?: typeof createFlightDeckPgChannelMessage;
+  createActivityPublisher?: (context: AgentActivityContext) => AgentActivityPublisher;
 }
 
 function withMvpDirectChatDefault(agent: AgentDefinitionRecord): AgentDefinitionRecord {
@@ -59,10 +61,12 @@ export class AgentDirectChatRuntime {
   private readonly idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly turnStore: DirectChatTurnStore;
   private readonly publish: typeof createFlightDeckPgChannelMessage;
+  private readonly createActivityPublisher: (context: AgentActivityContext) => AgentActivityPublisher;
 
   constructor(private readonly deps: DirectChatRuntimeDependencies) {
     this.turnStore = deps.turnStore ?? directChatTurnStore;
     this.publish = deps.publish ?? createFlightDeckPgChannelMessage;
+    this.createActivityPublisher = deps.createActivityPublisher ?? ((context) => new AgentActivityPublisher(context));
   }
 
   async handle(input: DirectChatRuntimeInput): Promise<{ handled: boolean; reason: string }> {
@@ -147,6 +151,7 @@ export class AgentDirectChatRuntime {
       const input = this.queued.get(routingKey)!;
       this.queued.delete(routingKey);
       let intercept = this.deps.interceptStore.getByRoutingKey(routingKey)!;
+      let activity: AgentActivityPublisher | null = null;
       try {
         const pending = this.turnStore.getPending(routingKey);
         if (pending?.replyBody) {
@@ -163,6 +168,13 @@ export class AgentDirectChatRuntime {
         if (delta.length === 0) continue;
         if (pending?.state === 'accepted') {
           if (!intercept.sessionId) throw new Error('Accepted Agent Direct Chat turn has no bound session.');
+          activity = this.createActivityPublisher({
+            backendBaseUrl: input.subscription.backendBaseUrl, workspaceId: input.subscription.workspaceId!,
+            appNpub: input.subscription.sourceAppNpub, botIdentity: input.botIdentity,
+            channelId: intercept.channelId, threadId: intercept.threadId,
+            triggerMessageId: pending.sourceMessageIds.at(-1)!, sessionId: intercept.sessionId,
+            agentNpub: intercept.botNpub, turnId: pending.turnId,
+          });
           const recoveryPrompt = intercept.lastCompletedTurnId
             ? buildDirectChatFollowUpPrompt({ routingKey, threadId: intercept.threadId, history, actionableMessages: delta })
             : buildDirectChatBootstrapPrompt({ contextPrompt, subscription: input.subscription, intercept,
@@ -172,11 +184,12 @@ export class AgentDirectChatRuntime {
             intercept.sessionId,
             recoveryPrompt,
             pending.sourceMessageIds,
-            { acceptedAt: pending.createdAt },
+            { acceptedAt: pending.createdAt, onPoll: () => { void activity?.publishLatestCommentary(this.deps.processManager); } },
           );
           this.turnStore.save({ ...pending, replyBody: recovered.content, state: 'reply_ready', updatedAt: new Date().toISOString() });
           await this.publishTurn(input, intercept, agent, pending.turnId, pending.sourceMessageIds,
             pending.clientRequestId, recovered.content);
+          await activity.publish('completed');
           continue;
         }
         const sessionResolution = await this.resolveSession(agent, intercept, input.subscription, input.channel.scope_id ?? null);
@@ -192,6 +205,13 @@ export class AgentDirectChatRuntime {
         const turnId = pending?.turnId ?? buildDirectChatTurnId(routingKey, sourceMessageIds);
         const clientRequestId = pending?.clientRequestId ?? buildDirectChatClientRequestId(routingKey, turnId);
         const now = pending?.createdAt ?? new Date().toISOString();
+        activity = this.createActivityPublisher({
+          backendBaseUrl: input.subscription.backendBaseUrl, workspaceId: input.subscription.workspaceId!,
+          appNpub: input.subscription.sourceAppNpub, botIdentity: input.botIdentity,
+          channelId: intercept.channelId, threadId: intercept.threadId,
+          triggerMessageId: sourceMessageIds.at(-1)!, sessionId: session.id,
+          agentNpub: intercept.botNpub, turnId,
+        });
         const reply = await sendPromptAndAwaitFinalResponse(this.deps.processManager, session.id, prompt, {
           onAccepted: () => {
             this.turnStore.save({ turnId, routingKey, sourceMessageIds, clientRequestId, replyBody: null,
@@ -199,13 +219,17 @@ export class AgentDirectChatRuntime {
             intercept = this.deps.interceptStore.save({ ...intercept,
               lastHumanMessageIdDelivered: sourceMessageIds.at(-1) ?? null, pendingMessageCount: 0,
               updatedAt: new Date().toISOString() });
+            void activity?.publish('accepted');
           },
+          onPoll: () => { void activity?.publishLatestCommentary(this.deps.processManager); },
         });
         const body = reply.content;
         this.turnStore.save({ turnId, routingKey, sourceMessageIds, clientRequestId, replyBody: body,
           publishedMessageId: null, state: 'reply_ready', createdAt: now, updatedAt: new Date().toISOString() });
         await this.publishTurn(input, intercept, agent, turnId, sourceMessageIds, clientRequestId, body);
+        await activity.publish('completed');
       } catch (error) {
+        await activity?.publish('failed');
         const status = Number((error as { status?: unknown })?.status ?? 0);
         this.deps.interceptStore.save({ ...intercept, state: status === 401 || status === 403 ? 'blocked_auth' : 'pending',
           lastDecision: 'failed', lastActivityAt: new Date().toISOString(), updatedAt: new Date().toISOString() });

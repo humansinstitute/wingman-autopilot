@@ -5,6 +5,7 @@ import { describe, expect, test } from 'bun:test';
 import { AgentDefinitionStore } from './agent-definition-store';
 import { ChatInterceptStateStore } from './chat-intercept-state-store';
 import { AgentDirectChatRuntime } from './direct-chat-runtime';
+import { AgentActivityPublisher } from './agent-activity-publisher';
 import { DirectChatTurnStore } from './direct-chat-turn-store';
 import { buildDirectChatClientRequestId, buildDirectChatRoutingKey, buildDirectChatTurnId } from './direct-chat-contract';
 import type { FlightDeckPgMessage } from './tower-client';
@@ -45,7 +46,9 @@ function fixture(options: {
   } as never;
   const published: any[] = [];
   const publish = async (input: any) => { published.push(input); return options.publish ? options.publish(input, published.length) : { message: { id: `agent-message-${published.length}` } }; };
-  const makeRuntime = () => new AgentDirectChatRuntime({ defaultAgent: 'codex', processManager: manager, agentStore, interceptStore, turnStore, publish });
+  const activities: any[] = [];
+  const makeRuntime = () => new AgentDirectChatRuntime({ defaultAgent: 'codex', processManager: manager, agentStore, interceptStore, turnStore, publish,
+    createActivityPublisher: (context) => new AgentActivityPublisher(context, async (activity) => { activities.push(activity); return {}; }) });
   const runtime = makeRuntime();
   const now = new Date().toISOString();
   const defaultDirectChat = { enabled: true, sessionAgent: 'codex', directory: '/Users/mini/wingmen/wingman21', model: null, idleRetentionMinutes: 60 };
@@ -56,7 +59,7 @@ function fixture(options: {
   const botIdentity: any = { botNpub: 'npub1rick', botPubkeyHex: '00', botSecret: new Uint8Array([1]) };
   const message = (id: string, body: string, mention: false | { type?: string; npub?: string } | true = false, authorNpub = 'npub1human'): FlightDeckPgMessage => ({ id, workspace_id: 'workspace-1', channel_id: 'channel-1', thread_id: 'thread-1', body, created_at: `2026-01-01T00:00:0${id.slice(-1)}Z`, created_by_actor_id: `actor-${id}`, created_by_actor_npub: authorNpub, metadata: mention ? { mentions: [{ type: mention === true ? 'agent' : mention.type ?? '', npub: mention === true ? 'npub1rick' : mention.npub ?? 'npub1rick', label: 'Rick' }] } : {} });
   const handle = (messages: FlightDeckPgMessage[], entityId: string) => runtime.handle({ subscription, botIdentity, channel, messages, event: { entity_id: entityId, channel_id: 'channel-1', cursor: `cursor-${entityId}` } });
-  return { runtime, makeRuntime, handle, message, prompts, captures, creates, published, interceptStore, turnStore, sessions, subscription, channel, botIdentity };
+  return { runtime, makeRuntime, handle, message, prompts, captures, creates, published, activities, interceptStore, turnStore, sessions, subscription, channel, botIdentity };
 }
 
 describe('Agent Direct Chat runtime', () => {

@@ -24,6 +24,7 @@ export interface AssistantReplyWaitOptions {
   stablePolls?: number;
   decisionFallbackStablePolls?: number;
   onAccepted?: () => void | Promise<void>;
+  onPoll?: () => void | Promise<void>;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -121,7 +122,7 @@ export async function sendPromptAndAwaitFinalResponse(
   manager: ProcessManager,
   sessionId: string,
   prompt: string,
-  waitOptions?: Pick<AssistantReplyWaitOptions, 'timeoutMs' | 'pollIntervalMs' | 'onAccepted'>,
+  waitOptions?: Pick<AssistantReplyWaitOptions, 'timeoutMs' | 'pollIntervalMs' | 'onAccepted' | 'onPoll'>,
 ): Promise<AssistantReplyResult> {
   const adapter = manager.getAdapter(sessionId);
   if (!adapter) throw new Error(`No adapter available for session ${sessionId}.`);
@@ -157,6 +158,7 @@ export async function sendPromptAndAwaitFinalResponse(
         ? await resolveAuthoritativeSessionMessages(session, messages, { requireNative: true })
         : []
       : messages;
+    await waitOptions?.onPoll?.();
     const promptIndex = authoritativeMessages.findLastIndex((message) => message.role === 'user' && message.content === prompt);
     const turnMessages = promptIndex >= 0
       ? authoritativeMessages.slice(promptIndex + 1)
@@ -180,7 +182,7 @@ export async function awaitAcceptedFinalResponse(
   sessionId: string,
   prompt: string,
   sourceMessageIds: string[],
-  waitOptions?: Pick<AssistantReplyWaitOptions, 'timeoutMs' | 'pollIntervalMs'> & { acceptedAt?: string },
+  waitOptions?: Pick<AssistantReplyWaitOptions, 'timeoutMs' | 'pollIntervalMs' | 'onPoll'> & { acceptedAt?: string },
 ): Promise<AssistantReplyResult> {
   const acceptedAtMs = Date.parse(waitOptions?.acceptedAt ?? '');
   await manager.captureAgentapiCodexSessionIdFromPrompt?.(sessionId, prompt, {
@@ -205,6 +207,7 @@ export async function awaitAcceptedFinalResponse(
     const authoritativeMessages = nativeCodexReady
       ? await resolveAuthoritativeSessionMessages(session, liveMessages, { requireNative: true })
       : adapter?.deliversPromptsDirectly?.() ? liveMessages : [];
+    await waitOptions?.onPoll?.();
     const boundaryIndex = authoritativeMessages.findLastIndex((message) => {
       if (message.role !== 'user') return false;
       if (message.content === prompt) return true;

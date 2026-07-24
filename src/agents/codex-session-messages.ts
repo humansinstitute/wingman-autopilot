@@ -9,6 +9,32 @@ export interface CodexSessionMessagesInput {
   workingDirectory: string;
 }
 
+export interface CodexUserVisibleActivity {
+  content: string;
+  createdAt: string;
+}
+
+export async function readLatestCodexUserVisibleActivity(
+  input: CodexSessionMessagesInput,
+): Promise<CodexUserVisibleActivity | null> {
+  const filePath = await findCodexSessionFile({
+    codexHome: resolveCodexHome(input.codexHome),
+    sessionId: input.sessionId.trim(),
+    workingDirectory: input.workingDirectory.trim(),
+  });
+  if (!filePath) return null;
+  const content = await readFile(filePath, "utf8").catch(() => "");
+  let latest: CodexUserVisibleActivity | null = null;
+  for (const line of content.split("\n")) {
+    const record = parseJsonLine(line);
+    const event = record ? extractEventMessage(record) : null;
+    if (event?.type === "agent_message" && event.phase === "commentary" && event.content.trim()) {
+      latest = { content: event.content.trim(), createdAt: event.createdAt };
+    }
+  }
+  return latest;
+}
+
 export async function readCodexSessionMessages(
   input: CodexSessionMessagesInput,
 ): Promise<ReplaceMessageInput[]> {

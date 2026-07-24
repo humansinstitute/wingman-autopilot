@@ -1,12 +1,28 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, test } from "bun:test";
 
-import { readCodexSessionMessagesFromFile } from "./codex-session-messages";
+import { readCodexSessionMessagesFromFile, readLatestCodexUserVisibleActivity } from "./codex-session-messages";
 
 describe("Codex session message importer", () => {
+  test("selects only explicit commentary for cross-suite activity", async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), "codex-activity-"));
+    const sessionId = "activity-session";
+    const sessionDir = join(codexHome, "sessions", "2026", "07", "24");
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(join(sessionDir, `rollout-${sessionId}.jsonl`), [
+      JSON.stringify({ type: "session_meta", timestamp: "2026-07-24T00:00:00Z", payload: { id: sessionId, cwd: "/repo" } }),
+      JSON.stringify({ type: "response_item", timestamp: "2026-07-24T00:00:01Z", payload: { type: "reasoning", summary: [{ text: "hidden" }] } }),
+      JSON.stringify({ type: "response_item", timestamp: "2026-07-24T00:00:02Z", payload: { type: "function_call", name: "exec_command", arguments: "{\\\"cmd\\\":\\\"secret\\\"}" } }),
+      JSON.stringify({ type: "event_msg", timestamp: "2026-07-24T00:00:03Z", payload: { type: "agent_message", phase: "commentary", message: "Running focused validation." } }),
+    ].join("\n"));
+    expect(await readLatestCodexUserVisibleActivity({ codexHome, sessionId, workingDirectory: "/repo" })).toEqual({
+      content: "Running focused validation.", createdAt: "2026-07-24T00:00:03.000Z",
+    });
+    await rm(codexHome, { recursive: true, force: true });
+  });
   test("groups commentary as working notes before final answers", async () => {
     const root = await mkdtemp(join(tmpdir(), "codex-messages-test-"));
     const filePath = join(root, "rollout.jsonl");
