@@ -28,6 +28,10 @@ export async function readLatestCodexUserVisibleActivity(
   for (const line of content.split("\n")) {
     const record = parseJsonLine(line);
     const event = record ? extractEventMessage(record) : null;
+    if (event?.type === "user_message") {
+      latest = null;
+      continue;
+    }
     if (event?.type === "agent_message" && event.phase === "commentary" && event.content.trim()) {
       latest = { content: event.content.trim(), createdAt: event.createdAt };
     }

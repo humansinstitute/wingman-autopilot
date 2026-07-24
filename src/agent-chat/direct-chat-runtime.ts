@@ -228,7 +228,7 @@ export class AgentDirectChatRuntime {
             intercept.sessionId,
             recoveryPrompt,
             pending.sourceMessageIds,
-            { acceptedAt: pending.createdAt, onPoll: () => { void activity?.publishLatestCommentary(this.deps.processManager); } },
+            { acceptedAt: pending.createdAt, onPoll: () => activity?.publishLatestCommentary(this.deps.processManager) },
           );
           this.turnStore.save({ ...pending, replyBody: recovered.content, state: 'reply_ready', updatedAt: new Date().toISOString() });
           await this.publishTurn(input, intercept, agent, pending.turnId, pending.sourceMessageIds,
@@ -268,7 +268,7 @@ export class AgentDirectChatRuntime {
               updatedAt: new Date().toISOString() });
             void activity?.publish('accepted');
           },
-          onPoll: () => { void activity?.publishLatestCommentary(this.deps.processManager); },
+          onPoll: () => activity?.publishLatestCommentary(this.deps.processManager),
         });
         const body = reply.content;
         this.turnStore.save({ turnId, routingKey, sourceMessageIds, clientRequestId, replyBody: body,

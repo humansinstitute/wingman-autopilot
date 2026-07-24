@@ -44,4 +44,43 @@ describe('Agent activity publisher', () => {
     const unavailable = new AgentActivityPublisher(context, async () => { throw new Error('offline'); });
     await expect(unavailable.publish('failed')).resolves.toBeUndefined();
   });
+
+  test('serializes deliveries so a slower earlier publish cannot overwrite newer commentary', async () => {
+    const delivered: string[] = [];
+    let releaseFirst!: () => void;
+    const firstDelivery = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const publisher = new AgentActivityPublisher(context, async (input) => {
+      if (input.body === 'First commentary') await firstDelivery;
+      delivered.push(input.body ?? input.state);
+      return {};
+    }, 0);
+    const first = publisher.publish('working', 'First commentary');
+    const second = publisher.publish('working', 'Newest commentary');
+    await Promise.resolve();
+    releaseFirst();
+    await Promise.all([first, second]);
+    expect(delivered).toEqual(['First commentary', 'Newest commentary']);
+  });
+
+  test('ignores an older commentary read that completes after a newer poll', async () => {
+    const delivered: string[] = [];
+    let resolveOlder!: (value: any) => void;
+    let reads = 0;
+    const publisher = new AgentActivityPublisher(context, async (input) => {
+      delivered.push(input.body ?? input.state);
+      return {};
+    }, 0, async () => {
+      reads += 1;
+      if (reads === 1) return await new Promise((resolve) => { resolveOlder = resolve; });
+      return { content: 'Newest commentary', createdAt: '2026-07-24T00:00:03.000Z' };
+    });
+    const manager = { getSession: () => ({
+      agent: 'codex', metadata: { nativeAgentSession: { agent: 'codex', sessionId: 'native-1', workingDirectory: '/repo' } },
+    }) } as any;
+    const olderPoll = publisher.publishLatestCommentary(manager);
+    await publisher.publishLatestCommentary(manager);
+    resolveOlder({ content: 'Older commentary', createdAt: '2026-07-24T00:00:02.000Z' });
+    await olderPoll;
+    expect(delivered).toEqual(['Newest commentary']);
+  });
 });

@@ -17,9 +17,34 @@ describe("Codex session message importer", () => {
       JSON.stringify({ type: "response_item", timestamp: "2026-07-24T00:00:01Z", payload: { type: "reasoning", summary: [{ text: "hidden" }] } }),
       JSON.stringify({ type: "response_item", timestamp: "2026-07-24T00:00:02Z", payload: { type: "function_call", name: "exec_command", arguments: "{\\\"cmd\\\":\\\"secret\\\"}" } }),
       JSON.stringify({ type: "event_msg", timestamp: "2026-07-24T00:00:03Z", payload: { type: "agent_message", phase: "commentary", message: "Running focused validation." } }),
+      JSON.stringify({ type: "event_msg", timestamp: "2026-07-24T00:00:04Z", payload: { type: "agent_message", phase: "commentary", message: "Checking the production build." } }),
     ].join("\n"));
     expect(await readLatestCodexUserVisibleActivity({ codexHome, sessionId, workingDirectory: "/repo" })).toEqual({
-      content: "Running focused validation.", createdAt: "2026-07-24T00:00:03.000Z",
+      content: "Checking the production build.", createdAt: "2026-07-24T00:00:04.000Z",
+    });
+    await rm(codexHome, { recursive: true, force: true });
+  });
+
+  test("does not reuse commentary from the preceding turn", async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), "codex-activity-turn-"));
+    const sessionId = "adjacent-turn-session";
+    const sessionDir = join(codexHome, "sessions", "2026", "07", "24");
+    await mkdir(sessionDir, { recursive: true });
+    const filePath = join(sessionDir, `rollout-${sessionId}.jsonl`);
+    await writeFile(filePath, [
+      JSON.stringify({ type: "session_meta", timestamp: "2026-07-24T00:00:00Z", payload: { id: sessionId, cwd: "/repo" } }),
+      JSON.stringify({ type: "event_msg", timestamp: "2026-07-24T00:00:01Z", payload: { type: "user_message", message: "First turn" } }),
+      JSON.stringify({ type: "event_msg", timestamp: "2026-07-24T00:00:02Z", payload: { type: "agent_message", phase: "commentary", message: "Old commentary" } }),
+      JSON.stringify({ type: "event_msg", timestamp: "2026-07-24T00:00:03Z", payload: { type: "agent_message", phase: "final_answer", message: "Done" } }),
+      JSON.stringify({ type: "event_msg", timestamp: "2026-07-24T00:00:04Z", payload: { type: "user_message", message: "Second turn" } }),
+    ].join("\n"));
+    expect(await readLatestCodexUserVisibleActivity({ codexHome, sessionId, workingDirectory: "/repo" })).toBeNull();
+    await writeFile(filePath, `${await Bun.file(filePath).text()}\n${JSON.stringify({
+      type: "event_msg", timestamp: "2026-07-24T00:00:05Z",
+      payload: { type: "agent_message", phase: "commentary", message: "New commentary" },
+    })}`);
+    expect(await readLatestCodexUserVisibleActivity({ codexHome, sessionId, workingDirectory: "/repo" })).toEqual({
+      content: "New commentary", createdAt: "2026-07-24T00:00:05.000Z",
     });
     await rm(codexHome, { recursive: true, force: true });
   });

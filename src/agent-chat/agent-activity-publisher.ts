@@ -33,17 +33,30 @@ export function normalizeUserVisibleActivity(value: string, maxLength = 4_000): 
 export class AgentActivityPublisher {
   private sequence: number;
   private lastBody = '';
+  private latestCommentaryAt = Number.NEGATIVE_INFINITY;
   private terminal = false;
+  private publishQueue = Promise.resolve();
 
   constructor(
     private readonly context: AgentActivityContext,
     private readonly deliver: typeof upsertFlightDeckPgAgentActivity = upsertFlightDeckPgAgentActivity,
     sequenceBase = Date.now() * 1_000,
+    private readonly readLatestActivity = readLatestCodexUserVisibleActivity,
   ) {
     this.sequence = sequenceBase;
   }
 
   async publish(state: AgentActivityState, body?: string): Promise<void> {
+    return this.enqueuePublish(() => this.publishNow(state, body));
+  }
+
+  private enqueuePublish(operation: () => Promise<void>): Promise<void> {
+    const queued = this.publishQueue.then(operation, operation);
+    this.publishQueue = queued.catch(() => undefined);
+    return queued;
+  }
+
+  private async publishNow(state: AgentActivityState, body?: string): Promise<void> {
     if (this.terminal) return;
     const normalized = body ? normalizeUserVisibleActivity(body) : null;
     if (state === 'working' && (!normalized || normalized === this.lastBody)) return;
@@ -85,10 +98,16 @@ export class AgentActivityPublisher {
     const session = manager.getSession(this.context.sessionId);
     const native = session?.metadata?.nativeAgentSession;
     if (session?.agent !== 'codex' || native?.agent !== 'codex' || !native.sessionId || !native.workingDirectory) return;
-    const activity = await readLatestCodexUserVisibleActivity({
+    const activity = await this.readLatestActivity({
       sessionId: native.sessionId,
       workingDirectory: native.workingDirectory,
     }).catch(() => null);
-    if (activity) await this.publish('working', activity.content);
+    if (!activity) return;
+    const createdAt = Date.parse(activity.createdAt);
+    await this.enqueuePublish(async () => {
+      if (Number.isFinite(createdAt) && createdAt <= this.latestCommentaryAt) return;
+      if (Number.isFinite(createdAt)) this.latestCommentaryAt = createdAt;
+      await this.publishNow('working', activity.content);
+    });
   }
 }
