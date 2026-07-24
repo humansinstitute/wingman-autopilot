@@ -39,6 +39,7 @@ interface DirectChatRuntimeDependencies {
   turnStore?: DirectChatTurnStore;
   publish?: typeof createFlightDeckPgChannelMessage;
   createActivityPublisher?: (context: AgentActivityContext) => AgentActivityPublisher;
+  log?: Pick<Console, 'error' | 'warn'>;
 }
 
 interface MessageRevisionDispatch {
@@ -91,11 +92,13 @@ export class AgentDirectChatRuntime {
   private readonly turnStore: DirectChatTurnStore;
   private readonly publish: typeof createFlightDeckPgChannelMessage;
   private readonly createActivityPublisher: (context: AgentActivityContext) => AgentActivityPublisher;
+  private readonly log: Pick<Console, 'error' | 'warn'>;
 
   constructor(private readonly deps: DirectChatRuntimeDependencies) {
     this.turnStore = deps.turnStore ?? directChatTurnStore;
     this.publish = deps.publish ?? createFlightDeckPgChannelMessage;
     this.createActivityPublisher = deps.createActivityPublisher ?? ((context) => new AgentActivityPublisher(context));
+    this.log = deps.log ?? console;
   }
 
   async handle(input: DirectChatRuntimeInput): Promise<{ handled: boolean; reason: string }> {
@@ -153,7 +156,11 @@ export class AgentDirectChatRuntime {
   recover(input: DirectChatRuntimeInput, routingKey: string): { handled: boolean; reason: string } {
     const pending = this.turnStore.getPending(routingKey);
     const intercept = this.deps.interceptStore.getByRoutingKey(routingKey);
-    if (!pending || !intercept || (pending.state !== 'accepted' && pending.state !== 'reply_ready')) {
+    const hasRecoverableTurn = pending?.state === 'accepted' || pending?.state === 'reply_ready';
+    const hasPendingMessages = Boolean(intercept?.lastMessageIdSeen
+      && intercept.pendingMessageCount > 0
+      && (intercept.state === 'pending' || intercept.state === 'active' || intercept.state === 'archived'));
+    if (!intercept || (!hasRecoverableTurn && !hasPendingMessages)) {
       return { handled: false, reason: 'no_recoverable_turn' };
     }
     const workspaceIdentity = input.subscription.workspaceServiceNpub?.trim() || input.subscription.workspaceOwnerNpub;
@@ -165,7 +172,7 @@ export class AgentDirectChatRuntime {
     if (!resolvedAgent.directChat?.enabled) return { handled: false, reason: 'recovery_agent_disabled' };
     const contextPrompt = channelDirectChatConfig(input.channel).contextPrompt || channelLegacyBasePrompt(input.channel);
     this.enqueue(routingKey, resolvedAgent, contextPrompt, input);
-    return { handled: true, reason: 'direct_chat_recovery_queued' };
+    return { handled: true, reason: hasRecoverableTurn ? 'direct_chat_recovery_queued' : 'direct_chat_pending_replay_queued' };
   }
 
   hasRecoverableTurn(routingKey: string): boolean {
@@ -184,7 +191,13 @@ export class AgentDirectChatRuntime {
     if (this.running.has(routingKey)) return;
     const work = this.run(routingKey, agent, contextPrompt).finally(() => this.running.delete(routingKey));
     this.running.set(routingKey, work);
-    void work.catch(() => undefined);
+    void work.catch((error) => {
+      this.log.error('[agent-chat] direct chat queue failed', {
+        routingKey,
+        sessionId: this.deps.interceptStore.getByRoutingKey(routingKey)?.sessionId ?? null,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
   }
 
   private async run(routingKey: string, agent: AgentDefinitionRecord, contextPrompt: string): Promise<void> {
@@ -280,6 +293,13 @@ export class AgentDirectChatRuntime {
         const status = Number((error as { status?: unknown })?.status ?? 0);
         this.deps.interceptStore.save({ ...intercept, state: status === 401 || status === 403 ? 'blocked_auth' : 'pending',
           lastDecision: 'failed', lastActivityAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+        this.log.error('[agent-chat] direct chat turn failed', {
+          routingKey,
+          sessionId: intercept.sessionId,
+          sessionGeneration: intercept.sessionGeneration,
+          pendingMessageCount: intercept.pendingMessageCount,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
   }
@@ -322,7 +342,14 @@ export class AgentDirectChatRuntime {
         const launch = resolveNativeResumeLaunch(current, isAgentType, subscription.managedByNpub);
         const resumed = await this.deps.processManager.createSession(launch.agent, launch.workingDirectory, launch.name, launch.origin, undefined, launch.ownerNpub, launch.metadata, current.model);
         return { session: resumed, bootstrap: false, generation: intercept.sessionGeneration ?? 1, previousSessionIds: intercept.previousSessionIds ?? [], recovery: null };
-      } catch {}
+      } catch (error) {
+        this.log.warn('[agent-chat] native direct chat resume failed; creating continuity replacement', {
+          routingKey: intercept.routingKey,
+          sessionId: current.id,
+          sessionGeneration: intercept.sessionGeneration,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
     const previous = intercept.sessionId;
     const generation = previous ? (intercept.sessionGeneration ?? 1) + 1 : 1;

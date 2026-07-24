@@ -17,6 +17,7 @@ function fixture(options: {
   includeWorkingMessage?: boolean;
   finalContent?: string;
   channel?: Record<string, unknown>;
+  failNativeResume?: boolean;
 } = {}) {
   const db = join(tmpdir(), `agent-direct-${randomUUID()}.sqlite`);
   const agentStore = new AgentDefinitionStore(db);
@@ -38,6 +39,7 @@ function fixture(options: {
     }),
     createSession: async (...args: any[]) => {
       creates.push(args);
+      if (options.failNativeResume && args[3]?.type === 'native-resume') throw new Error('native session no longer resumable');
       const metadata = { ...(args[6] ?? {}), nativeAgentSession: args[6]?.nativeAgentSession ?? { agent: args[0], sessionId: `native-${creates.length}`, workingDirectory: args[1], capturedAt: new Date().toISOString(), source: 'manual' } };
       const session = { id: `session-${creates.length}`, agent: args[0], workingDirectory: args[1], name: args[2], status: 'running', startedAt: new Date().toISOString(), port: 1, command: [], logs: [], metadata, model: args[7], messages: [] };
       sessions.set(session.id, session); return session;
@@ -273,6 +275,52 @@ describe('Agent Direct Chat runtime', () => {
     f.sessions.delete('session-1'); const m2 = f.message('m2', 'recover', true); await f.handle([m1, m2], 'm2'); await f.runtime.waitForIdle();
     const state = f.interceptStore.listAll()[0]!; expect(state.sessionGeneration).toBe(2); expect(state.previousSessionIds).toEqual(['session-1']);
     expect(f.prompts[1]).toContain('CONTINUITY RECOVERY');
+  });
+
+  test('falls back to a generation-two continuity replacement when native resume fails', async () => {
+    const f = fixture({ failNativeResume: true });
+    const m1 = f.message('m1', 'hello', true); await f.handle([m1], 'm1'); await f.runtime.waitForIdle();
+    f.sessions.get('session-1').status = 'stopped';
+    const m2 = f.message('m2', 'recover', true); await f.handle([m1, m2], 'm2'); await f.runtime.waitForIdle();
+    const state = f.interceptStore.listAll()[0]!;
+    expect(f.creates).toHaveLength(3); expect(f.creates[1][3].type).toBe('native-resume'); expect(f.creates[2][3].type).toBe('agent-chat');
+    expect(state.sessionId).toBe('session-3'); expect(state.sessionGeneration).toBe(2); expect(state.previousSessionIds).toEqual(['session-1']);
+    expect(f.prompts[1]).toContain('CONTINUITY RECOVERY');
+  });
+
+  test('replays multiple pending messages once from an archived production-shaped binding', async () => {
+    const f = fixture();
+    const original = f.message('original-message', '@Rick original', true);
+    const firstPending = f.message('c67ebcc9-865d-49b7-b915-fed9bc704079', 'first pending message', true);
+    const secondPending = f.message('cd044f5b-d935-487e-ba78-006d9400e5a1', 'second pending message', true);
+    original.created_at = '2026-07-24T00:00:00.000Z';
+    firstPending.created_at = '2026-07-24T00:01:00.000Z';
+    secondPending.created_at = '2026-07-24T00:02:00.000Z';
+    const routingKey = buildDirectChatRoutingKey({ towerServiceNpub: 'npub1tower', workspaceId: 'workspace-1',
+      channelId: 'channel-1', threadId: 'thread-1', agentNpub: 'npub1rick' });
+    const now = new Date().toISOString();
+    let seeded = f.interceptStore.upsertMessage({ routingKey, subscriptionId: 'sub1', agentId: 'rick', workspaceOwnerNpub: 'npub1workspace',
+      sourceAppNpub: 'npub1app', towerServiceNpub: 'npub1tower', workspaceId: 'workspace-1', channelId: 'channel-1', threadId: 'thread-1',
+      botNpub: 'npub1rick', messageId: firstPending.id, eventCursor: 'cursor-first', at: now }).record;
+    seeded = f.interceptStore.upsertMessage({ routingKey, subscriptionId: 'sub1', agentId: 'rick', workspaceOwnerNpub: 'npub1workspace',
+      sourceAppNpub: 'npub1app', towerServiceNpub: 'npub1tower', workspaceId: 'workspace-1', channelId: 'channel-1', threadId: 'thread-1',
+      botNpub: 'npub1rick', messageId: secondPending.id, eventCursor: 'cursor-second', at: now }).record;
+    f.interceptStore.save({ ...seeded, sessionId: '27d5c647-9312-4a16-a0e4-74cffb6837b6', sessionGeneration: 1,
+      state: 'archived', lastDecision: 'failed', lastHumanMessageIdDelivered: original.id, pendingMessageCount: 2 });
+
+    const replayInput = { subscription: f.subscription, botIdentity: f.botIdentity, channel: f.channel,
+      messages: [original, firstPending, secondPending], event: { entity_id: secondPending.id, channel_id: 'channel-1', cursor: 'cursor-second' } };
+    expect(f.runtime.recover(replayInput, routingKey)).toEqual({ handled: true, reason: 'direct_chat_pending_replay_queued' });
+    expect(f.runtime.recover(replayInput, routingKey)).toEqual({ handled: true, reason: 'direct_chat_pending_replay_queued' });
+    await f.runtime.waitForIdle();
+
+    const state = f.interceptStore.getByRoutingKey(routingKey)!;
+    expect(f.creates).toHaveLength(1); expect(state.sessionGeneration).toBe(2);
+    expect(state.previousSessionIds).toEqual(['27d5c647-9312-4a16-a0e4-74cffb6837b6']);
+    expect(f.prompts).toHaveLength(1); expect(f.published).toHaveLength(1);
+    expect(f.prompts[0]).toContain('CONTINUITY RECOVERY');
+    expect(f.published[0].metadata.source_message_ids).toEqual([firstPending.id, secondPending.id]);
+    expect(state.lastHumanMessageIdDelivered).toBe(secondPending.id); expect(state.pendingMessageCount).toBe(0);
   });
 
   test('queues quick replies without overlapping turns and preserves order', async () => {

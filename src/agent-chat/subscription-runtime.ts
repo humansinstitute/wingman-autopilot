@@ -5461,6 +5461,7 @@ export class WorkspaceSubscriptionManager {
     return intercept.state === 'idle'
       || intercept.state === 'pending'
       || intercept.state === 'active'
+      || (intercept.state === 'archived' && intercept.pendingMessageCount > 0)
       || intercept.state === 'interrupting'
       || intercept.state === 'interrupt_failed';
   }
