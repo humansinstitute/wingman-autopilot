@@ -1,18 +1,58 @@
-import { normaliseSessionTags } from "./session-metadata";
-
 export const AUTOSESSION_STALE_MINUTES = 63;
+
+const LEGACY_AUTO_ORIGIN_TYPES = new Set([
+  "scheduler",
+  "nostr",
+  "mg-task",
+  "file-watcher",
+  "agent-session",
+]);
+
+const PROGRAMMATIC_ORIGIN_TYPES = new Set(["cli", "delegate-bot"]);
 
 export interface AutosessionCleanupCandidate {
   id?: string;
   lastUpdatedAt?: string | null;
+  npub?: string | null;
+  ownerNpub?: string | null;
+  origin?: { type?: string | null } | null;
   metadata?: {
-    tags?: unknown;
+    AGENT?: boolean;
+    ownerNpub?: string | null;
+    createdByNpub?: string | null;
+    role?: string | null;
+    bindingType?: string | null;
+    routedBy?: string | null;
   } | null;
 }
 
 export interface AutosessionCleanupDecision {
   eligible: boolean;
-  reason: "eligible" | "self" | "not-autosession" | "missing-last-updated-at" | "not-stale";
+  reason: "eligible" | "self" | "pete-started" | "missing-last-updated-at" | "not-stale";
+}
+
+const normaliseText = (value: unknown): string => typeof value === "string" ? value.trim() : "";
+
+export function isAutomaticallyStartedSession(session: AutosessionCleanupCandidate): boolean {
+  const metadata = session.metadata ?? {};
+  const originType = normaliseText(session.origin?.type).toLowerCase();
+  const ownerNpub = normaliseText(session.ownerNpub)
+    || normaliseText(metadata.ownerNpub)
+    || normaliseText(session.npub);
+  const createdByNpub = normaliseText(metadata.createdByNpub);
+  const createdByDifferentNpub = Boolean(ownerNpub && createdByNpub && ownerNpub !== createdByNpub);
+
+  return metadata.AGENT === true
+    || createdByDifferentNpub
+    || PROGRAMMATIC_ORIGIN_TYPES.has(originType)
+    || LEGACY_AUTO_ORIGIN_TYPES.has(originType)
+    || originType === "agent-work"
+    || originType === "agent-chat"
+    || metadata.role === "agent-work"
+    || metadata.role === "agent-chat"
+    || metadata.bindingType === "task"
+    || metadata.bindingType === "flow_run"
+    || metadata.routedBy === "agent-chat";
 }
 
 export function assessAutosessionCleanupCandidate(
@@ -24,9 +64,8 @@ export function assessAutosessionCleanupCandidate(
     return { eligible: false, reason: "self" };
   }
 
-  const tags = normaliseSessionTags(session.metadata?.tags) ?? [];
-  if (!tags.includes("autosession")) {
-    return { eligible: false, reason: "not-autosession" };
+  if (!isAutomaticallyStartedSession(session)) {
+    return { eligible: false, reason: "pete-started" };
   }
 
   if (typeof session.lastUpdatedAt !== "string" || !session.lastUpdatedAt.trim()) {

@@ -3,12 +3,12 @@
 import { cleanupStaleAutosessions, type AutosessionCleanupCandidate } from "../src/sessions/autosession-cleanup";
 import { buildConfig, parseCommonFlags, requestJson, requestJsonBotCrypto, resolveBaseUrl } from "./lib/auth";
 
-const USAGE = `Stop live sessions tagged autosession when output-based lastUpdatedAt is more than 63 minutes old.
+const USAGE = `Stop automatically started live sessions when output-based lastUpdatedAt is more than 63 minutes old.
 
 Usage:
   bun clis/cleanup-autosessions.ts [--url <url>] [--key <nsec|hex> | --bot-crypto] [--json]
 
-The executing session is always excluded. Missing/invalid timestamps and the exact 63-minute boundary are not eligible.`;
+Automatically started uses the same explicit provenance as Home > Auto Sessions: metadata.AGENT, programmatic/legacy origins, dispatch metadata, or creator/owner mismatch. The executing session is always excluded. Missing/invalid timestamps and the exact 63-minute boundary are not eligible.`;
 
 async function run() {
   const { args, urlInput, keyInput, asJson, help, botCrypto } = parseCommonFlags(Bun.argv.slice(2));
