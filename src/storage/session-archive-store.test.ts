@@ -21,6 +21,34 @@ afterEach(() => {
 });
 
 describe("SessionArchiveStore", () => {
+  test("projects nullable output timestamps for archived sessions", () => {
+    const store = createStore();
+    const base = {
+      agent: "codex",
+      name: "Output projection",
+      npub: "npub1user",
+      workingDirectory: "/tmp/wingmen",
+      startedAt: "2026-07-24T01:00:00.000Z",
+      origin: null,
+      metadata: { AGENT: true, billingMode: "subscription" as const },
+    };
+    store.archiveSession({ id: "empty", ...base, messages: [] });
+    store.archiveSession({
+      id: "output",
+      ...base,
+      messages: [
+        { id: "1", role: "agent", content: "Done", createdAt: "2026-07-24T01:02:00+00:00" },
+        { id: "2", role: "user", content: "Later prompt", createdAt: "2026-07-24T01:03:00.000Z" },
+        { id: "3", role: "agent-working", content: "More thought", createdAt: "2026-07-24T01:04:00.000Z" },
+      ],
+    });
+
+    expect(store.getArchivedSession("empty")?.lastUpdatedAt).toBeNull();
+    expect(store.getArchivedSession("output")?.lastUpdatedAt).toBe("2026-07-24T01:04:00.000Z");
+    expect(store.listArchivedSessions().find((session) => session.id === "output")?.lastUpdatedAt)
+      .toBe("2026-07-24T01:04:00.000Z");
+  });
+
   test("filters archived sessions by metadata tags", () => {
     const store = createStore();
     store.archiveSession({

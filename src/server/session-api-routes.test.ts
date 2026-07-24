@@ -775,6 +775,7 @@ describe("handleSessionApi", () => {
       model: null,
       targetFile: null,
       tabOrder: null,
+      lastUpdatedAt: "2026-07-24T01:01:00.000Z",
       metadata: {
         AGENT: true,
         billingMode: "subscription",
@@ -811,6 +812,7 @@ describe("handleSessionApi", () => {
       port: 3700,
       pid: 1234,
       startedAt: baseSession.startedAt,
+      lastUpdatedAt: "2026-07-24T01:01:00.000Z",
       command: ["codex"],
       workingDirectory: "/tmp/project",
       origin: null,
@@ -842,6 +844,7 @@ describe("handleSessionApi", () => {
       model: null,
       targetFile: null,
       tabOrder: null,
+      lastUpdatedAt: null,
       metadata: {
         AGENT: true,
         billingMode: "subscription",
@@ -896,6 +899,7 @@ describe("handleSessionApi", () => {
       model: null,
       targetFile: null,
       tabOrder: null,
+      lastUpdatedAt: null,
       metadata: {
         AGENT: true,
         billingMode: "subscription",
@@ -997,6 +1001,7 @@ describe("handleSessionApi", () => {
       model: null,
       targetFile: null,
       tabOrder: null,
+      lastUpdatedAt: null,
       metadata: {
         AGENT: true,
         billingMode: "subscription",

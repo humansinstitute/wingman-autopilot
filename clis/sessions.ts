@@ -96,6 +96,7 @@ interface Session {
   status?: string;
   directory?: string;
   created?: string;
+  lastUpdatedAt?: string | null;
   [key: string]: unknown;
 }
 

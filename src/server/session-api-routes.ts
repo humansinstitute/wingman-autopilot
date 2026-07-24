@@ -535,6 +535,7 @@ const serializeStoredSession = (
     port: storedSession.port,
     pid: storedSession.pid,
     startedAt: storedSession.startedAt,
+    lastUpdatedAt: storedSession.lastUpdatedAt,
     command: parseStoredCommand(storedSession.command) ?? [],
     workingDirectory: storedSession.workingDirectory,
     origin: storedSession.origin,

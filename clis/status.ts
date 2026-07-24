@@ -53,6 +53,7 @@ interface SessionInfo {
   agent?: string;
   status?: string;
   directory?: string;
+  lastUpdatedAt?: string | null;
   [key: string]: unknown;
 }
 

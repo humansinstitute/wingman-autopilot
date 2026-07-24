@@ -1000,6 +1000,7 @@ process.on("beforeExit", () => {
 
 const serializeSession = (session: SessionSnapshot) => ({
   ...session,
+  lastUpdatedAt: messageStore.getSession(session.id)?.lastUpdatedAt ?? null,
   ownerNpub: resolveSessionOwnerNpub(session.npub ?? null, session.metadata),
   agentRuntimeStatus: session.agentRuntimeStatus ?? null,
   identityAlias: generateIdentityAlias(resolveSessionOwnerNpub(session.npub ?? null, session.metadata)),

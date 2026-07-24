@@ -11,6 +11,7 @@ const SESSION_TABLE_COLUMNS = Object.freeze([
   { key: "actions", label: "Actions" },
   { key: "name", label: "Name" },
   { key: "started", label: "Started" },
+  { key: "updated", label: "Last updated" },
   { key: "directory", label: "Directory" },
   { key: "agent", label: "Agent" },
   { key: "status", label: "Status" },
@@ -122,6 +123,8 @@ function getSessionSortValue(session, key, deps) {
       return getStatusSortValue(session);
     case "started":
       return resolveTimestamp(session?.startedAt) ?? 0;
+    case "updated":
+      return resolveTimestamp(session?.lastUpdatedAt) ?? 0;
     case "directory":
       return getSessionDirectoryValue(session, defaultDirectory);
     default:
@@ -285,6 +288,7 @@ export function createSessionTable(orderedSessions, deps) {
         <button type="button" class="wm-link-button session-name-edit" data-action="rename-session">Edit</button>
       </td>
       <td title="${escapeHtml(session.startedAt ?? "")}">${escapeHtml(formatSessionStartedAt(session.startedAt))}</td>
+      <td title="${escapeHtml(session.lastUpdatedAt ?? "")}">${escapeHtml(formatSessionStartedAt(session.lastUpdatedAt))}</td>
       <td class="directory-cell"></td>
       <td>${escapeHtml(session.agent)}</td>
       <td class="session-status-cell">

@@ -25,6 +25,7 @@ describe("live agents helpers", () => {
       port: 3701,
       pid: 1111,
       startedAt: "2026-04-09T09:30:00.000Z",
+      lastUpdatedAt: "2026-04-09T10:30:00.000Z",
       workingDirectory: "/tmp/bravo",
     },
     {
@@ -75,6 +76,15 @@ describe("live agents helpers", () => {
       "session-1",
       "session-3",
     ]);
+  });
+
+  test("sorts by output-based last updated timestamp", () => {
+    const ordered = sortSessions(
+      sessions,
+      { key: "updated", direction: "desc" },
+      deps,
+    );
+    expect(ordered[0]?.id).toBe("session-1");
   });
 
   test("toggles sort direction for the active column", () => {
@@ -128,6 +138,8 @@ describe("live agents helpers", () => {
 
     expect(archiveSource).toContain('pendingAction === "resume-native" ? "Resuming..." : "Resume"');
     expect(archiveSource).toContain("Resume agent session");
+    expect(liveAgentsSource).toContain('addDetail("Last updated", formatSessionStartedAt(session.lastUpdatedAt));');
+    expect(archiveSource).toContain('`Updated ${formatRelativeTime(session.lastUpdatedAt)}`');
     expect(archiveSource).not.toContain("Resume Native");
     expect(archiveSource).not.toContain("Resume native agent session");
   });

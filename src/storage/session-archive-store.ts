@@ -9,6 +9,7 @@ import {
   type SessionMetadata,
   type SessionMetadataInput,
 } from "../sessions/session-metadata";
+import { resolveLastSessionOutputAt } from "../sessions/session-output-timestamp";
 
 export interface ArchivedSession {
   id: string;
@@ -19,6 +20,8 @@ export interface ArchivedSession {
   startedAt: string;
   archivedAt: string;
   messageCount: number;
+  /** ISO timestamp of the newest archived assistant or reasoning output. */
+  lastUpdatedAt: string | null;
   origin: SessionOrigin | null;
   metadata: SessionMetadata;
 }
@@ -186,6 +189,7 @@ export class SessionArchiveStore {
         working_directory TEXT,
         started_at TEXT NOT NULL,
         archived_at TEXT NOT NULL,
+        last_output_at TEXT,
         origin TEXT,
         agent_flag INTEGER NOT NULL DEFAULT 0,
         billing_mode TEXT NOT NULL DEFAULT 'subscription',
@@ -217,17 +221,35 @@ export class SessionArchiveStore {
     if (!hasMetadataJson) {
       this.db.exec("ALTER TABLE archived_sessions ADD COLUMN metadata_json TEXT");
     }
+    const hasLastOutputAt = sessionColumns.some((column) => column.name === "last_output_at");
+    if (!hasLastOutputAt) {
+      this.db.exec("ALTER TABLE archived_sessions ADD COLUMN last_output_at TEXT");
+    }
+    this.db.exec(`
+      UPDATE archived_sessions
+      SET last_output_at = (
+        SELECT archived_messages.created_at
+        FROM archived_messages
+        WHERE archived_messages.session_id = archived_sessions.id
+          AND lower(archived_messages.role) IN ('assistant', 'agent', 'agent-working')
+          AND datetime(archived_messages.created_at) IS NOT NULL
+        ORDER BY julianday(archived_messages.created_at) DESC, archived_messages.rowid DESC
+        LIMIT 1
+      )
+      WHERE last_output_at IS NULL
+    `);
   }
 
   archiveSession(input: ArchiveSessionInput): void {
     const archivedAt = new Date().toISOString();
+    const lastUpdatedAt = resolveLastSessionOutputAt(input.messages);
 
     const tx = this.db.transaction(() => {
       // Insert archived session
       this.db.run(
         `INSERT OR REPLACE INTO archived_sessions
-         (id, agent, name, npub, working_directory, started_at, archived_at, origin, agent_flag, billing_mode, metadata_json)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`,
+         (id, agent, name, npub, working_directory, started_at, archived_at, last_output_at, origin, agent_flag, billing_mode, metadata_json)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)`,
         [
           input.id,
           input.agent,
@@ -236,6 +258,7 @@ export class SessionArchiveStore {
           input.workingDirectory,
           input.startedAt,
           archivedAt,
+          lastUpdatedAt,
           input.origin ? JSON.stringify(input.origin) : null,
           input.metadata.AGENT ? 1 : 0,
           input.metadata.billingMode === "credits" ? "credits" : "subscription",
@@ -278,6 +301,7 @@ export class SessionArchiveStore {
         s.working_directory as workingDirectory,
         s.started_at as startedAt,
         s.archived_at as archivedAt,
+        s.last_output_at as lastUpdatedAt,
         s.origin,
         s.agent_flag as agentFlag,
         s.billing_mode as billingMode,
@@ -344,6 +368,7 @@ export class SessionArchiveStore {
         s.working_directory as workingDirectory,
         s.started_at as startedAt,
         s.archived_at as archivedAt,
+        s.last_output_at as lastUpdatedAt,
         s.origin,
         s.agent_flag as agentFlag,
         s.billing_mode as billingMode,

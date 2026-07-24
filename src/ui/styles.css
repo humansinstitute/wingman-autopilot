@@ -4787,7 +4787,8 @@ body[data-live-header-collapsed="true"]:has(#app[data-route="live"]) .wm-live-dr
   color: var(--text-secondary);
 }
 
-.session-table .session-col-started {
+.session-table .session-col-started,
+.session-table .session-col-updated {
   width: 12rem;
 }
 

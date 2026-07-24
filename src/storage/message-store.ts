@@ -11,6 +11,7 @@ import {
   type SessionMetadata,
   type SessionMetadataInput,
 } from "../sessions/session-metadata";
+import { resolveLastSessionOutputAt } from "../sessions/session-output-timestamp";
 
 export interface StoredMessage {
   id: string;
@@ -97,6 +98,8 @@ export interface StoredSessionRecord {
   targetFile: string | null;
   /** Explicit 1-based ordering for live session tabs */
   tabOrder: number | null;
+  /** ISO timestamp of the newest persisted assistant or reasoning output. */
+  lastUpdatedAt: string | null;
   /** Session metadata flags */
   metadata: SessionMetadata;
 }
@@ -163,6 +166,7 @@ export class MessageStore {
   private readonly insertMessage: ReturnType<MessageStore["prepareInsertMessage"]>;
   private readonly listMessages: ReturnType<MessageStore["prepareListMessages"]>;
   private readonly countMessages: ReturnType<MessageStore["prepareCountMessages"]>;
+  private readonly updateLastOutputAt: ReturnType<MessageStore["prepareUpdateLastOutputAt"]>;
   private readonly upsertMessageSpeechAttachment: ReturnType<MessageStore["prepareUpsertMessageSpeechAttachment"]>;
   private readonly getMessageSpeechAttachmentStmt: ReturnType<MessageStore["prepareGetMessageSpeechAttachment"]>;
 
@@ -180,6 +184,7 @@ export class MessageStore {
     this.insertMessage = this.prepareInsertMessage();
     this.listMessages = this.prepareListMessages();
     this.countMessages = this.prepareCountMessages();
+    this.updateLastOutputAt = this.prepareUpdateLastOutputAt();
     this.upsertMessageSpeechAttachment = this.prepareUpsertMessageSpeechAttachment();
     this.getMessageSpeechAttachmentStmt = this.prepareGetMessageSpeechAttachment();
   }
@@ -228,6 +233,7 @@ export class MessageStore {
   }
 
   replaceMessages(sessionId: string, messages: ReplaceMessageInput[]) {
+    const lastUpdatedAt = resolveLastSessionOutputAt(messages);
     const tx = this.db.transaction(() => {
       this.clearMessages.run(sessionId);
       for (const message of messages) {
@@ -240,6 +246,7 @@ export class MessageStore {
         const createdAt = message.createdAt ?? new Date().toISOString();
         this.insertMessage.run(randomUUID(), sessionId, role || "assistant", content, createdAt);
       }
+      this.updateLastOutputAt.run(lastUpdatedAt, sessionId);
     });
     tx();
   }
@@ -342,6 +349,7 @@ export class MessageStore {
         model,
         target_file as targetFile,
         tab_order as tabOrder,
+        last_output_at as lastUpdatedAt,
         agent_flag as agentFlag,
         billing_mode as billingMode,
         metadata_json as metadataJson
@@ -405,6 +413,7 @@ export class MessageStore {
         model,
         target_file as targetFile,
         tab_order as tabOrder,
+        last_output_at as lastUpdatedAt,
         agent_flag as agentFlag,
         billing_mode as billingMode,
         metadata_json as metadataJson
@@ -503,9 +512,24 @@ export class MessageStore {
     ensureColumn("model", "TEXT");
     ensureColumn("target_file", "TEXT");
     ensureColumn("tab_order", "INTEGER");
+    ensureColumn("last_output_at", "TEXT");
     ensureColumn("agent_flag", "INTEGER NOT NULL DEFAULT 0");
     ensureColumn("billing_mode", "TEXT NOT NULL DEFAULT 'subscription'");
     ensureColumn("metadata_json", "TEXT");
+
+    this.db.exec(`
+      UPDATE sessions
+      SET last_output_at = (
+        SELECT messages.created_at
+        FROM messages
+        WHERE messages.session_id = sessions.id
+          AND lower(messages.role) IN ('assistant', 'agent', 'agent-working')
+          AND datetime(messages.created_at) IS NOT NULL
+        ORDER BY julianday(messages.created_at) DESC, messages.rowid DESC
+        LIMIT 1
+      )
+      WHERE last_output_at IS NULL
+    `);
   }
 
   private ensureMetadataColumn() {
@@ -569,6 +593,7 @@ export class MessageStore {
          model,
          target_file as targetFile,
          tab_order as tabOrder,
+         last_output_at as lastUpdatedAt,
          agent_flag as agentFlag,
          billing_mode as billingMode,
          metadata_json as metadataJson
@@ -617,6 +642,14 @@ export class MessageStore {
       `SELECT COUNT(1) as count
        FROM messages
        WHERE session_id = ?1`,
+    );
+  }
+
+  private prepareUpdateLastOutputAt() {
+    return this.db.prepare(
+      `UPDATE sessions
+       SET last_output_at = ?1
+       WHERE id = ?2`,
     );
   }
 

@@ -303,8 +303,10 @@ export function createArchiveComponent({
 
       const itemTime = document.createElement("span");
       itemTime.className = "wm-home-archive-item-time";
-      itemTime.textContent = formatRelativeTime(session.archivedAt);
-      itemTime.title = session.archivedAt ? new Date(session.archivedAt).toLocaleString() : "";
+      itemTime.textContent = `Updated ${formatRelativeTime(session.lastUpdatedAt)}`;
+      itemTime.title = session.lastUpdatedAt
+        ? `Last updated ${new Date(session.lastUpdatedAt).toLocaleString()}`
+        : "No session output yet";
 
       const itemMessages = document.createElement("span");
       itemMessages.className = "wm-home-archive-item-messages";
@@ -492,6 +494,7 @@ export function createArchiveViewDialog({ getConfig } = {}) {
       ["Agent", session.agent],
       ["Directory", session.workingDirectory || "-"],
       ["Started", session.startedAt ? new Date(session.startedAt).toLocaleString() : "-"],
+      ["Last updated", session.lastUpdatedAt ? new Date(session.lastUpdatedAt).toLocaleString() : "-"],
       ["Archived", session.archivedAt ? new Date(session.archivedAt).toLocaleString() : "-"],
       ["Tags", Array.isArray(session.metadata?.tags) && session.metadata.tags.length > 0 ? session.metadata.tags.join(", ") : "-"],
     ];

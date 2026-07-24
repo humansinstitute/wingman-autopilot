@@ -183,6 +183,7 @@ function createSessionCards(orderedSessions, deps) {
 
     const directoryValue = getSessionDirectoryValue(session, state.config?.defaultDirectory);
     addDetail("Started", formatSessionStartedAt(session.startedAt));
+    addDetail("Last updated", formatSessionStartedAt(session.lastUpdatedAt));
     addDetail("Directory", formatSessionDirectoryDisplay(directoryValue), directoryValue);
     addDetail("Agent", session.agent);
     card.append(details);
