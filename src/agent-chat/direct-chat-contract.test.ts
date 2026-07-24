@@ -61,11 +61,17 @@ describe('Agent Direct Chat contract', () => {
     expect(bootstrap).toContain('do not add a wrapper or envelope');
     expect(bootstrap).toContain('or enclose the whole response in a code fence');
     expect(bootstrap).not.toContain('FLIGHTDECK_REPLY_BEGIN');
-    const followUp = buildDirectChatFollowUpPrompt('route', 't1', [messages[1]!]);
+    const followUp = buildDirectChatFollowUpPrompt({ routingKey: 'route', threadId: 't1', history: messages, actionableMessages: [messages[1]!] });
     expect(followUp).toContain('flightdeck_agent_direct_follow_up_v1');
     expect(followUp).toContain('polished response using GitHub-Flavored Markdown');
     expect(followUp).toContain('published verbatim to Flight Deck');
     expect(followUp).not.toContain('FLIGHTDECK_REPLY_BEGIN');
+    const parsedFollowUp = JSON.parse(followUp);
+    expect(parsedFollowUp.thread_history.map((message: any) => message.message_id)).toEqual(['m1', 'm2', 'a1']);
+    expect(parsedFollowUp.actionable_messages.map((message: any) => message.message_id)).toEqual(['m2']);
+    expect(parsedFollowUp.thread_history[0].mentions[0]).toMatchObject({ type: 'agent', npub: 'npub1rick', label: 'Rick' });
+    expect(parsedFollowUp.history_semantics).toContain('context only');
+    expect(parsedFollowUp.actionable_semantics).toContain('Only these newly eligible human messages');
   });
 
   test('derives stable turn and publication ids', () => {

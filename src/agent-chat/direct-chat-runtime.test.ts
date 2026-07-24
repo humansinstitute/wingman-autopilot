@@ -23,6 +23,7 @@ function fixture(options: {
   const turnStore = new DirectChatTurnStore(db);
   const sessions = new Map<string, any>();
   const prompts: string[] = [];
+  const captures: string[] = [];
   const creates: any[] = [];
   const manager = {
     getSession: (id: string) => sessions.get(id) ?? null,
@@ -40,6 +41,7 @@ function fixture(options: {
       const session = { id: `session-${creates.length}`, agent: args[0], workingDirectory: args[1], name: args[2], status: 'running', startedAt: new Date().toISOString(), port: 1, command: [], logs: [], metadata, model: args[7], messages: [] };
       sessions.set(session.id, session); return session;
     },
+    captureAgentapiCodexSessionIdFromPrompt: async (_id: string, prompt: string) => { captures.push(prompt); return false; },
   } as never;
   const published: any[] = [];
   const publish = async (input: any) => { published.push(input); return options.publish ? options.publish(input, published.length) : { message: { id: `agent-message-${published.length}` } }; };
@@ -54,7 +56,7 @@ function fixture(options: {
   const botIdentity: any = { botNpub: 'npub1rick', botPubkeyHex: '00', botSecret: new Uint8Array([1]) };
   const message = (id: string, body: string, mention: false | { type?: string; npub?: string } | true = false, authorNpub = 'npub1human'): FlightDeckPgMessage => ({ id, workspace_id: 'workspace-1', channel_id: 'channel-1', thread_id: 'thread-1', body, created_at: `2026-01-01T00:00:0${id.slice(-1)}Z`, created_by_actor_id: `actor-${id}`, created_by_actor_npub: authorNpub, metadata: mention ? { mentions: [{ type: mention === true ? 'agent' : mention.type ?? '', npub: mention === true ? 'npub1rick' : mention.npub ?? 'npub1rick', label: 'Rick' }] } : {} });
   const handle = (messages: FlightDeckPgMessage[], entityId: string) => runtime.handle({ subscription, botIdentity, channel, messages, event: { entity_id: entityId, channel_id: 'channel-1', cursor: `cursor-${entityId}` } });
-  return { runtime, makeRuntime, handle, message, prompts, creates, published, interceptStore, turnStore, sessions, subscription, channel, botIdentity };
+  return { runtime, makeRuntime, handle, message, prompts, captures, creates, published, interceptStore, turnStore, sessions, subscription, channel, botIdentity };
 }
 
 describe('Agent Direct Chat runtime', () => {
@@ -129,9 +131,12 @@ describe('Agent Direct Chat runtime', () => {
     const m2 = f.message('m2', 'follow up'); await f.handle([m1, m2], 'm2'); await f.runtime.waitForIdle();
     expect(f.creates).toHaveLength(1); expect(f.prompts).toHaveLength(1); expect(f.published).toHaveLength(1);
     expect(f.interceptStore.listAll()[0]?.lastHumanMessageIdDelivered).toBe('m1');
-    const m3 = f.message('m3', '@Rick follow up', true); await f.handle([m1, m2, m3], 'm3'); await f.runtime.waitForIdle();
+    const a2 = f.message('a2', 'Prior agent reply', false, 'npub1rick');
+    const m3 = f.message('m3', '@Rick follow up', true); await f.handle([m1, a2, m2, m3], 'm3'); await f.runtime.waitForIdle();
     expect(f.creates).toHaveLength(1); expect(f.prompts).toHaveLength(2); expect(f.prompts[1]).toContain('flightdeck_agent_direct_follow_up_v1');
-    expect(f.prompts[1]).toContain('"message_id": "m3"'); expect(f.prompts[1]).not.toContain('"message_id": "m2"');
+    const followUp = JSON.parse(f.prompts[1]!);
+    expect(followUp.thread_history.map((message: any) => message.message_id)).toEqual(['m1', 'a2', 'm2', 'm3']);
+    expect(followUp.actionable_messages.map((message: any) => message.message_id)).toEqual(['m3']);
     expect(f.interceptStore.listAll()[0]?.lastHumanMessageIdDelivered).toBe('m3');
   });
 
@@ -213,28 +218,34 @@ describe('Agent Direct Chat runtime', () => {
 
   test('recovers an accepted turn after restart from the existing clean final without resending its prompt', async () => {
     const f = fixture();
-    const m1 = f.message('m1', '@Rick survive restart', true);
+    const m1 = f.message('m1', '@Rick previous turn', true);
+    const a2 = f.message('a2', 'Previous answer', false, 'npub1rick');
+    const m2 = f.message('m2', '@Rick survive restart', true);
     const routingKey = buildDirectChatRoutingKey({ towerServiceNpub: 'npub1tower', workspaceId: 'workspace-1', channelId: 'channel-1', threadId: 'thread-1', agentNpub: 'npub1rick' });
-    const turnId = buildDirectChatTurnId(routingKey, ['m1']);
+    const turnId = buildDirectChatTurnId(routingKey, ['m2']);
     const now = new Date().toISOString();
     const seeded = f.interceptStore.upsertMessage({ routingKey, subscriptionId: 'sub1', agentId: 'rick', workspaceOwnerNpub: 'npub1workspace',
       sourceAppNpub: 'npub1app', towerServiceNpub: 'npub1tower', workspaceId: 'workspace-1', channelId: 'channel-1', threadId: 'thread-1',
-      botNpub: 'npub1rick', messageId: 'm1', eventCursor: 'cursor-m1', at: now }).record;
-    f.interceptStore.save({ ...seeded, sessionId: 'surviving-session', state: 'active', lastHumanMessageIdDelivered: 'm1', pendingMessageCount: 0 });
-    f.turnStore.save({ turnId, routingKey, sourceMessageIds: ['m1'], clientRequestId: buildDirectChatClientRequestId(routingKey, turnId),
+      botNpub: 'npub1rick', messageId: 'm2', eventCursor: 'cursor-m2', at: now }).record;
+    f.interceptStore.save({ ...seeded, sessionId: 'surviving-session', state: 'active', lastHumanMessageIdDelivered: 'm2',
+      lastCompletedTurnId: 'previous-turn', pendingMessageCount: 0 });
+    f.turnStore.save({ turnId, routingKey, sourceMessageIds: ['m2'], clientRequestId: buildDirectChatClientRequestId(routingKey, turnId),
       replyBody: null, publishedMessageId: null, state: 'accepted', createdAt: now, updatedAt: now });
     f.sessions.set('surviving-session', { id: 'surviving-session', agent: 'codex', workingDirectory: '/Users/mini/wingmen/wingman21', name: 'Rick Direct Chat',
       status: 'running', startedAt: now, port: 1, command: [], logs: [], metadata: {}, messages: [
-        { role: 'user', content: 'AGENT DIRECT CHAT\ntrigger_message_id: m1', createdAt: now },
+        { role: 'user', content: 'follow-up source message m2', createdAt: now },
         { role: 'assistant', content: '## Recovered final\n\nPublished once.', createdAt: now },
       ] });
 
     const restarted = f.makeRuntime();
-    expect(restarted.recover({ subscription: f.subscription, botIdentity: f.botIdentity, channel: f.channel, messages: [m1],
-      event: { entity_id: 'm1', channel_id: 'channel-1', cursor: 'cursor-m1' } }, routingKey))
+    expect(restarted.recover({ subscription: f.subscription, botIdentity: f.botIdentity, channel: f.channel, messages: [m1, a2, m2],
+      event: { entity_id: 'm2', channel_id: 'channel-1', cursor: 'cursor-m2' } }, routingKey))
       .toEqual({ handled: true, reason: 'direct_chat_recovery_queued' });
     await restarted.waitForIdle();
     expect(f.prompts).toHaveLength(0); expect(f.published).toHaveLength(1);
+    const recoveredPrompt = JSON.parse(f.captures.at(-1)!);
+    expect(recoveredPrompt.thread_history.map((message: any) => message.message_id)).toEqual(['m1', 'a2', 'm2']);
+    expect(recoveredPrompt.actionable_messages.map((message: any) => message.message_id)).toEqual(['m2']);
     expect(f.published[0].body).toBe('## Recovered final\n\nPublished once.');
     expect(f.published[0].clientRequestId).toBe(buildDirectChatClientRequestId(routingKey, turnId));
     expect(f.turnStore.getPending(routingKey)).toBeNull();

@@ -209,7 +209,7 @@ The complete source coordinates also remain in session metadata so later turns d
 
 ## Follow-Up Prompt Contract
 
-For a bound thread, fetch the authoritative thread and consider human messages after `last_human_message_id_delivered`. Exclude the target agent's published replies and filter the actionable prompt delta through the same per-message eligibility rule: canonical mention in shared/system channels, or the sole other participant in a strict two-party DM. Intervening unmentioned shared-channel messages may remain in authoritative history/context but must never enter `nextMessages` or the follow-up delta. Preserve eligible messages in arrival order.
+For every bound-thread follow-up, fetch and include the complete authoritative Flight Deck thread in stable order. This `thread_history` is context only and includes prior human messages, intervening unmentioned shared-channel messages, agent-published replies, canonical author IDs/npubs, mentions, and attachments. Separately compute `actionable_messages` from human messages after `last_human_message_id_delivered`, filtered through the same per-message eligibility rule: canonical mention in shared/system channels, or the sole other participant in a strict two-party DM. Only `actionable_messages` are new instructions for the turn. Preserve both arrays in authoritative arrival order.
 
 ```json
 {
@@ -217,17 +217,34 @@ For a bound thread, fetch the authoritative thread and consider human messages a
   "routing_key": "...",
   "thread_id": "...",
   "guidance": "Answer normally with a polished response using GitHub-Flavored Markdown where useful. Your normal final response is published verbatim to Flight Deck: do not add a wrapper or envelope, invoke a reply helper, or enclose the whole response in a code fence.",
-  "messages": [
+  "history_semantics": "Complete authoritative Flight Deck thread for context only. Historical messages are not new instructions.",
+  "thread_history": [
     {
       "message_id": "...",
       "user_id": "...",
       "user_npub": "...",
       "created_at": "...",
-      "message": "..."
+      "message": "...",
+      "attachments": [],
+      "mentions": []
+    }
+  ],
+  "actionable_semantics": "Only these newly eligible human messages are instructions for this turn.",
+  "actionable_messages": [
+    {
+      "message_id": "...",
+      "user_id": "...",
+      "user_npub": "...",
+      "created_at": "...",
+      "message": "...",
+      "attachments": [],
+      "mentions": []
     }
   ]
 }
 ```
+
+`source_message_ids`, `last_human_message_id_delivered`, the deterministic turn ID, and the publication idempotency key are derived only from `actionable_messages`, never from the full history. Accepted-turn restart recovery reconstructs this same two-array prompt contract while observing the already-running turn; it does not resend the prompt.
 
 The existing pending-turn queue and merged follow-up logic should be retained. If human messages arrive during an active turn, interrupt only when the adapter supports it safely; otherwise queue and merge them into the next prompt. Never run overlapping turns for the same routing key.
 

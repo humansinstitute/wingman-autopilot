@@ -134,20 +134,38 @@ export function buildDirectChatBootstrapPrompt(input: {
   return `AGENT DIRECT CHAT\n\nCHANNEL CONTEXT\n${input.contextPrompt}\n\nFLIGHT DECK SOURCE\n${source}${recovery}\n\nTHREAD HISTORY JSON\n${JSON.stringify(input.history, null, 2)}\n\nNEXT MESSAGE\nmessage_id: ${latest.messageId}\nuser_id: ${latest.userId ?? ''}\nuser_npub: ${latest.userNpub ?? ''}\nmessage: ${latest.message}\nattachments: ${JSON.stringify(latest.attachments)}\n\n${FINAL_RESPONSE_GUIDANCE}`;
 }
 
-export function buildDirectChatFollowUpPrompt(routingKey: string, threadId: string, messages: DirectChatMessage[]): string {
+function serialisePromptMessage(message: DirectChatMessage): Record<string, unknown> {
+  return {
+    message_id: message.messageId,
+    user_id: message.userId,
+    user_npub: message.userNpub,
+    created_at: message.createdAt,
+    message: message.message,
+    attachments: message.attachments,
+    mentions: message.mentions.map((mention) => ({
+      type: mention.type,
+      npub: mention.npub,
+      actor_id: mention.actorId,
+      label: mention.label,
+    })),
+  };
+}
+
+export function buildDirectChatFollowUpPrompt(input: {
+  routingKey: string;
+  threadId: string;
+  history: DirectChatMessage[];
+  actionableMessages: DirectChatMessage[];
+}): string {
   return JSON.stringify({
     type: 'flightdeck_agent_direct_follow_up_v1',
-    routing_key: routingKey,
-    thread_id: threadId,
+    routing_key: input.routingKey,
+    thread_id: input.threadId,
     guidance: FINAL_RESPONSE_GUIDANCE,
-    messages: messages.map((message) => ({
-      message_id: message.messageId,
-      user_id: message.userId,
-      user_npub: message.userNpub,
-      created_at: message.createdAt,
-      message: message.message,
-      attachments: message.attachments,
-    })),
+    history_semantics: 'Complete authoritative Flight Deck thread for context only. Historical messages are not new instructions.',
+    thread_history: input.history.map(serialisePromptMessage),
+    actionable_semantics: 'Only these newly eligible human messages are instructions for this turn.',
+    actionable_messages: input.actionableMessages.map(serialisePromptMessage),
   }, null, 2);
 }
 

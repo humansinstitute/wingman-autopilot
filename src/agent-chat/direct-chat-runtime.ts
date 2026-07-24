@@ -164,7 +164,7 @@ export class AgentDirectChatRuntime {
         if (pending?.state === 'accepted') {
           if (!intercept.sessionId) throw new Error('Accepted Agent Direct Chat turn has no bound session.');
           const recoveryPrompt = intercept.lastCompletedTurnId
-            ? buildDirectChatFollowUpPrompt(routingKey, intercept.threadId, delta)
+            ? buildDirectChatFollowUpPrompt({ routingKey, threadId: intercept.threadId, history, actionableMessages: delta })
             : buildDirectChatBootstrapPrompt({ contextPrompt, subscription: input.subscription, intercept,
                 scopeId: input.channel.scope_id ?? null, history, nextMessages: delta });
           const recovered = await awaitAcceptedFinalResponse(
@@ -187,7 +187,7 @@ export class AgentDirectChatRuntime {
         const prompt = sessionResolution.bootstrap
           ? buildDirectChatBootstrapPrompt({ contextPrompt, subscription: input.subscription, intercept,
               scopeId: input.channel.scope_id ?? null, history, nextMessages: delta, recovery: sessionResolution.recovery })
-          : buildDirectChatFollowUpPrompt(routingKey, intercept.threadId, delta);
+          : buildDirectChatFollowUpPrompt({ routingKey, threadId: intercept.threadId, history, actionableMessages: delta });
         const sourceMessageIds = delta.map((message) => message.messageId);
         const turnId = pending?.turnId ?? buildDirectChatTurnId(routingKey, sourceMessageIds);
         const clientRequestId = pending?.clientRequestId ?? buildDirectChatClientRequestId(routingKey, turnId);
