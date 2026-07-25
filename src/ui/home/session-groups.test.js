@@ -50,6 +50,28 @@ describe('home session groups', () => {
     expect(getHomeSessionGroup(sessions[5])).toBe('auto');
   });
 
+  test('classifies session-dispatch workers from either stable provenance marker', () => {
+    const dispatchSessions = [
+      {
+        id: 'dispatch-both',
+        metadata: { AGENT: false, role: 'dispatched-worker' },
+        origin: { type: 'session-dispatch', id: 'supervisor-1' },
+      },
+      {
+        id: 'dispatch-origin-only',
+        metadata: { AGENT: false },
+        origin: { type: 'session-dispatch', id: 'unmonitored' },
+      },
+      {
+        id: 'dispatch-role-only',
+        metadata: { AGENT: false, role: 'dispatched-worker' },
+        origin: null,
+      },
+    ];
+
+    expect(dispatchSessions.map(getHomeSessionGroup)).toEqual(['auto', 'auto', 'auto']);
+  });
+
   test('filters sessions for the selected home group', () => {
     expect(filterSessionsForHomeGroup(sessions, 'my').map((session) => session.id)).toEqual(['my-1', 'fork-1']);
     expect(filterSessionsForHomeGroup(sessions, 'auto').map((session) => session.id)).toEqual([

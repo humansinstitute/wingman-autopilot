@@ -44,7 +44,9 @@ export function isTaskDispatchSession(session) {
   return (
     originType === 'mg-task' ||
     originType === 'agent-work' ||
+    originType === 'session-dispatch' ||
     metadata.role === 'agent-work' ||
+    metadata.role === 'dispatched-worker' ||
     metadata.bindingType === 'task' ||
     metadata.bindingType === 'flow_run'
   );
