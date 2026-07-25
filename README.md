@@ -1,16 +1,16 @@
-# Wingman
+# Wingman Autopilot
 
-Wingman is the orchestration and control-plane layer for the Wingman suite.
+Autopilot is the runtime that turns AI agents into an operable part of Wingman Be Free. It launches and supervises agent sessions, runs declarative pipelines and triggers, manages apps and WApps, and gives operators live control over the work running on their Wingman machine.
 
-In the current stack:
+Autopilot is one of three distinct parts of the core system:
 
-- `wingman-tower` is the workspace authority for auth, groups, encrypted record sync, storage, and service discovery
-- `wingman-fd` is Flight Deck, the human-first local-first browser workspace
-- `@runwingman/flightdeck-cli` is the agent/operator CLI workspace client
-- `wingman-flightlog` is the optional memory/history layer
-- `wingmen` is the session harness that launches, supervises, and connects agents to the rest of the suite
+- **Autopilot runs the work.** It owns agents, sessions, pipelines, triggers, managed apps, and their runtime lifecycle.
+- **Tower holds the shared truth.** It owns authentication, workspaces, typed APIs, storage, and graph access boundaries.
+- **Flight Deck coordinates the people and work.** It is the browser interface for chat, tasks, documents, approvals, and launching WApps.
 
-Wingmen does not replace Tower as the source of truth for workspace data. It sits beside the workspace stack and manages agents, sessions, live views, app runtimes, MCP tooling, NIP-98-protected operational APIs, and per-user bot-key flows.
+A person can coordinate work in Flight Deck, an agent or pipeline can carry it out through Autopilot, and both can use Tower as the shared authority. Autopilot does not redefine Tower's workspace contract or own Flight Deck's coordination records; it provides the execution environment around them.
+
+This repository contains the Bun server, browser control surfaces, CLIs, session adapters, pipeline engine, and app runtime that make that execution layer work.
 
 ## Core Responsibilities
 
