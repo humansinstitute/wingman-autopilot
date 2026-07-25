@@ -75,6 +75,26 @@ describe("closeStaleStableAutoSessions", () => {
     expect(testHarness.archived).toEqual(["auto"]);
   });
 
+  test("closes an old stable worker with the exact production dispatch shape", async () => {
+    const dispatchedWorker = session("production-dispatched-worker", {
+      origin: { type: "session-dispatch", id: "supervisor-session" },
+      metadata: { AGENT: false, role: "dispatched-worker", billingMode: "subscription" },
+    });
+    const testHarness = harness({
+      sessions: [dispatchedWorker],
+      updatedAt: {
+        [dispatchedWorker.id]: new Date(NOW - 21 * 60_000 - 1).toISOString(),
+      },
+    });
+
+    const result = await testHarness.run();
+
+    expect(result.eligible).toBe(1);
+    expect(result.closed).toEqual([dispatchedWorker.id]);
+    expect(result.skipped).toEqual([]);
+    expect(testHarness.archived).toEqual([dispatchedWorker.id]);
+  });
+
   test("uses a strict more-than-21-minute boundary", async () => {
     const boundary = session("boundary");
     const older = session("older");

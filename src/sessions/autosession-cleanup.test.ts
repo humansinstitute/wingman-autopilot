@@ -77,4 +77,26 @@ describe("autosession cleanup eligibility", () => {
     expect(isAutomaticallyStartedSession({ metadata: { role: "agent-chat" } })).toBe(true);
     expect(isAutomaticallyStartedSession({ metadata: {} })).toBe(false);
   });
+
+  test("classifies either dispatched-worker provenance marker as automatic", () => {
+    expect(isAutomaticallyStartedSession({
+      origin: { type: "session-dispatch" },
+      metadata: { AGENT: false },
+    })).toBe(true);
+    expect(isAutomaticallyStartedSession({
+      metadata: { AGENT: false, role: "dispatched-worker" },
+    })).toBe(true);
+  });
+
+  test("makes the stale production dispatched-worker shape eligible", () => {
+    expect(assessAutosessionCleanupCandidate({
+      id: "production-dispatched-worker",
+      lastUpdatedAt: atMinutesAgo(64),
+      origin: { type: "session-dispatch" },
+      metadata: { AGENT: false, role: "dispatched-worker" },
+    }, { currentSessionId: "cleanup", nowMs })).toEqual({
+      eligible: true,
+      reason: "eligible",
+    });
+  });
 });

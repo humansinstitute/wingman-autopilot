@@ -10,6 +10,9 @@ const LEGACY_AUTO_ORIGIN_TYPES = new Set([
 
 const PROGRAMMATIC_ORIGIN_TYPES = new Set(["cli", "delegate-bot"]);
 
+const DISPATCHED_WORKER_ORIGIN_TYPE = "session-dispatch";
+const DISPATCHED_WORKER_ROLE = "dispatched-worker";
+
 export interface AutosessionCleanupCandidate {
   id?: string;
   lastUpdatedAt?: string | null;
@@ -46,8 +49,10 @@ export function isAutomaticallyStartedSession(session: AutosessionCleanupCandida
     || createdByDifferentNpub
     || PROGRAMMATIC_ORIGIN_TYPES.has(originType)
     || LEGACY_AUTO_ORIGIN_TYPES.has(originType)
+    || originType === DISPATCHED_WORKER_ORIGIN_TYPE
     || originType === "agent-work"
     || originType === "agent-chat"
+    || metadata.role === DISPATCHED_WORKER_ROLE
     || metadata.role === "agent-work"
     || metadata.role === "agent-chat"
     || metadata.bindingType === "task"
