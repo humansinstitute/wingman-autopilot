@@ -35,4 +35,13 @@ describe('PromptQueueStore', () => {
     expect(store.hasQueuedTaskDispatchPrompt('session-1', 'task-42')).toBe(true);
     expect(store.hasQueuedTaskDispatchPrompt('session-1', 'task-99')).toBe(false);
   });
+
+  test('persists typed payloads and deduplicates a callback key', () => {
+    const store = new PromptQueueStore(makeTempDb());
+    expect(store.addPrompt('supervisor', { content: 'callback', type: 'dispatch_callback',
+      dedupeKey: 'dispatch:fingerprint', payload: { dispatchId: 'dispatch' } })).not.toBeNull();
+    expect(store.addPrompt('supervisor', { content: 'callback again', type: 'dispatch_callback',
+      dedupeKey: 'dispatch:fingerprint' })).toBeNull();
+    expect(store.getSessionQueue('supervisor')[0]?.payload).toEqual({ dispatchId: 'dispatch' });
+  });
 });

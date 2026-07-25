@@ -10,10 +10,16 @@ export interface QueuedPrompt {
   content: string;
   timestamp: string;
   order: number;
+  type: string | null;
+  dedupeKey: string | null;
+  payload: Record<string, unknown> | null;
 }
 
 export interface QueuedPromptInput {
   content: string;
+  type?: string;
+  dedupeKey?: string;
+  payload?: Record<string, unknown>;
 }
 
 export class PromptQueueStore {
@@ -38,8 +44,9 @@ export class PromptQueueStore {
     this.initialise();
     
     this.insertPrompt = this.db.prepare(`
-      INSERT INTO prompt_queue (id, session_id, content, timestamp, queue_order)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT OR IGNORE INTO prompt_queue
+        (id, session_id, content, timestamp, queue_order, type, dedupe_key, payload_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
     
     this.getQueue = this.db.prepare(`
@@ -112,7 +119,19 @@ export class PromptQueueStore {
     const timestamp = new Date().toISOString();
     const order = currentCount + 1;
     
-    this.insertPrompt.run(id, sessionId, content, timestamp, order);
+    const result = this.insertPrompt.run(
+      id,
+      sessionId,
+      content,
+      timestamp,
+      order,
+      input.type?.trim() || null,
+      input.dedupeKey?.trim() || null,
+      input.payload ? JSON.stringify(input.payload) : null,
+    );
+    if (result.changes === 0) {
+      return null;
+    }
     
     return {
       id,
@@ -120,11 +139,14 @@ export class PromptQueueStore {
       content,
       timestamp,
       order,
+      type: input.type?.trim() || null,
+      dedupeKey: input.dedupeKey?.trim() || null,
+      payload: input.payload ?? null,
     };
   }
 
   getSessionQueue(sessionId: string): QueuedPrompt[] {
-    return this.getQueue.all(sessionId) as QueuedPrompt[];
+    return (this.getQueue.all(sessionId) as Array<Record<string, unknown>>).map(this.mapPrompt);
   }
 
   updatePromptContent(sessionId: string, promptId: string, content: string): boolean {
@@ -148,8 +170,8 @@ export class PromptQueueStore {
   }
 
   getNextQueuedPrompt(sessionId: string): QueuedPrompt | null {
-    const result = this.getNextPrompt.get(sessionId) as QueuedPrompt | undefined;
-    return result || null;
+    const result = this.getNextPrompt.get(sessionId) as Record<string, unknown> | undefined;
+    return result ? this.mapPrompt(result) : null;
   }
 
   removeNextPrompt(sessionId: string): QueuedPrompt | null {
@@ -211,11 +233,34 @@ export class PromptQueueStore {
         content TEXT NOT NULL,
         timestamp TEXT NOT NULL,
         queue_order INTEGER NOT NULL,
+        type TEXT,
+        dedupe_key TEXT,
+        payload_json TEXT,
         FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
       );
 
       CREATE INDEX IF NOT EXISTS idx_prompt_queue_session_order 
       ON prompt_queue(session_id, queue_order);
     `);
+    const columns = this.db.query("PRAGMA table_info(prompt_queue)").all() as Array<{ name: string }>;
+    const names = new Set(columns.map((column) => column.name));
+    if (!names.has("type")) this.db.exec("ALTER TABLE prompt_queue ADD COLUMN type TEXT");
+    if (!names.has("dedupe_key")) this.db.exec("ALTER TABLE prompt_queue ADD COLUMN dedupe_key TEXT");
+    if (!names.has("payload_json")) this.db.exec("ALTER TABLE prompt_queue ADD COLUMN payload_json TEXT");
+    this.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_prompt_queue_dedupe
+      ON prompt_queue(session_id, dedupe_key) WHERE dedupe_key IS NOT NULL`);
   }
+
+  private mapPrompt = (row: Record<string, unknown>): QueuedPrompt => ({
+    id: String(row.id),
+    sessionId: String(row.session_id),
+    content: String(row.content),
+    timestamp: String(row.timestamp),
+    order: Number(row.queue_order),
+    type: typeof row.type === "string" ? row.type : null,
+    dedupeKey: typeof row.dedupe_key === "string" ? row.dedupe_key : null,
+    payload: typeof row.payload_json === "string"
+      ? JSON.parse(row.payload_json) as Record<string, unknown>
+      : null,
+  });
 }

@@ -48,6 +48,8 @@ import {
   handleCloudflareTunnelApi,
   type CloudflareTunnelRoutesContext,
 } from "./cloudflare-tunnel-routes";
+import { handleSessionDispatchApi } from "../session-dispatch/session-dispatch-routes";
+import type { SessionDispatchService } from "../session-dispatch/session-dispatch-service";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "HEAD";
 
@@ -122,6 +124,7 @@ export interface ApiRoutesContext {
   remoteInstructRoutesContext: RemoteInstructRoutesContext;
   cloudflareTunnelRoutesContext?: CloudflareTunnelRoutesContext;
   workspaceDelegationStore: WorkspaceDelegationStore;
+  sessionDispatchService?: SessionDispatchService;
 
   // Stores accessed directly by handleApi
   featureFlagStore: {
@@ -260,6 +263,13 @@ export function createApiRouteHandler(ctx: ApiRoutesContext) {
     const projectsFlag = ctx.resolveFeatureFlagStateForViewer(ctx.PROJECTS_FLAG_KEY, viewerIsAdmin, "on_admin");
     const projectsEnabled = projectsFlag.effectiveState === "on";
     const viewerNpub = getEffectiveOwnerNpub(authContext);
+
+    if (pathname.startsWith("/api/session-dispatches")) {
+      if (!isLocalhostRequest(request, ctx)) return Response.json({ error: "Forbidden" }, { status: 403 });
+      if (!ctx.sessionDispatchService) return Response.json({ error: "session-dispatch-unavailable" }, { status: 503 });
+      const response = await handleSessionDispatchApi(request, url, method, ctx.sessionDispatchService);
+      if (response) return response;
+    }
 
     const browserLogResponse = await ctx.browserLogHandler(request, url, method, authContext);
     if (browserLogResponse) {

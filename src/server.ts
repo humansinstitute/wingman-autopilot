@@ -47,6 +47,8 @@ import { scheduleSessionArchive, cancelPendingArchive } from "./storage/session-
 import { sessionArchiveStore } from "./storage/session-archive-store";
 import { cleanupStopNextActionSessions } from "./sessions/next-action-cleanup";
 import { PromptQueueStore } from "./storage/prompt-queue-store";
+import { SessionDispatchStore } from "./session-dispatch/session-dispatch-store";
+import { SessionDispatchService } from "./session-dispatch/session-dispatch-service";
 import { fileWatcherStore } from "./storage/file-watcher-store";
 import {
   featureFlagStore,
@@ -494,6 +496,7 @@ process.env.WINGMAN_PID = process.pid.toString();
 const projectStore = new ProjectStore();
 const todoStore = new TodoStore();
 const promptQueueStore = new PromptQueueStore("data/prompt-queue.db");
+const sessionDispatchStore = new SessionDispatchStore("data/session-dispatches.db");
 const pipelineStore = new PipelineStore();
 const todoApiHandler = createTodoApiHandler({ store: todoStore, projectStore });
 const projectApiHandler = createProjectApiHandler({
@@ -2484,6 +2487,13 @@ const sessionApiContext: SessionApiContext = {
   AccessActions,
 };
 sessionApiContextRef = sessionApiContext;
+const sessionDispatchService = new SessionDispatchService(
+  sessionDispatchStore,
+  manager,
+  promptQueueStore,
+  (session) => maybeAutoDispatchQueuedPrompt(session),
+);
+sessionDispatchService.start();
 const dispatchPipelineRuntime = new DispatchPipelineRuntime({
   pipelineStore,
   getSessionApiContext: () => sessionApiContextRef,
@@ -2559,6 +2569,7 @@ const remoteInstructRoutesContext: RemoteInstructRoutesContext = {
 };
 
 const handleApi = createApiRouteHandler({
+  sessionDispatchService,
   getRequestIP: (req) => serverRef.current?.requestIP(req) ?? null,
   config: {
     port: config.port,

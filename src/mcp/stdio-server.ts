@@ -59,6 +59,7 @@ import {
   createSessionDescription,
   handleCreateSession,
 } from "./tools/create-session";
+import { sessionDispatchSchema, sessionDispatchDescription, handleSessionDispatch } from "./tools/session-dispatch";
 import {
   stopSessionSchema,
   stopSessionDescription,
@@ -338,6 +339,13 @@ server.tool(
   createSessionDescription,
   createSessionSchema,
   (params) => handleCreateSession(params, wingmanUrl, sessionId),
+);
+
+server.tool(
+  "session_dispatch",
+  sessionDispatchDescription,
+  sessionDispatchSchema,
+  (params) => handleSessionDispatch(params, wingmanUrl, sessionId),
 );
 
 // ---- stop_session ----
