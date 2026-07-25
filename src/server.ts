@@ -48,6 +48,7 @@ import { sessionArchiveStore } from "./storage/session-archive-store";
 import { cleanupStopNextActionSessions } from "./sessions/next-action-cleanup";
 import { isDirectChatSessionProtected } from "./agent-chat/direct-chat-lifecycle";
 import { chatInterceptStateStore } from "./agent-chat/chat-intercept-state-store";
+import { createFlightDeckTriggerResolver } from "./agent-chat/flightdeck-trigger-resolver";
 import { directChatTurnStore } from "./agent-chat/direct-chat-turn-store";
 import { PromptQueueStore } from "./storage/prompt-queue-store";
 import { SessionDispatchStore } from "./session-dispatch/session-dispatch-store";
@@ -1667,6 +1668,7 @@ const flightDeckSessionTurnBridge = new FlightDeckSessionTurnBridge({
     workspaceId: session.metadata?.flightdeckWorkspaceId ?? '',
     agentNpub: session.metadata?.flightdeckAgentNpub ?? '',
   }),
+  resolveTriggerMessageId: createFlightDeckTriggerResolver(chatInterceptStateStore),
   log: console,
 });
 const agentChatSessionRuntime = new AgentChatSessionRuntime({

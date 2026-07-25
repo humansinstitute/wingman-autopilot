@@ -42,6 +42,7 @@ export class AgentActivityPublisher {
     private readonly deliver: typeof upsertFlightDeckPgAgentActivity = upsertFlightDeckPgAgentActivity,
     sequenceBase = Date.now() * 1_000,
     private readonly readLatestActivity = readLatestCodexUserVisibleActivity,
+    private readonly log: Pick<Console, 'error'> = console,
   ) {
     this.sequence = sequenceBase;
   }
@@ -75,22 +76,35 @@ export class AgentActivityPublisher {
         expiresInSeconds: terminal ? 60 : 300,
       };
       let delivered = false;
+      let lastError: unknown = null;
       for (let attempt = 0; attempt < 2 && !delivered; attempt += 1) {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 2_000);
         try {
           await this.deliver({ ...request, signal: controller.signal });
           delivered = true;
-        } catch {
+        } catch (error) {
+          lastError = error;
           if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 50));
         } finally {
           clearTimeout(timeout);
         }
       }
-      if (!delivered) return;
+      if (!delivered) {
+        this.log.error('[agent-activity] Tower publication failed after retry', {
+          workspaceId: this.context.workspaceId, channelId: this.context.channelId,
+          threadId: this.context.threadId, triggerMessageId: this.context.triggerMessageId,
+          sessionId: this.context.sessionId, turnId: this.context.turnId, state,
+          error: lastError instanceof Error ? lastError.message : String(lastError),
+        });
+        return;
+      }
       if (terminal) this.terminal = true;
-    } catch {
-      // Activity is advisory. Tower failures must never block the normal reply path.
+    } catch (error) {
+      this.log.error('[agent-activity] advisory publication failed', {
+        sessionId: this.context.sessionId, turnId: this.context.turnId, state,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 

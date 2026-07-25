@@ -6,11 +6,14 @@ import type { AgentAdapter } from '../agents/agent-adapter';
 import type { ProcessManager, SessionSnapshot } from '../agents/process-manager';
 import { FlightDeckSessionTurnBridge } from './flightdeck-session-turn-bridge';
 import { FlightDeckSessionTurnStore } from './flightdeck-session-turn-store';
+import { createFlightDeckTriggerResolver } from './flightdeck-trigger-resolver';
+import type { ChatInterceptStateRecord } from './types';
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
-function fixture(options: { bound?: boolean; missing?: boolean } = {}) {
+function fixture(options: { bound?: boolean; missing?: boolean; triggerMessageId?: string | null;
+  rejectActivity?: boolean } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'fd-turn-bridge-'));
   roots.push(root);
   const metadata = options.bound === false
@@ -32,15 +35,26 @@ function fixture(options: { bound?: boolean; missing?: boolean } = {}) {
   const publish = mock(async (input: { body: string; clientRequestId?: string | null }) => ({ message: { id: 'tower-message-1' }, input }));
   const activityStates: string[] = [];
   const activityBodies: string[] = [];
+  const activityTriggers: string[] = [];
+  const errors: unknown[] = [];
+  const store = new FlightDeckSessionTurnStore(join(root, 'turns.sqlite'));
   const bridge = new FlightDeckSessionTurnBridge({ manager,
-    store: new FlightDeckSessionTurnStore(join(root, 'turns.sqlite')),
+    store,
     resolveDelivery: () => ({ backendBaseUrl: 'https://tower.test', appNpub: 'npub1app',
       botIdentity: { botNpub: 'npub1agent', botPubkeyHex: '00'.repeat(32), botSecret: new Uint8Array(32) } }),
+    resolveTriggerMessageId: () => options.triggerMessageId === undefined ? 'thread-root-message-1' : options.triggerMessageId,
     publish: publish as never,
-    createActivity: () => ({ publish: async (state: string, body?: string) => { activityStates.push(state); if (body) activityBodies.push(body); },
-      publishLatestCommentary: async () => { activityStates.push('working'); activityBodies.push('Visible commentary'); } }) as never,
-    log: { error: mock(() => {}) } });
-  return { bridge, session, publish, activityStates, activityBodies, setMessages: (next: typeof messages) => { messages = next; } };
+    createActivity: (context) => { activityTriggers.push(context.triggerMessageId); return ({
+      publish: async (state: string, body?: string) => {
+        activityStates.push(state);
+        if (options.rejectActivity) throw Object.assign(new Error('Tower rejected trigger_message_id'), { status: 422 });
+        if (body) activityBodies.push(body);
+      },
+      publishLatestCommentary: async () => { activityStates.push('working'); activityBodies.push('Visible commentary'); } }) as never;
+    },
+    log: { error: mock((...args: unknown[]) => { errors.push(args); }) } });
+  return { bridge, session, manager, store, publish, activityStates, activityBodies, activityTriggers, errors,
+    setMessages: (next: typeof messages) => { messages = next; } };
 }
 
 describe('Flight Deck-bound session turn bridge', () => {
@@ -55,6 +69,52 @@ describe('Flight Deck-bound session turn bridge', () => {
     expect(f.publish.mock.calls[0]?.[0].body).not.toContain('internal callback envelope');
     expect(f.activityStates).toEqual(['accepted', 'working', 'completed']);
     expect(f.activityBodies).toContain('Visible commentary');
+    expect(f.activityTriggers).toEqual(['thread-root-message-1']);
+  });
+
+  test('captures and durably publishes the final when Tower rejects transient activity', async () => {
+    const f = fixture({ rejectActivity: true });
+    const turn = f.bridge.accept({ session: f.session, prompt: 'internal callback envelope',
+      promptType: 'dispatch_callback', boundaryIdentity: 'callback-invalid-activity' })!;
+    f.bridge.observe(turn);
+    await f.bridge.waitForIdle();
+    expect(f.publish).toHaveBeenCalledTimes(1);
+    expect(f.publish.mock.calls[0]?.[0].body).toBe('Authoritative callback result');
+    expect(f.store.get(turn.turnId)?.state).toBe('completed');
+    expect(f.errors.length).toBeGreaterThan(0);
+  });
+
+  test('persists a resolved callback trigger for restart recovery of an existing bound session', async () => {
+    const f = fixture({ triggerMessageId: 'existing-thread-message-9' });
+    const turn = f.bridge.accept({ session: f.session, prompt: 'internal callback envelope',
+      promptType: 'queued_prompt', boundaryIdentity: 'existing-session-callback' })!;
+    expect(turn.triggerMessageId).toBe('existing-thread-message-9');
+    const recoveredTriggers: string[] = [];
+    const recovered = new FlightDeckSessionTurnBridge({ manager: f.manager, store: f.store,
+      resolveDelivery: () => ({ backendBaseUrl: 'https://tower.test', appNpub: 'npub1app',
+        botIdentity: { botNpub: 'npub1agent', botPubkeyHex: '00'.repeat(32), botSecret: new Uint8Array(32) } }),
+      resolveTriggerMessageId: () => null,
+      publish: f.publish as never,
+      createActivity: (context) => { recoveredTriggers.push(context.triggerMessageId); return ({
+        publish: async () => {}, publishLatestCommentary: async () => {},
+      }) as never; },
+    });
+    recovered.recover();
+    await recovered.waitForIdle();
+    expect(recoveredTriggers).toEqual(['existing-thread-message-9']);
+    expect(f.publish).toHaveBeenCalledTimes(1);
+  });
+
+  test('recovers the latest valid trigger for an existing session without routing metadata', () => {
+    const f = fixture();
+    delete f.session.metadata?.flightdeckRoutingKey;
+    const binding = {
+      sessionId: f.session.id, previousSessionIds: [], workspaceId: 'workspace-1', channelId: 'channel-1',
+      threadId: 'thread-1', botNpub: 'npub1agent', lastAgentMessageIdPublished: 'latest-agent-message',
+      lastHumanMessageIdDelivered: 'human-message', lastMessageIdSeen: 'seen-message',
+    } as unknown as ChatInterceptStateRecord;
+    const resolve = createFlightDeckTriggerResolver({ getByRoutingKey: () => null, listAll: () => [binding] });
+    expect(resolve(f.session)).toBe('latest-agent-message');
   });
 
   test('deduplicates direct-chat final publication and restart recovery by stable turn identity', async () => {

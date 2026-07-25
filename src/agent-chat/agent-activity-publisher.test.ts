@@ -41,8 +41,11 @@ describe('Agent activity publisher', () => {
     });
     await expect(publisher.publish('accepted')).resolves.toBeUndefined();
     expect(attempts).toBe(2);
-    const unavailable = new AgentActivityPublisher(context, async () => { throw new Error('offline'); });
+    const errors: unknown[] = [];
+    const unavailable = new AgentActivityPublisher(context, async () => { throw new Error('offline'); },
+      undefined, undefined, { error: (...args: unknown[]) => { errors.push(args); } });
     await expect(unavailable.publish('failed')).resolves.toBeUndefined();
+    expect(errors.length).toBe(1);
   });
 
   test('serializes deliveries so a slower earlier publish cannot overwrite newer commentary', async () => {
