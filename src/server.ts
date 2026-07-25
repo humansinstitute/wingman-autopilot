@@ -46,6 +46,9 @@ import type { SessionMetadataInput } from "./sessions/session-metadata";
 import { scheduleSessionArchive, cancelPendingArchive } from "./storage/session-archiver";
 import { sessionArchiveStore } from "./storage/session-archive-store";
 import { cleanupStopNextActionSessions } from "./sessions/next-action-cleanup";
+import { isDirectChatSessionProtected } from "./agent-chat/direct-chat-lifecycle";
+import { chatInterceptStateStore } from "./agent-chat/chat-intercept-state-store";
+import { directChatTurnStore } from "./agent-chat/direct-chat-turn-store";
 import { PromptQueueStore } from "./storage/prompt-queue-store";
 import { SessionDispatchStore } from "./session-dispatch/session-dispatch-store";
 import { SessionDispatchService } from "./session-dispatch/session-dispatch-service";
@@ -583,6 +586,7 @@ const schedulerEngine = new SchedulerEngine({
   cleanupStopNextActionSessions: async () => cleanupStopNextActionSessions({
     manager,
     scheduleArchive: (sessionId) => scheduleSessionArchive(sessionId, manager),
+    isSessionProtected: (sessionId) => isDirectChatSessionProtected(sessionId, chatInterceptStateStore, directChatTurnStore),
   }),
   onBotKeyUnlocked: onBotKeyUnlockedHook,
   getInstanceIdentity: () => wingmanInstanceIdentity,

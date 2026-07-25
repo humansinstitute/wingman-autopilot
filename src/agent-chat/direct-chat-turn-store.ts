@@ -43,7 +43,9 @@ export class DirectChatTurnStore {
   save(record: DirectChatTurnRecord): DirectChatTurnRecord {
     this.db.query(`INSERT INTO agent_direct_chat_turns (turn_id, routing_key, source_message_ids_json, client_request_id, reply_body, published_message_id, state, created_at, updated_at)
       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
-      ON CONFLICT(turn_id) DO UPDATE SET reply_body=excluded.reply_body, published_message_id=excluded.published_message_id, state=excluded.state, updated_at=excluded.updated_at`)
+      ON CONFLICT(turn_id) DO UPDATE SET source_message_ids_json=excluded.source_message_ids_json,
+        reply_body=excluded.reply_body, published_message_id=excluded.published_message_id,
+        state=excluded.state, updated_at=excluded.updated_at`)
       .run(record.turnId, record.routingKey, JSON.stringify(record.sourceMessageIds), record.clientRequestId, record.replyBody, record.publishedMessageId, record.state, record.createdAt, record.updatedAt);
     return record;
   }

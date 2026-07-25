@@ -23,13 +23,15 @@ export type NextActionCleanupResult = {
 export interface NextActionCleanupDeps {
   manager: ProcessManager;
   scheduleArchive: (sessionId: string) => void;
+  isSessionProtected?: (sessionId: string) => boolean;
 }
 
 export async function cleanupStopNextActionSessions(
   deps: NextActionCleanupDeps,
 ): Promise<NextActionCleanupResult> {
   const sessions = deps.manager.listSessions();
-  const candidates = sessions.filter((session) => session.metadata?.nextAction === "stop");
+  const candidates = sessions.filter((session) => session.metadata?.nextAction === "stop"
+    && !deps.isSessionProtected?.(session.id));
   const details: NextActionCleanupDetail[] = [];
   let stopped = 0;
   let archiveScheduled = 0;

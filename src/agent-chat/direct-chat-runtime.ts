@@ -1,6 +1,7 @@
 import type { AgentType } from '../config';
 import { isAgentType } from '../agent-types';
 import type { ProcessManager, SessionSnapshot } from '../agents/process-manager';
+import type { ArchivedSession } from '../storage/session-archive-store';
 import { resolveNativeResumeLaunch } from '../sessions/native-resume-launch';
 import type { AgentDefinitionStore } from './agent-definition-store';
 import type { ChatInterceptStateStore } from './chat-intercept-state-store';
@@ -39,6 +40,7 @@ interface DirectChatRuntimeDependencies {
   turnStore?: DirectChatTurnStore;
   publish?: typeof createFlightDeckPgChannelMessage;
   createActivityPublisher?: (context: AgentActivityContext) => AgentActivityPublisher;
+  getArchivedSession?: (sessionId: string) => ArchivedSession | null;
   log?: Pick<Console, 'error' | 'warn'>;
 }
 
@@ -214,7 +216,9 @@ export class AgentDirectChatRuntime {
         }
         const history = orderDirectChatMessages(input.messages);
         const undelivered = pending?.state === 'accepted'
-          ? history.filter((message) => pending.sourceMessageIds.includes(message.messageId))
+          ? history.filter((message) => pending.sourceMessageIds.includes(message.messageId)
+              || selectUndeliveredHumanMessages(history, intercept, agent.botNpub, [input.subscription.wsKeyNpub ?? ''])
+                .some((undeliveredMessage) => undeliveredMessage.messageId === message.messageId))
           : selectUndeliveredHumanMessages(history, intercept, agent.botNpub, [input.subscription.wsKeyNpub ?? '']);
         const revisionDispatch = messageRevisionDispatch(input.event);
         const delta = pending?.state === 'accepted'
@@ -225,26 +229,44 @@ export class AgentDirectChatRuntime {
         if (delta.length === 0) continue;
         if (pending?.state === 'accepted') {
           if (!intercept.sessionId) throw new Error('Accepted Agent Direct Chat turn has no bound session.');
+          const recoverySourceMessageIds = delta.map((message) => message.messageId);
+          const recoverableTurn = this.turnStore.save({ ...pending, sourceMessageIds: recoverySourceMessageIds,
+            updatedAt: new Date().toISOString() });
+          intercept = this.deps.interceptStore.save({ ...intercept,
+            lastHumanMessageIdDelivered: recoverySourceMessageIds.at(-1) ?? intercept.lastHumanMessageIdDelivered,
+            pendingMessageCount: 0, updatedAt: new Date().toISOString() });
+          const sessionResolution = await this.resolveSession(agent, intercept, input.subscription, input.channel.scope_id ?? null);
+          const session = sessionResolution.session;
+          intercept = this.deps.interceptStore.save({ ...intercept, sessionId: session.id,
+            sessionGeneration: sessionResolution.generation, previousSessionIds: sessionResolution.previousSessionIds,
+            state: 'active', lastActivityAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
           activity = this.createActivityPublisher({
             backendBaseUrl: input.subscription.backendBaseUrl, workspaceId: input.subscription.workspaceId!,
             appNpub: input.subscription.sourceAppNpub, botIdentity: input.botIdentity,
             channelId: intercept.channelId, threadId: intercept.threadId,
-            triggerMessageId: pending.sourceMessageIds.at(-1)!, sessionId: intercept.sessionId,
+            triggerMessageId: recoverySourceMessageIds.at(-1)!, sessionId: session.id,
             agentNpub: intercept.botNpub, turnId: pending.turnId,
           });
-          const recoveryPrompt = intercept.lastCompletedTurnId
-            ? buildDirectChatFollowUpPrompt({ routingKey, threadId: intercept.threadId, history, actionableMessages: delta })
-            : buildDirectChatBootstrapPrompt({ contextPrompt, subscription: input.subscription, intercept,
-                scopeId: input.channel.scope_id ?? null, history, nextMessages: delta });
-          const recovered = await awaitAcceptedFinalResponse(
-            this.deps.processManager,
-            intercept.sessionId,
-            recoveryPrompt,
-            pending.sourceMessageIds,
-            { acceptedAt: pending.createdAt, onPoll: () => activity?.publishLatestCommentary(this.deps.processManager) },
-          );
-          this.turnStore.save({ ...pending, replyBody: recovered.content, state: 'reply_ready', updatedAt: new Date().toISOString() });
-          await this.publishTurn(input, intercept, agent, pending.turnId, pending.sourceMessageIds,
+          const recoveryPrompt = sessionResolution.bootstrap
+            ? buildDirectChatBootstrapPrompt({ contextPrompt, subscription: input.subscription, intercept,
+                scopeId: input.channel.scope_id ?? null, history, nextMessages: delta, recovery: sessionResolution.recovery })
+            : intercept.lastCompletedTurnId
+              ? buildDirectChatFollowUpPrompt({ routingKey, threadId: intercept.threadId, history, actionableMessages: delta })
+              : buildDirectChatBootstrapPrompt({ contextPrompt, subscription: input.subscription, intercept,
+                  scopeId: input.channel.scope_id ?? null, history, nextMessages: delta });
+          const recovered = sessionResolution.bootstrap
+            ? await sendPromptAndAwaitFinalResponse(this.deps.processManager, session.id, recoveryPrompt, {
+                onPoll: () => activity?.publishLatestCommentary(this.deps.processManager),
+              })
+            : await awaitAcceptedFinalResponse(
+                this.deps.processManager,
+                session.id,
+                recoveryPrompt,
+                recoverySourceMessageIds,
+                { acceptedAt: pending.createdAt, onPoll: () => activity?.publishLatestCommentary(this.deps.processManager) },
+              );
+          this.turnStore.save({ ...recoverableTurn, replyBody: recovered.content, state: 'reply_ready', updatedAt: new Date().toISOString() });
+          await this.publishTurn(input, intercept, agent, pending.turnId, recoverySourceMessageIds,
             pending.clientRequestId, recovered.content);
           await activity.publish('completed');
           continue;
@@ -335,17 +357,19 @@ export class AgentDirectChatRuntime {
   private async resolveSession(agent: AgentDefinitionRecord, intercept: NonNullable<ReturnType<ChatInterceptStateStore['getByRoutingKey']>>, subscription: WorkspaceSubscriptionRecord, scopeId: string | null): Promise<{
     session: SessionSnapshot; bootstrap: boolean; generation: number; previousSessionIds: string[]; recovery: { previousSessionId: string; reason: string } | null;
   }> {
-    const current = intercept.sessionId ? this.deps.processManager.getSession(intercept.sessionId) : null;
-    if (current?.status === 'running' || current?.status === 'starting') return { session: current, bootstrap: false, generation: intercept.sessionGeneration ?? 1, previousSessionIds: intercept.previousSessionIds ?? [], recovery: null };
-    if (current) {
+    const live = intercept.sessionId ? this.deps.processManager.getSession(intercept.sessionId) : null;
+    const archived = !live && intercept.sessionId ? this.deps.getArchivedSession?.(intercept.sessionId) ?? null : null;
+    if (live?.status === 'running' || live?.status === 'starting') return { session: live, bootstrap: false, generation: intercept.sessionGeneration ?? 1, previousSessionIds: intercept.previousSessionIds ?? [], recovery: null };
+    const resumeSource = live ?? (archived && isAgentType(archived.agent) ? { ...archived, agent: archived.agent } : null);
+    if (resumeSource) {
       try {
-        const launch = resolveNativeResumeLaunch(current, isAgentType, subscription.managedByNpub);
-        const resumed = await this.deps.processManager.createSession(launch.agent, launch.workingDirectory, launch.name, launch.origin, undefined, launch.ownerNpub, launch.metadata, current.model);
+        const launch = resolveNativeResumeLaunch(resumeSource, isAgentType, subscription.managedByNpub);
+        const resumed = await this.deps.processManager.createSession(launch.agent, launch.workingDirectory, launch.name, launch.origin, undefined, launch.ownerNpub, launch.metadata, live?.model);
         return { session: resumed, bootstrap: false, generation: intercept.sessionGeneration ?? 1, previousSessionIds: intercept.previousSessionIds ?? [], recovery: null };
       } catch (error) {
         this.log.warn('[agent-chat] native direct chat resume failed; creating continuity replacement', {
           routingKey: intercept.routingKey,
-          sessionId: current.id,
+          sessionId: resumeSource.id,
           sessionGeneration: intercept.sessionGeneration,
           error: error instanceof Error ? error.message : String(error),
         });
@@ -363,6 +387,6 @@ export class AgentDirectChatRuntime {
         flightdeckScopeId: scopeId ?? undefined, flightdeckChannelId: intercept.channelId, flightdeckThreadId: intercept.threadId,
         flightdeckAgentNpub: intercept.botNpub, flightdeckRoutingKey: intercept.routingKey, sessionGeneration: generation }, profile.model ?? undefined);
     return { session, bootstrap: true, generation, previousSessionIds,
-      recovery: previous ? { previousSessionId: previous, reason: current ? 'native resume unavailable' : 'session missing' } : null };
+      recovery: previous ? { previousSessionId: previous, reason: resumeSource ? 'native resume unavailable' : 'session missing' } : null };
   }
 }

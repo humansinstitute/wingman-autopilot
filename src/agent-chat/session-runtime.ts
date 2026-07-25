@@ -21,6 +21,7 @@ import type {
 import { handoffAgentChatReply, prepareAgentChatYokeRuntime } from './yoke-runtime';
 import { AgentDirectChatRuntime, type DirectChatRuntimeInput } from './direct-chat-runtime';
 import { agentDefinitionStore } from './agent-definition-store';
+import { sessionArchiveStore, type SessionArchiveStore } from '../storage/session-archive-store';
 
 const DEFAULT_IDLE_RETENTION_MINUTES = 60;
 
@@ -29,6 +30,7 @@ interface AgentChatSessionRuntimeDependencies {
   processManager: ProcessManager;
   interceptStore?: ChatInterceptStateStore;
   idleRetentionMinutes?: number;
+  archiveStore?: Pick<SessionArchiveStore, 'getArchivedSession'>;
 }
 
 export interface AgentChatSessionRuntimeInput {
@@ -55,7 +57,8 @@ export class AgentChatSessionRuntime {
     this.interceptStore = deps.interceptStore ?? chatInterceptStateStore;
     this.idleRetentionMs = Math.max(1, deps.idleRetentionMinutes ?? DEFAULT_IDLE_RETENTION_MINUTES) * 60_000;
     this.directRuntime = new AgentDirectChatRuntime({ defaultAgent: this.defaultAgent, processManager: this.manager,
-      agentStore: agentDefinitionStore, interceptStore: this.interceptStore });
+      agentStore: agentDefinitionStore, interceptStore: this.interceptStore,
+      getArchivedSession: (sessionId) => (deps.archiveStore ?? sessionArchiveStore).getArchivedSession(sessionId) });
     this.restorePersistedStates();
   }
 

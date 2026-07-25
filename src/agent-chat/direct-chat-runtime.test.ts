@@ -18,12 +18,14 @@ function fixture(options: {
   finalContent?: string;
   channel?: Record<string, unknown>;
   failNativeResume?: boolean;
+  nativeResumeFinal?: string;
 } = {}) {
   const db = join(tmpdir(), `agent-direct-${randomUUID()}.sqlite`);
   const agentStore = new AgentDefinitionStore(db);
   const interceptStore = new ChatInterceptStateStore(db);
   const turnStore = new DirectChatTurnStore(db);
   const sessions = new Map<string, any>();
+  const archivedSessions = new Map<string, any>();
   const prompts: string[] = [];
   const captures: string[] = [];
   const creates: any[] = [];
@@ -41,7 +43,11 @@ function fixture(options: {
       creates.push(args);
       if (options.failNativeResume && args[3]?.type === 'native-resume') throw new Error('native session no longer resumable');
       const metadata = { ...(args[6] ?? {}), nativeAgentSession: args[6]?.nativeAgentSession ?? { agent: args[0], sessionId: `native-${creates.length}`, workingDirectory: args[1], capturedAt: new Date().toISOString(), source: 'manual' } };
-      const session = { id: `session-${creates.length}`, agent: args[0], workingDirectory: args[1], name: args[2], status: 'running', startedAt: new Date().toISOString(), port: 1, command: [], logs: [], metadata, model: args[7], messages: [] };
+      const messages = args[3]?.type === 'native-resume' && options.nativeResumeFinal
+        ? [{ role: 'user', content: 'accepted source message m2', createdAt: new Date().toISOString() },
+            { role: 'assistant', content: options.nativeResumeFinal, createdAt: new Date().toISOString() }]
+        : [];
+      const session = { id: `session-${creates.length}`, agent: args[0], workingDirectory: args[1], name: args[2], status: 'running', startedAt: new Date().toISOString(), port: 1, command: [], logs: [], metadata, model: args[7], messages };
       sessions.set(session.id, session); return session;
     },
     captureAgentapiCodexSessionIdFromPrompt: async (_id: string, prompt: string) => { captures.push(prompt); return false; },
@@ -50,6 +56,7 @@ function fixture(options: {
   const publish = async (input: any) => { published.push(input); return options.publish ? options.publish(input, published.length) : { message: { id: `agent-message-${published.length}` } }; };
   const activities: any[] = [];
   const makeRuntime = () => new AgentDirectChatRuntime({ defaultAgent: 'codex', processManager: manager, agentStore, interceptStore, turnStore, publish,
+    getArchivedSession: (sessionId) => archivedSessions.get(sessionId) ?? null,
     createActivityPublisher: (context) => new AgentActivityPublisher(context, async (activity) => { activities.push(activity); return {}; }) });
   const runtime = makeRuntime();
   const now = new Date().toISOString();
@@ -67,7 +74,7 @@ function fixture(options: {
     messages,
     event: { entity_id: entityId, channel_id: 'channel-1', cursor: `cursor-${entityId}`, ...event },
   });
-  return { runtime, makeRuntime, handle, message, prompts, captures, creates, published, activities, interceptStore, turnStore, sessions, subscription, channel, botIdentity };
+  return { runtime, makeRuntime, handle, message, prompts, captures, creates, published, activities, interceptStore, turnStore, sessions, archivedSessions, subscription, channel, botIdentity };
 }
 
 describe('Agent Direct Chat runtime', () => {
@@ -376,6 +383,74 @@ describe('Agent Direct Chat runtime', () => {
     expect(f.published[0].clientRequestId).toBe(buildDirectChatClientRequestId(routingKey, turnId));
     expect(f.turnStore.getPending(routingKey)).toBeNull();
     expect(f.interceptStore.getByRoutingKey(routingKey)?.lastCompletedTurnId).toBe(turnId);
+  });
+
+  test('native-resumes a production-shaped accepted turn whose bound session was archived', async () => {
+    const f = fixture({ nativeResumeFinal: 'Recovered archived final.' });
+    const m1 = f.message('m1', '@Rick original', true);
+    const m2 = f.message('m2', '@Rick accepted before cleanup', true);
+    const routingKey = buildDirectChatRoutingKey({ towerServiceNpub: 'npub1tower', workspaceId: 'workspace-1', channelId: 'channel-1', threadId: 'thread-1', agentNpub: 'npub1rick' });
+    const turnId = buildDirectChatTurnId(routingKey, ['m2']);
+    const now = new Date().toISOString();
+    const seeded = f.interceptStore.upsertMessage({ routingKey, subscriptionId: 'sub1', agentId: 'rick', workspaceOwnerNpub: 'npub1workspace',
+      sourceAppNpub: 'npub1app', towerServiceNpub: 'npub1tower', workspaceId: 'workspace-1', channelId: 'channel-1', threadId: 'thread-1',
+      botNpub: 'npub1rick', messageId: 'm2', eventCursor: 'cursor-m2', at: now }).record;
+    f.interceptStore.save({ ...seeded, sessionId: '27d5c647-9312-4a16-a0e4-74cffb6837b6', state: 'active',
+      lastHumanMessageIdDelivered: 'm2', lastCompletedTurnId: 'turn-one', pendingMessageCount: 0 });
+    f.turnStore.save({ turnId, routingKey, sourceMessageIds: ['m2'], clientRequestId: buildDirectChatClientRequestId(routingKey, turnId),
+      replyBody: null, publishedMessageId: null, state: 'accepted', createdAt: now, updatedAt: now });
+    f.archivedSessions.set('27d5c647-9312-4a16-a0e4-74cffb6837b6', { id: '27d5c647-9312-4a16-a0e4-74cffb6837b6', agent: 'opencode',
+      name: 'Rick Direct Chat', npub: 'npub1manager', workingDirectory: '/Users/mini/wingmen/wingman21', metadata: {
+        nativeAgentSession: { agent: 'opencode', sessionId: 'native-production-thread', workingDirectory: '/Users/mini/wingmen/wingman21', capturedAt: now, source: 'manual' },
+      } });
+
+    const input = { subscription: f.subscription, botIdentity: f.botIdentity, channel: f.channel, messages: [m1, m2],
+      event: { entity_id: 'm2', channel_id: 'channel-1', cursor: 'cursor-m2' } };
+    expect(f.runtime.recover(input, routingKey).handled).toBe(true);
+    await f.runtime.waitForIdle();
+
+    expect(f.creates).toHaveLength(1); expect(f.creates[0][3].type).toBe('native-resume');
+    expect(f.prompts).toHaveLength(0); expect(f.published).toHaveLength(1);
+    expect(f.interceptStore.getByRoutingKey(routingKey)?.sessionId).toBe('session-1');
+  });
+
+  test('replays one accepted turn into a generation-two replacement with full history and pending messages', async () => {
+    const f = fixture({ failNativeResume: true });
+    const m1 = f.message('m1', '@Rick original', true);
+    const a1 = f.message('a1', 'First answer', false, 'npub1rick');
+    const m2 = f.message('m2', '@Rick accepted message', true);
+    const m3 = f.message('m3', '@Rick queued while stopped', true);
+    const routingKey = buildDirectChatRoutingKey({ towerServiceNpub: 'npub1tower', workspaceId: 'workspace-1', channelId: 'channel-1', threadId: 'thread-1', agentNpub: 'npub1rick' });
+    const turnId = buildDirectChatTurnId(routingKey, ['m2']);
+    const now = new Date().toISOString();
+    let seeded = f.interceptStore.upsertMessage({ routingKey, subscriptionId: 'sub1', agentId: 'rick', workspaceOwnerNpub: 'npub1workspace',
+      sourceAppNpub: 'npub1app', towerServiceNpub: 'npub1tower', workspaceId: 'workspace-1', channelId: 'channel-1', threadId: 'thread-1',
+      botNpub: 'npub1rick', messageId: 'm2', eventCursor: 'cursor-m2', at: now }).record;
+    seeded = f.interceptStore.upsertMessage({ routingKey, subscriptionId: 'sub1', agentId: 'rick', workspaceOwnerNpub: 'npub1workspace',
+      sourceAppNpub: 'npub1app', towerServiceNpub: 'npub1tower', workspaceId: 'workspace-1', channelId: 'channel-1', threadId: 'thread-1',
+      botNpub: 'npub1rick', messageId: 'm3', eventCursor: 'cursor-m3', at: now }).record;
+    f.interceptStore.save({ ...seeded, sessionId: 'archived-session', state: 'pending', lastHumanMessageIdDelivered: 'm2',
+      lastCompletedTurnId: 'turn-one', pendingMessageCount: 1 });
+    f.turnStore.save({ turnId, routingKey, sourceMessageIds: ['m2'], clientRequestId: buildDirectChatClientRequestId(routingKey, turnId),
+      replyBody: null, publishedMessageId: null, state: 'accepted', createdAt: now, updatedAt: now });
+    f.archivedSessions.set('archived-session', { id: 'archived-session', agent: 'codex', name: 'Rick Direct Chat', npub: 'npub1manager',
+      workingDirectory: '/Users/mini/wingmen/wingman21', metadata: { nativeAgentSession: { agent: 'codex', sessionId: 'native-old',
+        workingDirectory: '/Users/mini/wingmen/wingman21', capturedAt: now, source: 'manual' } } });
+    const input = { subscription: f.subscription, botIdentity: f.botIdentity, channel: f.channel, messages: [m1, a1, m2, m3],
+      event: { entity_id: 'm3', channel_id: 'channel-1', cursor: 'cursor-m3' } };
+    f.runtime.recover(input, routingKey); f.runtime.recover(input, routingKey);
+    await f.runtime.waitForIdle();
+
+    expect(f.creates).toHaveLength(2); expect(f.creates[0][3].type).toBe('native-resume'); expect(f.creates[1][3].type).toBe('agent-chat');
+    expect(f.prompts).toHaveLength(1); expect(f.published).toHaveLength(1);
+    const prompt = f.prompts[0]!;
+    expect(prompt).toContain('THREAD HISTORY JSON');
+    expect(['m1', 'a1', 'm2', 'm3'].every((id) => prompt.includes(`"messageId": "${id}"`))).toBe(true);
+    const undeliveredSection = prompt.split('UNDELIVERED MESSAGES JSON\n')[1]!.split('\n\nNEXT MESSAGE')[0]!;
+    expect(JSON.parse(undeliveredSection).map((message: any) => message.messageId)).toEqual(['m2', 'm3']);
+    const state = f.interceptStore.getByRoutingKey(routingKey)!;
+    expect(state.sessionGeneration).toBe(2); expect(state.previousSessionIds).toEqual(['archived-session']);
+    expect(f.published[0].metadata.source_message_ids).toEqual(['m2', 'm3']);
   });
 
   test('blocks on Tower auth failure without publishing speculative output', async () => {

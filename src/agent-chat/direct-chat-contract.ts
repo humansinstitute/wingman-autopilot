@@ -131,7 +131,7 @@ export function buildDirectChatBootstrapPrompt(input: {
   const recovery = input.recovery
     ? `\n\nCONTINUITY RECOVERY\nprevious_session_id: ${input.recovery.previousSessionId}\nreason: ${input.recovery.reason}`
     : '';
-  return `AGENT DIRECT CHAT\n\nCHANNEL CONTEXT\n${input.contextPrompt}\n\nFLIGHT DECK SOURCE\n${source}${recovery}\n\nTHREAD HISTORY JSON\n${JSON.stringify(input.history, null, 2)}\n\nNEXT MESSAGE\nmessage_id: ${latest.messageId}\nuser_id: ${latest.userId ?? ''}\nuser_npub: ${latest.userNpub ?? ''}\nmessage: ${latest.message}\nattachments: ${JSON.stringify(latest.attachments)}\n\n${FINAL_RESPONSE_GUIDANCE}`;
+  return `AGENT DIRECT CHAT\n\nCHANNEL CONTEXT\n${input.contextPrompt}\n\nFLIGHT DECK SOURCE\n${source}${recovery}\n\nTHREAD HISTORY JSON\n${JSON.stringify(input.history, null, 2)}\n\nUNDELIVERED MESSAGES JSON\n${JSON.stringify(input.nextMessages, null, 2)}\n\nNEXT MESSAGE\nmessage_id: ${latest.messageId}\nuser_id: ${latest.userId ?? ''}\nuser_npub: ${latest.userNpub ?? ''}\nmessage: ${latest.message}\nattachments: ${JSON.stringify(latest.attachments)}\n\n${FINAL_RESPONSE_GUIDANCE}`;
 }
 
 function serialisePromptMessage(message: DirectChatMessage): Record<string, unknown> {
