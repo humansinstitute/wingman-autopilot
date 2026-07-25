@@ -1,5 +1,6 @@
 import type { ProcessManager } from "../agents/process-manager";
 import type { AgentType } from "../config";
+import { isAutomaticallyStartedSession } from "./autosession-cleanup";
 
 type NextActionCleanupDetail = {
   id: string;
@@ -31,6 +32,7 @@ export async function cleanupStopNextActionSessions(
 ): Promise<NextActionCleanupResult> {
   const sessions = deps.manager.listSessions();
   const candidates = sessions.filter((session) => session.metadata?.nextAction === "stop"
+    && isAutomaticallyStartedSession(session)
     && !deps.isSessionProtected?.(session.id));
   const details: NextActionCleanupDetail[] = [];
   let stopped = 0;
