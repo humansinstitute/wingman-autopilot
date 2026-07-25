@@ -1,0 +1,85 @@
+import { afterEach, describe, expect, mock, test } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import type { AgentAdapter } from '../agents/agent-adapter';
+import type { ProcessManager, SessionSnapshot } from '../agents/process-manager';
+import { FlightDeckSessionTurnBridge } from './flightdeck-session-turn-bridge';
+import { FlightDeckSessionTurnStore } from './flightdeck-session-turn-store';
+
+const roots: string[] = [];
+afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+
+function fixture(options: { bound?: boolean; missing?: boolean } = {}) {
+  const root = mkdtempSync(join(tmpdir(), 'fd-turn-bridge-'));
+  roots.push(root);
+  const metadata = options.bound === false
+    ? { AGENT: true, billingMode: 'subscription' as const }
+    : { AGENT: true, billingMode: 'subscription' as const, sessionClass: 'flightdeck_chat' as const,
+        flightdeckTowerServiceNpub: 'npub1tower', flightdeckWorkspaceId: 'workspace-1',
+        flightdeckChannelId: 'channel-1', flightdeckThreadId: options.missing ? undefined : 'thread-1',
+        flightdeckAgentNpub: 'npub1agent' };
+  const session: SessionSnapshot = { id: 'session-1', agent: 'codex', status: 'running', npub: 'npub1owner',
+    port: 3700, pid: 1, name: 'bound', startedAt: new Date().toISOString(), command: [],
+    workingDirectory: root, logs: [], metadata };
+  let messages = [{ role: 'user', content: 'internal callback envelope', createdAt: '2026-07-25T00:00:00.000Z' },
+    { role: 'assistant', content: 'Authoritative callback result', createdAt: '2026-07-25T00:00:01.000Z' }];
+  const adapter = { fetchMessages: mock(async () => messages), fetchStatus: mock(async () => 'stable' as const),
+    deliversPromptsDirectly: () => true, waitForReady: mock(async () => {}), sendMessage: mock(async () => {}),
+    interruptCurrentTurn: mock(async () => false), getEventsUrl: () => null, dispose: mock(async () => {}) } satisfies AgentAdapter;
+  const manager = { getSession: (id: string) => id === session.id ? session : undefined,
+    getAdapter: () => adapter, captureAgentapiCodexSessionIdFromPrompt: mock(async () => false) } as unknown as ProcessManager;
+  const publish = mock(async (input: { body: string; clientRequestId?: string | null }) => ({ message: { id: 'tower-message-1' }, input }));
+  const activityStates: string[] = [];
+  const activityBodies: string[] = [];
+  const bridge = new FlightDeckSessionTurnBridge({ manager,
+    store: new FlightDeckSessionTurnStore(join(root, 'turns.sqlite')),
+    resolveDelivery: () => ({ backendBaseUrl: 'https://tower.test', appNpub: 'npub1app',
+      botIdentity: { botNpub: 'npub1agent', botPubkeyHex: '00'.repeat(32), botSecret: new Uint8Array(32) } }),
+    publish: publish as never,
+    createActivity: () => ({ publish: async (state: string, body?: string) => { activityStates.push(state); if (body) activityBodies.push(body); },
+      publishLatestCommentary: async () => { activityStates.push('working'); activityBodies.push('Visible commentary'); } }) as never,
+    log: { error: mock(() => {}) } });
+  return { bridge, session, publish, activityStates, activityBodies, setMessages: (next: typeof messages) => { messages = next; } };
+}
+
+describe('Flight Deck-bound session turn bridge', () => {
+  test('publishes a callback terminal response once while keeping its initiating prompt hidden and surfacing commentary', async () => {
+    const f = fixture();
+    const turn = f.bridge.accept({ session: f.session, prompt: 'internal callback envelope', promptType: 'dispatch_callback', boundaryIdentity: 'callback-1' });
+    expect(turn).not.toBeNull();
+    f.bridge.observe(turn!);
+    await f.bridge.waitForIdle();
+    expect(f.publish).toHaveBeenCalledTimes(1);
+    expect(f.publish.mock.calls[0]?.[0].body).toBe('Authoritative callback result');
+    expect(f.publish.mock.calls[0]?.[0].body).not.toContain('internal callback envelope');
+    expect(f.activityStates).toEqual(['accepted', 'working', 'completed']);
+    expect(f.activityBodies).toContain('Visible commentary');
+  });
+
+  test('deduplicates direct-chat final publication and restart recovery by stable turn identity', async () => {
+    const f = fixture();
+    const first = f.bridge.accept({ session: f.session, prompt: '', promptType: 'direct_chat', boundaryIdentity: 'direct-turn-1' })!;
+    await f.bridge.publishKnownFinal(first, 'One direct response', '2026-07-25T01:00:00.000Z');
+    const replay = f.bridge.accept({ session: f.session, prompt: '', promptType: 'direct_chat', boundaryIdentity: 'direct-turn-1' })!;
+    await f.bridge.publishKnownFinal(replay, 'One direct response', '2026-07-25T01:00:00.000Z');
+    f.bridge.recover();
+    await f.bridge.waitForIdle();
+    expect(f.publish).toHaveBeenCalledTimes(1);
+    expect(f.publish.mock.calls[0]?.[0].clientRequestId).toBe(`flightdeck-session-turn:${first.turnId}`);
+  });
+
+  test('does not publish unbound workers even when they have other reporting metadata', async () => {
+    const f = fixture({ bound: false });
+    f.session.metadata = { AGENT: true, billingMode: 'subscription', bindingType: 'thread', bindingId: 'thread-elsewhere' };
+    expect(f.bridge.accept({ session: f.session, prompt: 'worker callback', promptType: 'queued_prompt', boundaryIdentity: 'worker-1' })).toBeNull();
+    expect(f.publish).not.toHaveBeenCalled();
+  });
+
+  test('fails visibly for an explicit binding with missing routing metadata', () => {
+    const f = fixture({ missing: true });
+    expect(() => f.bridge.accept({ session: f.session, prompt: 'callback', promptType: 'queued_prompt', boundaryIdentity: 'broken-1' }))
+      .toThrow('flightdeckThreadId');
+    expect(f.publish).not.toHaveBeenCalled();
+  });
+});

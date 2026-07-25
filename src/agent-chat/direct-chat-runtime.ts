@@ -23,6 +23,7 @@ import { AgentActivityPublisher, type AgentActivityContext } from './agent-activ
 import { awaitAcceptedFinalResponse, sendPromptAndAwaitFinalResponse } from './session-runtime-session-ops';
 import { createFlightDeckPgChannelMessage, type FlightDeckPgChannel, type FlightDeckPgEvent, type FlightDeckPgMessage } from './tower-client';
 import type { AgentDefinitionRecord, RuntimeBotIdentity, WorkspaceSubscriptionRecord } from './types';
+import type { FlightDeckSessionTurnBridge } from './flightdeck-session-turn-bridge';
 
 export interface DirectChatRuntimeInput {
   subscription: WorkspaceSubscriptionRecord;
@@ -42,6 +43,7 @@ interface DirectChatRuntimeDependencies {
   createActivityPublisher?: (context: AgentActivityContext) => AgentActivityPublisher;
   getArchivedSession?: (sessionId: string) => ArchivedSession | null;
   log?: Pick<Console, 'error' | 'warn'>;
+  turnBridge?: FlightDeckSessionTurnBridge;
 }
 
 interface MessageRevisionDispatch {
@@ -327,12 +329,16 @@ export class AgentDirectChatRuntime {
   }
 
   private async publishTurn(input: DirectChatRuntimeInput, intercept: NonNullable<ReturnType<ChatInterceptStateStore['getByRoutingKey']>>, agent: AgentDefinitionRecord, turnId: string, sourceMessageIds: string[], clientRequestId: string, body: string): Promise<void> {
-    const result = await this.publish({ backendBaseUrl: input.subscription.backendBaseUrl,
-      workspaceId: input.subscription.workspaceId!, channelId: intercept.channelId, appNpub: input.subscription.sourceAppNpub,
-      botIdentity: input.botIdentity, body, threadId: intercept.threadId, clientRequestId,
-      metadata: { source: 'autopilot_session', session_id: intercept.sessionId, turn_id: turnId,
-        source_message_ids: sourceMessageIds, agent_npub: intercept.botNpub } });
-    const messageId = result.message?.id ?? null;
+    const session = intercept.sessionId ? this.deps.processManager.getSession(intercept.sessionId) : null;
+    const bridgeRecord = session && this.deps.turnBridge?.accept({ session, prompt: '', promptType: 'direct_chat',
+      boundaryIdentity: turnId, sourceMessageIds });
+    const messageId = bridgeRecord && this.deps.turnBridge
+      ? await this.deps.turnBridge.publishKnownFinal(bridgeRecord, body, new Date().toISOString())
+      : (await this.publish({ backendBaseUrl: input.subscription.backendBaseUrl,
+          workspaceId: input.subscription.workspaceId!, channelId: intercept.channelId, appNpub: input.subscription.sourceAppNpub,
+          botIdentity: input.botIdentity, body, threadId: intercept.threadId, clientRequestId,
+          metadata: { source: 'autopilot_session', session_id: intercept.sessionId, turn_id: turnId,
+            source_message_ids: sourceMessageIds, agent_npub: intercept.botNpub } })).message?.id ?? null;
     const now = new Date().toISOString();
     this.turnStore.save({ turnId, routingKey: intercept.routingKey, sourceMessageIds, clientRequestId, replyBody: body,
       publishedMessageId: messageId, state: 'completed', createdAt: now, updatedAt: now });

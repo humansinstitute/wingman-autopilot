@@ -1165,6 +1165,20 @@ export class WorkspaceSubscriptionManager {
     }
   }
 
+  resolveFlightDeckTurnDelivery(input: {
+    towerServiceNpub: string;
+    workspaceId: string;
+    agentNpub: string;
+  }): { backendBaseUrl: string; appNpub: string; botIdentity: RuntimeBotIdentity } | null {
+    const subscription = this.store.listAll().find((record) =>
+      record.towerServiceNpub === input.towerServiceNpub
+      && record.workspaceId === input.workspaceId
+      && record.botNpub === input.agentNpub);
+    if (!subscription) return null;
+    const botIdentity = this.getRuntimeBotIdentity(subscription.subscriptionId);
+    return botIdentity ? { backendBaseUrl: subscription.backendBaseUrl, appNpub: subscription.sourceAppNpub, botIdentity } : null;
+  }
+
   listForManager(npub: string): WorkspaceSubscriptionRecord[] {
     return this.store.listForManagerNpub(npub);
   }

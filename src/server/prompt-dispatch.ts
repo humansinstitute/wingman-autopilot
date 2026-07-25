@@ -8,6 +8,7 @@ import type { SessionSnapshot } from "../agents/process-manager";
 import { resolveSessionChargeNpub } from "../sessions/session-metadata";
 import { deliverSessionAgentMessage } from "./session-agent-message";
 import { getSessionPromptReadiness } from "./prompt-readiness";
+import type { FlightDeckSessionTurnBridge } from "../agent-chat/flightdeck-session-turn-bridge";
 
 // ---------- Context supplied by server.ts ----------
 
@@ -28,7 +29,7 @@ export interface PromptDispatchContext {
   };
   isUserApprovedForWork?: (npub: string) => boolean;
   promptQueueStore: {
-    getNextQueuedPrompt: (sessionId: string) => { content: string } | null;
+    getNextQueuedPrompt: (sessionId: string) => { id?: string; content: string; timestamp?: string } | null;
     removeNextPrompt: (sessionId: string) => void;
     getQueueCount: (sessionId: string) => number;
   };
@@ -48,6 +49,7 @@ export interface PromptDispatchContext {
   maybeTriggerNightWatch: (session: SessionSnapshot | null, deps: any) => void | Promise<void>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   nightWatchDeps: any;
+  flightDeckTurnBridge?: FlightDeckSessionTurnBridge;
 }
 
 // ---------- Custom error ----------
@@ -237,7 +239,11 @@ export function createPromptDispatchEngine(ctx: PromptDispatchContext): PromptDi
       }
 
       void ctx.manager.captureAgentapiCodexSessionIdFromPrompt?.(session.id, nextPrompt.content, { sentAtMs });
+      const flightDeckTurn = ctx.flightDeckTurnBridge?.accept({ session, prompt: nextPrompt.content,
+        promptType: 'queued_prompt', boundaryIdentity: nextPrompt.id ?? `${nextPrompt.timestamp ?? sentAtMs}:${nextPrompt.content}`,
+        acceptedAt: nextPrompt.timestamp });
       ctx.promptQueueStore.removeNextPrompt(session.id);
+      if (flightDeckTurn) ctx.flightDeckTurnBridge?.observe(flightDeckTurn);
       const messageSyncStartedAt = Date.now();
       const messages = await waitForMessageUpdate(session.id, initialCount);
       messageSyncMs = elapsedSince(messageSyncStartedAt);

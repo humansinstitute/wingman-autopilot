@@ -74,6 +74,10 @@ class WorkspaceSubscriptionStore {
     );
   }
 
+  listAll(): WorkspaceSubscriptionRecord[] {
+    return this.listWhere('1 = 1', []);
+  }
+
   getBySubscriptionId(subscriptionId: string): WorkspaceSubscriptionRecord | null {
     return this.getWhere('subscription_id = ?1', [subscriptionId]);
   }

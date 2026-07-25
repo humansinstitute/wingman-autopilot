@@ -107,6 +107,7 @@ import { WorkspaceSubscriptionManager } from './agent-chat/subscription-runtime'
 import { DispatchPipelineRuntime } from './agent-chat/dispatch-pipelines/runtime';
 import { AgentCommentSessionRuntime } from './agent-chat/comment-session-runtime';
 import { AgentChatSessionRuntime } from './agent-chat/session-runtime';
+import { FlightDeckSessionTurnBridge } from './agent-chat/flightdeck-session-turn-bridge';
 import { AgentWorkSessionRuntime } from './agent-work/session-runtime';
 import { AgentWorkSessionIdleRetention } from './agent-work/session-idle-retention';
 import { MemoryStore } from "./mcp/memory-store";
@@ -1659,10 +1660,20 @@ await rehydrateOrphanedSessions(
   24, // Look for sessions started in the last 24 hours
 );
 
+const flightDeckSessionTurnBridge = new FlightDeckSessionTurnBridge({
+  manager,
+  resolveDelivery: (session) => workspaceSubscriptionManager.resolveFlightDeckTurnDelivery({
+    towerServiceNpub: session.metadata?.flightdeckTowerServiceNpub ?? '',
+    workspaceId: session.metadata?.flightdeckWorkspaceId ?? '',
+    agentNpub: session.metadata?.flightdeckAgentNpub ?? '',
+  }),
+  log: console,
+});
 const agentChatSessionRuntime = new AgentChatSessionRuntime({
   defaultAgent: config.defaultAgent,
   processManager: manager,
   idleRetentionMinutes: 60,
+  turnBridge: flightDeckSessionTurnBridge,
 });
 workspaceSubscriptionManager.setChatRuntime(agentChatSessionRuntime);
 // NOTE: `agentWorkSessionRuntime` construction, `setAgentWorkRuntime`, and
@@ -1727,6 +1738,7 @@ const promptDispatchEngine = createPromptDispatchEngine({
   syncSessionMessages,
   maybeTriggerNightWatch,
   nightWatchDeps,
+  flightDeckTurnBridge: flightDeckSessionTurnBridge,
 });
 const {
   dispatchNextQueuedPromptForSession,
@@ -2510,6 +2522,7 @@ const dispatchPipelineRuntime = new DispatchPipelineRuntime({
 workspaceSubscriptionManager.setDispatchPipelineRuntime(dispatchPipelineRuntime);
 
 await workspaceSubscriptionManager.startupReload();
+flightDeckSessionTurnBridge.recover();
 
 void resumeRunningPipelineRuns({
   store: pipelineStore,
