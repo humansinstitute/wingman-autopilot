@@ -123,6 +123,15 @@ export async function deleteSessionApi(sessionId) {
   return { success: true };
 }
 
+export async function bulkCloseStaleAutoSessionsApi() {
+  const response = await fetch("/api/sessions/bulk-close-stale-auto", { method: "POST" });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(body?.error || response.statusText || "Failed to close auto sessions");
+  }
+  return body;
+}
+
 /**
  * Updates a session's name.
  * @param {string} sessionId - The session ID

@@ -43,6 +43,8 @@ export function initHomeView(deps) {
     createAgentStatusIndicator,
     buildSessionFilterOptions,
     fetchSessions,
+    bulkCloseStaleAutoSessions,
+    openConfirmDialog,
     syncMenuTabs,
     showToast,
     // App helpers
@@ -256,6 +258,8 @@ export function initHomeView(deps) {
         createAgentStatusIndicator,
         buildSessionFilterOptions,
         fetchSessions,
+        bulkCloseStaleAutoSessions,
+        openConfirmDialog,
         syncMenuTabs,
         showToast,
         escapeHtml,

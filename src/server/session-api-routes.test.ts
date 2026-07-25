@@ -1138,6 +1138,49 @@ describe("handleSessionApi", () => {
     });
   });
 
+  test("POST /api/sessions/bulk-close-stale-auto closes eligible stable sessions", async () => {
+    const autoSession = {
+      ...baseSession,
+      origin: { type: "agent-work", id: "task-1" },
+      metadata: { AGENT: true, billingMode: "subscription" as const },
+    };
+    const stopped: string[] = [];
+    const archived: string[] = [];
+    const ctx = buildCtx({
+      manager: {
+        listSessions: () => [autoSession],
+        getSession: (id: string) => id === autoSession.id ? autoSession : undefined,
+        stopSession: async (id: string) => {
+          stopped.push(id);
+          return id === autoSession.id ? autoSession : undefined;
+        },
+      } as any,
+      messageStore: {
+        getSession: () => ({ lastUpdatedAt: new Date(Date.now() - 22 * 60_000).toISOString() }),
+      } as any,
+      getPromptReadinessForSession: async () => ({
+        state: "ready",
+        reason: "test-ready",
+        retryAfterMs: 1,
+        observedAt: Date.now(),
+      }),
+      scheduleSessionArchive: (id) => archived.push(id),
+    });
+    const url = new URL("http://localhost:3021/api/sessions/bulk-close-stale-auto");
+    const response = await handleSessionApi(
+      new Request(url.toString(), { method: "POST" }),
+      url,
+      "POST",
+      makeAuth(),
+      ctx,
+    );
+
+    expect(response?.status).toBe(200);
+    expect(await response?.json()).toMatchObject({ eligible: 1, closed: [autoSession.id], failed: [] });
+    expect(stopped).toEqual([autoSession.id]);
+    expect(archived).toEqual([autoSession.id]);
+  });
+
   test("GET /api/sessions includes sessions owned via metadata.ownerNpub", async () => {
     const delegatedSession = {
       ...baseSession,

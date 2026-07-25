@@ -57,7 +57,7 @@ export function isAutomaticallyStartedSession(session: AutosessionCleanupCandida
 
 export function assessAutosessionCleanupCandidate(
   session: AutosessionCleanupCandidate,
-  options: { currentSessionId: string; nowMs: number },
+  options: { currentSessionId: string; nowMs: number; staleMinutes?: number },
 ): AutosessionCleanupDecision {
   const sessionId = typeof session.id === "string" ? session.id.trim() : "";
   if (sessionId && sessionId === options.currentSessionId) {
@@ -76,7 +76,7 @@ export function assessAutosessionCleanupCandidate(
     return { eligible: false, reason: "missing-last-updated-at" };
   }
 
-  const staleAfterMs = AUTOSESSION_STALE_MINUTES * 60 * 1000;
+  const staleAfterMs = (options.staleMinutes ?? AUTOSESSION_STALE_MINUTES) * 60 * 1000;
   if (options.nowMs - lastUpdatedAtMs <= staleAfterMs) {
     return { eligible: false, reason: "not-stale" };
   }

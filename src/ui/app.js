@@ -111,6 +111,7 @@ import {
 } from "./utils/clipboard.js";
 import {
   fetchSessionApi,
+  bulkCloseStaleAutoSessionsApi,
   postSessionMessageApi,
   setPinnedArtifactApi,
   updateSessionMetadataApi,
@@ -2107,6 +2108,8 @@ const homeViewModule = initHomeView({
   createAgentStatusIndicator,
   buildSessionFilterOptions,
   fetchSessions,
+  bulkCloseStaleAutoSessions: bulkCloseStaleAutoSessionsApi,
+  openConfirmDialog,
   syncMenuTabs,
   showToast,
   isAppActionDisabled,

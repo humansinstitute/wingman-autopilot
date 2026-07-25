@@ -51,6 +51,7 @@ import {
 } from "../auth/delegation-access";
 import type { WorkspaceDelegationStore } from "../storage/workspace-delegation-store";
 import type { NightWatchStartOptions } from "../nightwatch/nightwatch-start-config";
+import { closeStaleStableAutoSessions } from "../sessions/bulk-close-auto-sessions";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "HEAD";
 const MAX_SPEECH_TEXT_LENGTH = 4_000;
@@ -1588,6 +1589,34 @@ export async function handleSessionApi(
         active: filterValue,
       },
     });
+  }
+
+  if (pathname === "/api/sessions/bulk-close-stale-auto" && method === "POST") {
+    const denied = await ctx.ensureApiAccess(ctx.AccessActions.SessionsManage, request, url, authContext);
+    if (denied) return denied;
+
+    const viewerNormalizedNpub = resolveSelfSpaceViewerNpub(authContext, ctx);
+    const viewerIsAdmin = isConfiguredAdminNpub(ctx, viewerNormalizedNpub);
+    const sessions = ctx.manager.listSessions().filter((session) =>
+      viewerIsAdmin || (
+        viewerNormalizedNpub !== null
+        && ctx.sessionBelongsToViewer(session.npub ?? null, session.metadata, viewerNormalizedNpub, false)
+      ),
+    );
+    const result = await closeStaleStableAutoSessions({
+      sessions,
+      manager: ctx.manager,
+      now: Date.now,
+      getLastUpdatedAt: (sessionId) => ctx.messageStore.getSession(sessionId)?.lastUpdatedAt ?? null,
+      getReadiness: async (session) => ctx.getPromptReadinessForSession?.(session) ?? {
+        state: "unreachable",
+        reason: "readiness-unavailable",
+        retryAfterMs: 5000,
+        observedAt: Date.now(),
+      },
+      onClosed: (sessionId) => ctx.scheduleSessionArchive(sessionId, ctx.manager),
+    });
+    return Response.json(result);
   }
 
   // ──────────────────────────────────────────────

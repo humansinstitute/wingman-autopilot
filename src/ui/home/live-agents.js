@@ -12,6 +12,7 @@ import {
 } from "./session-groups.js";
 import { createSessionGroupTabs } from "./session-group-tabs.js";
 import { canResumeNativeAgentSession } from "./native-session-resume.js";
+import { createBulkCloseAutoSessionsButton } from "./bulk-close-auto-sessions.js";
 export { canResumeNativeAgentSession };
 
 function shouldRenderSessionCards() {
@@ -208,6 +209,8 @@ export function createLiveAgentsSection(deps) {
     openDialog,
     buildSessionFilterOptions,
     fetchSessions,
+    bulkCloseStaleAutoSessions,
+    openConfirmDialog,
     syncMenuTabs,
     sessionSort,
     onSessionSortChange,
@@ -329,6 +332,13 @@ export function createLiveAgentsSection(deps) {
   launchBtn.textContent = "Launch Agent Session";
   launchBtn.addEventListener("click", openDialog);
   actions.append(launchBtn);
+
+  actions.append(createBulkCloseAutoSessionsButton({
+    closeSessions: bulkCloseStaleAutoSessions,
+    confirmClose: openConfirmDialog,
+    refreshSessions: fetchSessions,
+    showToast: deps.showToast,
+  }));
 
   const refreshBtn = document.createElement("button");
   refreshBtn.className = "wm-button secondary";
