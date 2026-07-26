@@ -53,17 +53,17 @@ export class FlightDeckSessionTurnBridge {
     log?: Pick<Console, 'error'> }) {}
 
   accept(input: { session: SessionSnapshot; prompt: string; promptType: string; boundaryIdentity: string;
-    sourceMessageIds?: string[]; acceptedAt?: string }): FlightDeckSessionTurnRecord | null {
+    sourceMessageIds?: string[]; acceptedAt?: string; turnId?: string; clientRequestId?: string }): FlightDeckSessionTurnRecord | null {
     if (input.session.metadata?.sessionClass !== 'flightdeck_chat') return null;
     resolveFlightDeckSessionBinding(input.session, this.deps.resolveDelivery(input.session));
-    const turnId = buildFlightDeckSessionTurnId(input.session.id, input.boundaryIdentity);
+    const turnId = input.turnId ?? buildFlightDeckSessionTurnId(input.session.id, input.boundaryIdentity);
     const existing = this.store.get(turnId);
     if (existing) return existing;
     const now = input.acceptedAt ?? new Date().toISOString();
     return this.store.save({ turnId, sessionId: input.session.id, prompt: input.prompt, promptType: input.promptType,
       sourceMessageIds: input.sourceMessageIds ?? [],
       triggerMessageId: input.sourceMessageIds?.at(-1) ?? this.deps.resolveTriggerMessageId?.(input.session) ?? null,
-      clientRequestId: `flightdeck-session-turn:${turnId}`,
+      clientRequestId: input.clientRequestId ?? `flightdeck-session-turn:${turnId}`,
       replyBody: null, finalMessageIdentity: null, publishedMessageId: null, state: 'accepted', lastError: null,
       createdAt: now, updatedAt: now });
   }

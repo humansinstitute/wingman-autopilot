@@ -184,17 +184,20 @@ export async function sendPromptAndAwaitFinalResponse(
       : 0;
     const promptIndex = authoritativeMessages.findLastIndex((message, index) =>
       index >= promptBoundaryFloor && message.role === 'user' && message.content === prompt);
-    if (promptIndex < 0 && agentapiCodex) {
+    if (promptIndex < 0) {
       if (runtimeStatus !== 'stable') observedActiveRuntime = true;
       if (!observedActiveRuntime && Date.now() >= promptBoundaryDeadline) {
         throw new PromptBoundaryNotObservedError(sessionId);
       }
     }
-    const turnMessages = promptIndex >= 0
-      ? authoritativeMessages.slice(promptIndex + 1)
-      : agentapiCodex
-        ? []
-        : authoritativeMessages.slice(initialMessages.length);
+    const nextPromptOffset = promptIndex >= 0
+      ? authoritativeMessages.slice(promptIndex + 1).findIndex((message) => message.role === 'user')
+      : -1;
+    const turnMessages = promptIndex < 0
+      ? []
+      : nextPromptOffset >= 0
+        ? authoritativeMessages.slice(promptIndex + 1, promptIndex + 1 + nextPromptOffset)
+        : authoritativeMessages.slice(promptIndex + 1);
     const finalMessage = turnMessages
       .filter((message) => (message.role === 'assistant' || message.role === 'agent') && message.content.trim().length > 0)
       .at(-1);

@@ -43,6 +43,7 @@ function fixture(options: {
       waitForReady: async () => {}, fetchStatus: async () => 'stable', deliversPromptsDirectly: () => true, fetchMessages: async () => [...(sessions.get(id).messages ?? [])],
       sendMessage: async (prompt: string) => {
         prompts.push(prompt);
+        sessions.get(id).messages.push({ role: 'user', content: prompt, createdAt: new Date().toISOString() });
         if (options.includeWorkingMessage) sessions.get(id).messages.push({ role: 'agent-working', content: 'Thinking and tool progress', createdAt: new Date().toISOString() });
         sessions.get(id).messages.push({ role: options.replyRole ?? 'assistant', content: options.finalContent ?? '## Answer\n\nFinal **Markdown**.', createdAt: new Date().toISOString() });
       },
@@ -107,6 +108,9 @@ describe('Agent Direct Chat runtime', () => {
     expect(f.creates).toHaveLength(1); expect(f.creates[0][1]).toBe('/Users/mini/wingmen/wingman21');
     expect(f.prompts[0]).toContain('AGENT DIRECT CHAT'); expect(f.published).toHaveLength(1);
     expect(f.published[0].clientRequestId).toMatch(/^agentdirect:/);
+    expect(f.published[0].metadata.prompt_type).toBe('direct_chat');
+    expect(f.published[0].metadata.source_message_ids).toEqual(['m1']);
+    expect(f.published[0].metadata.turn_id).toBe(f.interceptStore.listAll()[0]!.lastCompletedTurnId);
     const state = f.interceptStore.listAll()[0]!;
     expect(state.lastHumanMessageIdDelivered).toBe('m1'); expect(state.lastAgentMessageIdPublished).toBe('agent-message-1'); expect(state.lastCompletedTurnId).toBeTruthy();
   });

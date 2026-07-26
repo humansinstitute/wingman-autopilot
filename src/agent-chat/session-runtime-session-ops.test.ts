@@ -6,7 +6,7 @@ import { describe, expect, test } from 'bun:test';
 import type { AgentAdapter } from '../agents/agent-adapter';
 import type { ProcessManager, SessionSnapshot } from '../agents/process-manager';
 import { resolveAuthoritativeSessionMessages } from '../agents/authoritative-session-messages';
-import { awaitAcceptedFinalResponse, sendPromptAndAwaitAssistantReply, sendPromptAndAwaitFinalResponse } from './session-runtime-session-ops';
+import { awaitAcceptedFinalResponse, PromptBoundaryNotObservedError, sendPromptAndAwaitAssistantReply, sendPromptAndAwaitFinalResponse } from './session-runtime-session-ops';
 
 class FakeAdapter implements AgentAdapter {
   private sent = false;
@@ -196,7 +196,8 @@ describe('sendPromptAndAwaitFinalResponse', () => {
     let sent = false;
     const adapter = {
       waitForReady: async () => {}, sendMessage: async () => { sent = true; },
-      fetchMessages: async () => sent ? messages : [], fetchStatus: async () => status, deliversPromptsDirectly: () => true,
+      fetchMessages: async () => sent ? [{ role: 'user', content: 'prompt', createdAt: '2026-01-01T00:00:00Z' }, ...messages] : [],
+      fetchStatus: async () => status, deliversPromptsDirectly: () => true,
       interruptCurrentTurn: async () => false, getEventsUrl: () => null, dispose: async () => {},
     } as AgentAdapter;
     return { session, manager: buildManager(session, adapter) };
@@ -220,6 +221,33 @@ describe('sendPromptAndAwaitFinalResponse', () => {
   test('times out when a completed turn exposes progress but no final card', async () => {
     const { session, manager } = finalManager([{ role: 'agent-working', content: 'Only progress', createdAt: '2026-01-01T00:00:01Z' }]);
     await expect(sendPromptAndAwaitFinalResponse(manager, session.id, 'prompt', { timeoutMs: 30, pollIntervalMs: 10 })).rejects.toThrow('final response');
+  });
+
+  test('does not reuse a callback final that remains visible when the new direct prompt has no output', async () => {
+    const prompt = 'AGENT DIRECT CHAT\nNEXT MESSAGE\nmessage_id: human-new';
+    const stale = { role: 'assistant', content: 'Previous queued callback response.',
+      createdAt: '2026-07-26T07:00:00.000Z', messageId: 'callback-final-old' };
+    const session = { id: 'direct-stale-callback', agent: 'opencode', port: 0, name: 'Direct', status: 'running',
+      startedAt: new Date().toISOString(), command: [], workingDirectory: '/tmp', logs: [] } as SessionSnapshot;
+    let sent = false;
+    const adapter = {
+      waitForReady: async () => {}, sendMessage: async () => { sent = true; }, fetchStatus: async () => 'stable',
+      fetchMessages: async () => sent ? [stale] : [], deliversPromptsDirectly: () => true,
+      interruptCurrentTurn: async () => false, getEventsUrl: () => null, dispose: async () => {},
+    } as AgentAdapter;
+
+    await expect(sendPromptAndAwaitFinalResponse(buildManager(session, adapter), session.id, prompt,
+      { timeoutMs: 60, pollIntervalMs: 10, promptBoundaryTimeoutMs: 20 })).rejects.toBeInstanceOf(PromptBoundaryNotObservedError);
+  });
+
+  test('does not use a later manager prompt final for the current human turn', async () => {
+    const prompt = 'AGENT DIRECT CHAT\nNEXT MESSAGE\nmessage_id: human-new';
+    const { session, manager } = finalManager([
+      { role: 'user', content: 'Queued callback manager prompt', createdAt: '2026-01-01T00:00:01Z' },
+      { role: 'assistant', content: 'Callback final', createdAt: '2026-01-01T00:00:02Z' },
+    ]);
+    await expect(sendPromptAndAwaitFinalResponse(manager, session.id, prompt,
+      { timeoutMs: 30, pollIntervalMs: 10 })).rejects.toThrow('final response');
   });
 
   test('captures AgentAPI Codex native history and rejects the combined terminal transcript as final', async () => {

@@ -129,6 +129,22 @@ describe('Flight Deck-bound session turn bridge', () => {
     expect(f.publish.mock.calls[0]?.[0].clientRequestId).toBe(`flightdeck-session-turn:${first.turnId}`);
   });
 
+  test('preserves the owning Agent Direct turn and client request identities', async () => {
+    const f = fixture();
+    const record = f.bridge.accept({ session: f.session, prompt: '', promptType: 'direct_chat',
+      boundaryIdentity: 'direct-boundary', turnId: 'agentdirect-turn-2', clientRequestId: 'agentdirect:route:turn-2',
+      sourceMessageIds: ['human-message-2'] })!;
+    await f.bridge.publishKnownFinal(record, 'Answer for the second human turn.', '2026-07-26T07:10:00.000Z');
+
+    expect(record.turnId).toBe('agentdirect-turn-2');
+    expect(record.clientRequestId).toBe('agentdirect:route:turn-2');
+    expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+      body: 'Answer for the second human turn.',
+      clientRequestId: 'agentdirect:route:turn-2',
+      metadata: { turn_id: 'agentdirect-turn-2', prompt_type: 'direct_chat', source_message_ids: ['human-message-2'] },
+    });
+  });
+
   test('does not publish unbound workers even when they have other reporting metadata', async () => {
     const f = fixture({ bound: false });
     f.session.metadata = { AGENT: true, billingMode: 'subscription', bindingType: 'thread', bindingId: 'thread-elsewhere' };
