@@ -3,6 +3,8 @@ import { Buffer } from 'node:buffer';
 
 import { finalizeEvent, nip19, nip44, verifyEvent } from 'nostr-tools';
 
+import { parsePgWorkspaceDescriptor } from '../agent-chat/pg-workspace-descriptor';
+
 export const SBIP0009_ACCESS_GRANT_KIND = 33357;
 export const SBIP0009_APP_NAMESPACE = 'wingman-flight-deck';
 export const SBIP0009_PAYLOAD_KIND = 'wingman_flightdeck_access_grant';
@@ -449,6 +451,22 @@ function decodeConnectionToken(token: string): Record<string, unknown> {
 function assertAgentConnectMatchesGrant(grant: DecodedAccessGrant): void {
   const pkg = getObject(grant.payload.agent_connect_package);
   const service = getObject(pkg?.service);
+  if (Number(pkg?.version) === 6) {
+    const descriptor = parsePgWorkspaceDescriptor(pkg?.workspace_descriptor);
+    const auth = getObject(pkg?.auth);
+    const authAppNpub = getString(auth?.app_npub);
+    assertAgentConnectEqual('backend URL', getString(service?.direct_https_url), grant.payload.service.direct_https_url, { url: true });
+    assertAgentConnectEqual('descriptor backend URL', descriptor.towerBaseUrl, grant.payload.service.direct_https_url, { url: true });
+    assertAgentConnectEqual('service npub', descriptor.towerServiceNpub, grant.serviceNpub);
+    assertAgentConnectEqual('workspace owner', descriptor.workspaceOwnerNpub, grant.workspaceOwnerNpub);
+    assertAgentConnectEqualWhenPresent('workspace id', descriptor.workspaceId, getString(grant.payload.workspace.workspace_id));
+    assertAgentConnectEqual('workspace service npub', descriptor.workspaceServiceNpub, grant.workspaceServiceNpub);
+    assertAgentConnectEqual('app npub', authAppNpub ?? descriptor.appNpub, grant.appNpub);
+    if (authAppNpub && descriptor.appNpub) {
+      assertAgentConnectEqual('descriptor app npub', authAppNpub, descriptor.appNpub);
+    }
+    return;
+  }
   const workspace = getObject(pkg?.workspace);
   const app = getObject(pkg?.app);
   assertAgentConnectEqual('backend URL', getString(service?.direct_https_url), grant.payload.service.direct_https_url, { url: true });
@@ -473,6 +491,19 @@ function assertAgentConnectMatchesGrant(grant: DecodedAccessGrant): void {
 function buildGrantScopedAgentConnectPackage(grant: DecodedAccessGrant): Record<string, unknown> {
   const pkg = getObject(grant.payload.agent_connect_package) ?? {};
   const service = getObject(pkg.service) ?? {};
+  if (Number(pkg.version) === 6) {
+    return {
+      ...pkg,
+      service: {
+        ...service,
+        direct_https_url: grant.payload.service.direct_https_url,
+        relay_urls: grant.payload.service.relay_urls ?? service.relay_urls,
+        openapi_url: grant.payload.service.openapi_url ?? service.openapi_url,
+        docs_url: grant.payload.service.docs_url ?? service.docs_url,
+        health_url: grant.payload.service.health_url ?? service.health_url,
+      },
+    };
+  }
   const workspace = getObject(pkg.workspace) ?? {};
   const app = getObject(pkg.app) ?? {};
   return {

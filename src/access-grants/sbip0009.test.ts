@@ -181,6 +181,71 @@ function makeCurrentFlightDeckGrantEvent(overrides: Parameters<typeof makeGrantE
 }
 
 describe('Flight Deck 33357 onboarding validation', () => {
+  test('imports an embedded v6 package after successful Tower verification', async () => {
+    const service = makeIdentity();
+    const workspaceService = makeIdentity();
+    const workspaceOwner = makeIdentity();
+    const app = makeIdentity();
+    const v6Package = {
+      kind: 'coworker_agent_connect',
+      version: 6,
+      protocol: 'flightdeck_pg',
+      generated_at: '2026-07-26T00:00:00.000Z',
+      service: { direct_https_url: 'https://tower.example.com' },
+      auth: { scheme: 'NIP-98', app_npub: app.npub },
+      workspace_descriptor: {
+        type: 'wingman_workspace_locator',
+        version: 1,
+        tower_base_url: 'https://tower.example.com',
+        identity: {
+          tower_service_npub: service.npub,
+          workspace_service_npub: workspaceService.npub,
+          workspace_owner_npub: workspaceOwner.npub,
+          workspace_id: 'workspace-1',
+          app_npub: app.npub,
+        },
+      },
+    };
+    const fixture = makeGrantEvent({
+      service,
+      workspaceService,
+      workspaceOwner,
+      app,
+      payload: {
+        workspace: {
+          owner_npub: workspaceOwner.npub,
+          workspace_service_npub: workspaceService.npub,
+          workspace_id: 'workspace-1',
+        },
+        agent_connect_package: v6Package,
+      },
+    });
+    let imported: Record<string, unknown> | string | null = null;
+    const result = await processAccessGrantEvent({
+      event: fixture.event,
+      recipientSecretKey: fixture.recipient.secret,
+      recipientNpub: fixture.recipient.npub,
+      managedByNpub: fixture.issuer.npub,
+      subscriptionManager: {
+        importAgentConnectPackage: async (input) => {
+          imported = input.packageJson;
+          return { subscription: { subscriptionId: 'sub-v6' } };
+        },
+      },
+      fetchImpl: (async () => new Response(JSON.stringify({
+        allowed: true,
+        service_npub: service.npub,
+        workspace_service_npub: workspaceService.npub,
+        workspace_owner_npub: workspaceOwner.npub,
+      }), { status: 200 })) as typeof fetch,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.code).toBe('imported');
+    expect(imported).toMatchObject({ version: 6, protocol: 'flightdeck_pg' });
+    expect((imported as unknown as { connection_token?: unknown }).connection_token).toBeUndefined();
+  });
+
   test('validates and decrypts a canonical signed onboarding event', () => {
     const fixture = makeGrantEvent();
     const grant = decodeAccessGrantEvent({

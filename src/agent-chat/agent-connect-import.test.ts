@@ -48,6 +48,37 @@ function makePackage(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function makeV6Package(overrides: Record<string, unknown> = {}) {
+  return {
+    kind: 'coworker_agent_connect',
+    version: 6,
+    protocol: 'flightdeck_pg',
+    generated_at: '2026-07-26T00:00:00.000Z',
+    service: {
+      direct_https_url: 'https://tower.example.com',
+      openapi_url: 'https://tower.example.com/openapi.json',
+      docs_url: 'https://tower.example.com/docs',
+      health_url: 'https://tower.example.com/health',
+    },
+    auth: { scheme: 'NIP-98', app_npub: 'npub1app' },
+    workspace_descriptor: {
+      type: 'wingman_workspace_locator',
+      version: 1,
+      tower_base_url: 'https://tower.example.com',
+      identity: {
+        tower_service_npub: 'npub1service',
+        workspace_service_npub: 'npub1workspaceservice',
+        workspace_owner_npub: 'npub1workspace',
+        workspace_id: 'workspace-1',
+        app_npub: 'npub1app',
+      },
+      label: 'Current Flight Deck workspace',
+      capabilities: ['task_dispatch'],
+    },
+    ...overrides,
+  };
+}
+
 function makeBackendConnection(overrides: Partial<BackendConnectionRecord> = {}): BackendConnectionRecord {
   return {
     backendConnectionId: 'backend-1',
@@ -74,6 +105,35 @@ function makeBackendConnection(overrides: Partial<BackendConnectionRecord> = {})
 }
 
 describe('Agent Connect import validation', () => {
+  test('normalizes an untouched Flight Deck v6 package without a connection token', () => {
+    const validation = validateAgentConnectPackage({
+      managedByNpub: 'npub1manager',
+      packageJson: makeV6Package(),
+    });
+
+    expect(validation.supportedVersion).toBe('6');
+    expect(validation.service.serviceNpub).toBe('npub1service');
+    expect(validation.workspaceOwnerNpub).toBe('npub1workspace');
+    expect(validation.workspaceId).toBe('workspace-1');
+    expect(validation.workspaceServiceNpub).toBe('npub1workspaceservice');
+    expect(validation.sourceAppNpub).toBe('npub1app');
+    expect(validation.workspaceTitle).toBe('Current Flight Deck workspace');
+  });
+
+  test('rejects malformed or inconsistent Flight Deck v6 identities', () => {
+    expect(() => validateAgentConnectPackage({
+      managedByNpub: 'npub1manager',
+      packageJson: makeV6Package({ auth: { app_npub: 'npub1other' } }),
+    })).toThrow('app npub does not match');
+
+    const malformed = makeV6Package();
+    delete (malformed.workspace_descriptor as { identity?: unknown }).identity;
+    expect(() => validateAgentConnectPackage({
+      managedByNpub: 'npub1manager',
+      packageJson: malformed,
+    })).toThrow('valid identity object');
+  });
+
   test('validates packages and builds scoped subscription input', () => {
     const validation = validateAgentConnectPackage({
       managedByNpub: 'npub1manager',

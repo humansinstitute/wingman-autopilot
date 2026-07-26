@@ -1,9 +1,10 @@
 import { Buffer } from 'node:buffer';
 
 import { normaliseBackendBaseUrl } from './tower-client';
+import { parsePgWorkspaceDescriptor } from './pg-workspace-descriptor';
 import type { AgentCapability, BackendConnectionRecord, CreateWorkspaceSubscriptionInput } from './types';
 
-const SUPPORTED_AGENT_CONNECT_VERSIONS = new Set([5]);
+const SUPPORTED_AGENT_CONNECT_VERSIONS = new Set([5, 6]);
 
 export interface AgentConnectServiceInput {
   directHttpsUrl: string;
@@ -145,8 +146,6 @@ export function validateAgentConnectPackage(input: {
   const version = typeof payload.version === 'number' ? payload.version : Number(payload.version);
   const generatedAt = getString(payload.generated_at);
   const directHttpsUrl = getString(service?.direct_https_url);
-  const workspaceOwnerNpub = getString(workspace?.owner_npub);
-  const sourceAppNpub = getString(app?.app_npub);
   const connectionToken = getString(payload.connection_token);
 
   if (kind !== 'coworker_agent_connect') {
@@ -158,37 +157,75 @@ export function validateAgentConnectPackage(input: {
   if (!generatedAt || Number.isNaN(Date.parse(generatedAt))) {
     throw new Error('Agent Connect generated_at must be an ISO timestamp.');
   }
-  if (!directHttpsUrl || !workspaceOwnerNpub || !sourceAppNpub || !connectionToken) {
-    throw new Error('Agent Connect requires service.direct_https_url, workspace.owner_npub, app.app_npub, and connection_token.');
-  }
+  if (!directHttpsUrl) throw new Error('Agent Connect requires service.direct_https_url.');
 
-  const token = decodeConnectionToken(connectionToken);
-  assertEqualWhenPresent('backend URL', directHttpsUrl, getString(token.direct_https_url), { url: true });
-  assertEqualWhenPresent('service npub', getString(service?.service_npub), getString(token.service_npub) ?? getString(token.server_npub));
-  assertEqualWhenPresent('workspace owner', workspaceOwnerNpub, getString(token.workspace_owner_npub));
-  assertEqualWhenPresent('workspace id', getString(workspace?.workspace_id), getString(token.workspace_id));
-  assertEqualWhenPresent('workspace service npub', getString(workspace?.workspace_service_npub), getString(token.workspace_service_npub));
-  assertEqualWhenPresent('app npub', sourceAppNpub, getString(token.app_npub));
+  let workspaceOwnerNpub: string;
+  let workspaceId: string | null;
+  let workspaceServiceNpub: string | null;
+  let workspaceTitle: string | null;
+  let sourceAppNpub: string;
+  let serviceNpub = getString(service?.service_npub);
+  let capabilityInput = payload.capabilities;
+  if (version === 6) {
+    if (getString(payload.protocol) !== 'flightdeck_pg') {
+      throw new Error('Agent Connect version 6 requires protocol flightdeck_pg.');
+    }
+    const descriptor = parsePgWorkspaceDescriptor(payload.workspace_descriptor);
+    const auth = getObject(payload.auth);
+    const authAppNpub = getString(auth?.app_npub);
+    if (!authAppNpub && !descriptor.appNpub) {
+      throw new Error('Agent Connect version 6 requires auth.app_npub or workspace_descriptor.identity.app_npub.');
+    }
+    if (authAppNpub && descriptor.appNpub && authAppNpub !== descriptor.appNpub) {
+      throw new Error('Agent Connect app npub does not match workspace descriptor identity.');
+    }
+    if (normaliseBackendBaseUrl(directHttpsUrl) !== descriptor.towerBaseUrl) {
+      throw new Error('Agent Connect backend URL does not match workspace descriptor.');
+    }
+    workspaceOwnerNpub = descriptor.workspaceOwnerNpub;
+    workspaceId = descriptor.workspaceId;
+    workspaceServiceNpub = descriptor.workspaceServiceNpub;
+    workspaceTitle = descriptor.label;
+    sourceAppNpub = authAppNpub ?? descriptor.appNpub!;
+    serviceNpub = descriptor.towerServiceNpub;
+    capabilityInput = descriptor.capabilities;
+  } else {
+    workspaceOwnerNpub = getString(workspace?.owner_npub) ?? '';
+    workspaceId = getString(workspace?.workspace_id);
+    workspaceServiceNpub = getString(workspace?.workspace_service_npub);
+    workspaceTitle = getString(workspace?.label) ?? getString(workspace?.name);
+    sourceAppNpub = getString(app?.app_npub) ?? '';
+    if (!workspaceOwnerNpub || !sourceAppNpub || !connectionToken) {
+      throw new Error('Agent Connect requires workspace.owner_npub, app.app_npub, and connection_token for version 5.');
+    }
+    const token = decodeConnectionToken(connectionToken);
+    assertEqualWhenPresent('backend URL', directHttpsUrl, getString(token.direct_https_url), { url: true });
+    assertEqualWhenPresent('service npub', serviceNpub, getString(token.service_npub) ?? getString(token.server_npub));
+    assertEqualWhenPresent('workspace owner', workspaceOwnerNpub, getString(token.workspace_owner_npub));
+    assertEqualWhenPresent('workspace id', workspaceId, getString(token.workspace_id));
+    assertEqualWhenPresent('workspace service npub', workspaceServiceNpub, getString(token.workspace_service_npub));
+    assertEqualWhenPresent('app npub', sourceAppNpub, getString(token.app_npub));
+  }
 
   return {
     managedByNpub: input.managedByNpub,
     service: {
       directHttpsUrl: normaliseBackendBaseUrl(directHttpsUrl),
-      serviceNpub: getString(service?.service_npub),
+      serviceNpub,
       relayUrls: getStringArray(service?.relay_urls),
       openapiUrl: getString(service?.openapi_url),
       docsUrl: getString(service?.docs_url),
       healthUrl: getString(service?.health_url),
     },
     workspaceOwnerNpub,
-    workspaceId: getString(workspace?.workspace_id),
-    workspaceServiceNpub: getString(workspace?.workspace_service_npub),
-    workspaceTitle: getString(workspace?.label) ?? getString(workspace?.name),
+    workspaceId,
+    workspaceServiceNpub,
+    workspaceTitle,
     sourceAppNpub,
-    sourceAppSchemaNamespace: getString(app?.schema_namespace),
+    sourceAppSchemaNamespace: version === 5 ? getString(app?.schema_namespace) : null,
     supportedVersion: String(version),
     connectionTokenRef: `agent-connect:${workspaceOwnerNpub}:${sourceAppNpub}:${Date.parse(generatedAt)}`,
-    capabilityDefaults: normaliseCapabilities(payload.capabilities),
+    capabilityDefaults: normaliseCapabilities(capabilityInput),
   };
 }
 

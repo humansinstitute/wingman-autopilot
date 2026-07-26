@@ -35,7 +35,7 @@ function extractAgentConnectJsonText(rawText) {
   return trimmed;
 }
 
-function parseAgentConnectPackage(rawText) {
+export function parseAgentConnectPackage(rawText) {
   const jsonText = extractAgentConnectJsonText(rawText);
   let payload;
   try {
@@ -49,8 +49,16 @@ function parseAgentConnectPackage(rawText) {
   if (payload.kind !== 'coworker_agent_connect') {
     throw new Error('AgentConnect token kind must be coworker_agent_connect.');
   }
-  if (!payload.service?.direct_https_url || !payload.workspace?.owner_npub || !payload.app?.app_npub || !payload.connection_token) {
-    throw new Error('AgentConnect token is missing service.direct_https_url, workspace.owner_npub, app.app_npub, or connection_token.');
+  if (!payload.service?.direct_https_url) {
+    throw new Error('AgentConnect token is missing service.direct_https_url.');
+  }
+  if (Number(payload.version) === 6) {
+    const identity = payload.workspace_descriptor?.identity;
+    if (payload.protocol !== 'flightdeck_pg' || !identity?.workspace_owner_npub || !identity?.workspace_id || !(payload.auth?.app_npub || identity?.app_npub)) {
+      throw new Error('AgentConnect v6 token is missing its Flight Deck PG workspace or app identity.');
+    }
+  } else if (!payload.workspace?.owner_npub || !payload.app?.app_npub || !payload.connection_token) {
+    throw new Error('AgentConnect v5 token is missing workspace.owner_npub, app.app_npub, or connection_token.');
   }
   return jsonText;
 }
@@ -93,7 +101,7 @@ export function createAgentConnectImportModal({
 
   const note = document.createElement('p');
   note.className = 'wm-settings__port-note';
-  note.textContent = 'Paste the full AgentConnect token. Wingman will read the service, workspace, app, and connection token values from it and subscribe with the configured Wingman bot identity.';
+  note.textContent = 'Paste the full AgentConnect token. Wingman will read the service and workspace identity, then verify access with the configured Wingman bot identity.';
 
   const packageField = createTextarea(
     'AgentConnect token',
