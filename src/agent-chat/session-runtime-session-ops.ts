@@ -128,6 +128,13 @@ export async function sendPromptAndAwaitFinalResponse(
   if (!adapter) throw new Error(`No adapter available for session ${sessionId}.`);
   await adapter.waitForReady({ timeoutMs: SESSION_READY_TIMEOUT_MS, pollIntervalMs: 250 });
   const initialMessages = await adapter.fetchMessages().catch(() => []);
+  const initialSession = manager.getSession(sessionId);
+  const initialNativeSessionId = initialSession?.metadata?.nativeAgentSession?.agent === 'codex'
+    ? initialSession.metadata.nativeAgentSession.sessionId
+    : null;
+  const initialAuthoritativeMessages = initialSession?.agent === 'codex' && initialNativeSessionId
+    ? await resolveAuthoritativeSessionMessages(initialSession, initialMessages, { requireNative: true }).catch(() => [])
+    : [];
   const sentAtMs = Date.now();
   await adapter.sendMessage(prompt, 'user');
   await waitOptions?.onAccepted?.();
@@ -159,10 +166,19 @@ export async function sendPromptAndAwaitFinalResponse(
         : []
       : messages;
     await waitOptions?.onPoll?.();
-    const promptIndex = authoritativeMessages.findLastIndex((message) => message.role === 'user' && message.content === prompt);
+    const currentNativeSessionId = session?.metadata?.nativeAgentSession?.agent === 'codex'
+      ? session.metadata.nativeAgentSession.sessionId
+      : null;
+    const promptBoundaryFloor = initialNativeSessionId && currentNativeSessionId === initialNativeSessionId
+      ? initialAuthoritativeMessages.length
+      : 0;
+    const promptIndex = authoritativeMessages.findLastIndex((message, index) =>
+      index >= promptBoundaryFloor && message.role === 'user' && message.content === prompt);
     const turnMessages = promptIndex >= 0
       ? authoritativeMessages.slice(promptIndex + 1)
-      : authoritativeMessages.slice(initialMessages.length);
+      : agentapiCodex
+        ? []
+        : authoritativeMessages.slice(initialMessages.length);
     const finalMessage = turnMessages
       .filter((message) => (message.role === 'assistant' || message.role === 'agent') && message.content.trim().length > 0)
       .at(-1);

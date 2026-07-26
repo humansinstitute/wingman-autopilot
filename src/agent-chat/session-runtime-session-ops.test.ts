@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
@@ -271,6 +271,61 @@ describe('sendPromptAndAwaitFinalResponse', () => {
       expect(authoritative.map((message) => message.role)).toEqual(['user', 'agent-working', 'agent']);
       expect(authoritative[1]?.content).toContain('Tool call: exec_command `bun test`');
       expect(authoritative[2]?.content).toBe('## Clean final\n\nEverything passed.');
+    } finally {
+      if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = previousCodexHome;
+      await rm(codexHome, { recursive: true, force: true });
+    }
+  });
+
+  test('waits for the new native prompt boundary instead of returning a stale callback final', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'direct-native-boundary-'));
+    const previousCodexHome = process.env.CODEX_HOME;
+    process.env.CODEX_HOME = codexHome;
+    const prompt = 'AGENT DIRECT CHAT\nNEXT MESSAGE\nmessage: update please?';
+    const nativeId = 'native-direct-boundary-1';
+    try {
+      const sessionDir = join(codexHome, 'sessions', '2026', '07', '26');
+      await mkdir(sessionDir, { recursive: true });
+      const transcriptPath = join(sessionDir, `rollout-${nativeId}.jsonl`);
+      await writeFile(transcriptPath, [
+        JSON.stringify({ type: 'session_meta', timestamp: '2026-07-26T05:55:00.000Z', payload: { id: nativeId, cwd: '/repo' } }),
+        JSON.stringify({ type: 'event_msg', timestamp: '2026-07-26T05:57:02.000Z', payload: { type: 'user_message', message: 'Dispatched session completion callback.' } }),
+        JSON.stringify({ type: 'event_msg', timestamp: '2026-07-26T05:57:05.000Z', payload: { type: 'agent_message', phase: 'final_answer', message: 'This callback was already reviewed and closed.' } }),
+      ].join('\n') + '\n');
+
+      let fetchCount = 0;
+      let appendPromise: Promise<void> | null = null;
+      const session = { id: 'agentapi-native-boundary', agent: 'codex', port: 1, name: 'Direct', status: 'running',
+        startedAt: new Date(), command: [], workingDirectory: '/repo', logs: [], metadata: { nativeAgentSession: {
+          agent: 'codex', sessionId: nativeId, workingDirectory: '/repo', capturedAt: new Date().toISOString(), source: 'agentapi',
+        } } } as unknown as SessionSnapshot;
+      const rawMessages = [
+        { role: 'agent', content: 'combined terminal\nThis callback was already reviewed and closed.', createdAt: '2026-07-26T05:57:05.000Z' },
+      ];
+      const adapter = {
+        waitForReady: async () => {},
+        sendMessage: async () => {
+          appendPromise = new Promise<void>((resolve, reject) => setTimeout(() => {
+            void appendFile(transcriptPath, [
+              JSON.stringify({ type: 'event_msg', timestamp: '2026-07-26T06:41:32.000Z', payload: { type: 'user_message', message: prompt } }),
+              JSON.stringify({ type: 'event_msg', timestamp: '2026-07-26T06:41:34.000Z', payload: { type: 'agent_message', phase: 'final_answer', message: 'The implementation is ready for review.' } }),
+            ].join('\n') + '\n').then(() => resolve(), reject);
+          }, 25));
+        },
+        fetchStatus: async () => 'stable',
+        fetchMessages: async () => { fetchCount += 1; return rawMessages; },
+        deliversPromptsDirectly: () => false,
+        interruptCurrentTurn: async () => false, getEventsUrl: () => null, dispose: async () => {},
+      } as AgentAdapter;
+      const manager = { getSession: () => session, getAdapter: () => adapter,
+        captureAgentapiCodexSessionIdFromPrompt: async () => true } as unknown as ProcessManager;
+
+      const reply = await sendPromptAndAwaitFinalResponse(manager, session.id, prompt, { timeoutMs: 250, pollIntervalMs: 10 });
+      await appendPromise;
+      expect(reply.content).toBe('The implementation is ready for review.');
+      expect(reply.content).not.toContain('callback');
+      expect(fetchCount).toBeGreaterThan(2);
     } finally {
       if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
       else process.env.CODEX_HOME = previousCodexHome;
