@@ -16,7 +16,6 @@ export async function hydrateDirectChatThread(input: {
   if (!input.subscription.workspaceId) throw new Error('Agent Direct Chat requires a Flight Deck PG workspace id.');
   const common = { backendBaseUrl: input.subscription.backendBaseUrl, workspaceId: input.subscription.workspaceId,
     channelId: input.channelId, appNpub: input.subscription.sourceAppNpub, botIdentity: input.botIdentity };
-  const channel = await deps.fetchChannel(common);
   const messages: FlightDeckPgMessage[] = [];
   let cursor: string | null = null;
   do {
@@ -24,5 +23,17 @@ export async function hydrateDirectChatThread(input: {
     messages.push(...page.messages);
     cursor = page.next_cursor ?? null;
   } while (cursor);
+  let channel: FlightDeckPgChannel;
+  try {
+    channel = await deps.fetchChannel(common);
+  } catch (error) {
+    if (!error || typeof error !== 'object' || (error as { status?: unknown }).status !== 404) throw error;
+    const firstMessage = messages[0];
+    channel = {
+      id: input.channelId,
+      workspace_id: input.subscription.workspaceId,
+      scope_id: firstMessage?.scope_id ?? null,
+    };
+  }
   return { channel, messages };
 }
