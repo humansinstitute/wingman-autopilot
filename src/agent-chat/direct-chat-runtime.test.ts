@@ -8,6 +8,7 @@ import { AgentDirectChatRuntime } from './direct-chat-runtime';
 import { AgentActivityPublisher } from './agent-activity-publisher';
 import { DirectChatTurnStore } from './direct-chat-turn-store';
 import { buildDirectChatClientRequestId, buildDirectChatRoutingKey, buildDirectChatTurnId } from './direct-chat-contract';
+import { PromptBoundaryNotObservedError, sendPromptAndAwaitFinalResponse } from './session-runtime-session-ops';
 import type { FlightDeckPgMessage } from './tower-client';
 
 function fixture(options: {
@@ -19,6 +20,7 @@ function fixture(options: {
   channel?: Record<string, unknown>;
   failNativeResume?: boolean;
   nativeResumeFinal?: string;
+  failReusedPromptBoundary?: boolean;
 } = {}) {
   const db = join(tmpdir(), `agent-direct-${randomUUID()}.sqlite`);
   const agentStore = new AgentDefinitionStore(db);
@@ -29,6 +31,7 @@ function fixture(options: {
   const prompts: string[] = [];
   const captures: string[] = [];
   const creates: any[] = [];
+  const stops: string[] = [];
   const manager = {
     getSession: (id: string) => sessions.get(id) ?? null,
     getAdapter: (id: string) => ({
@@ -51,12 +54,23 @@ function fixture(options: {
       sessions.set(session.id, session); return session;
     },
     captureAgentapiCodexSessionIdFromPrompt: async (_id: string, prompt: string) => { captures.push(prompt); return false; },
+    stopSession: async (id: string) => { stops.push(id); const session = sessions.get(id); if (session) session.status = 'stopped'; return session ?? null; },
   } as never;
   const published: any[] = [];
   const publish = async (input: any) => { published.push(input); return options.publish ? options.publish(input, published.length) : { message: { id: `agent-message-${published.length}` } }; };
   const activities: any[] = [];
+  let finalResponseCalls = 0;
+  const sendFinalResponse = async (...args: Parameters<typeof sendPromptAndAwaitFinalResponse>) => {
+    finalResponseCalls += 1;
+    if (options.failReusedPromptBoundary && args[1] === 'session-1' && finalResponseCalls === 2) {
+      await args[3]?.onAccepted?.();
+      throw new PromptBoundaryNotObservedError(args[1]);
+    }
+    return await sendPromptAndAwaitFinalResponse(...args);
+  };
   const makeRuntime = () => new AgentDirectChatRuntime({ defaultAgent: 'codex', processManager: manager, agentStore, interceptStore, turnStore, publish,
     getArchivedSession: (sessionId) => archivedSessions.get(sessionId) ?? null,
+    sendFinalResponse,
     createActivityPublisher: (context) => new AgentActivityPublisher(context, async (activity) => { activities.push(activity); return {}; }) });
   const runtime = makeRuntime();
   const now = new Date().toISOString();
@@ -74,7 +88,7 @@ function fixture(options: {
     messages,
     event: { entity_id: entityId, channel_id: 'channel-1', cursor: `cursor-${entityId}`, ...event },
   });
-  return { runtime, makeRuntime, handle, message, prompts, captures, creates, published, activities, interceptStore, turnStore, sessions, archivedSessions, subscription, channel, botIdentity };
+  return { runtime, makeRuntime, handle, message, prompts, captures, creates, stops, published, activities, interceptStore, turnStore, sessions, archivedSessions, subscription, channel, botIdentity };
 }
 
 describe('Agent Direct Chat runtime', () => {
@@ -293,6 +307,31 @@ describe('Agent Direct Chat runtime', () => {
     expect(f.creates).toHaveLength(3); expect(f.creates[1][3].type).toBe('native-resume'); expect(f.creates[2][3].type).toBe('agent-chat');
     expect(state.sessionId).toBe('session-3'); expect(state.sessionGeneration).toBe(2); expect(state.previousSessionIds).toEqual(['session-1']);
     expect(f.prompts[1]).toContain('CONTINUITY RECOVERY');
+  });
+
+  test('replaces a running wrapper when its underlying agent does not accept the follow-up prompt', async () => {
+    const f = fixture({ failReusedPromptBoundary: true });
+    const m1 = f.message('m1', 'hello', true);
+    await f.handle([m1], 'm1');
+    await f.runtime.waitForIdle();
+
+    const m2 = f.message('m2', 'update please?', true);
+    await f.handle([m1, m2], 'm2');
+    await f.runtime.waitForIdle();
+
+    const state = f.interceptStore.listAll()[0]!;
+    expect(f.creates).toHaveLength(2);
+    expect(f.creates[1][3].type).toBe('agent-chat');
+    expect(state.sessionId).toBe('session-2');
+    expect(state.sessionGeneration).toBe(2);
+    expect(state.previousSessionIds).toEqual(['session-1']);
+    expect(f.stops).toEqual(['session-1']);
+    expect(f.prompts).toHaveLength(2);
+    expect(f.prompts[1]).toContain('CONTINUITY RECOVERY');
+    expect(f.prompts[1]).toContain('update please?');
+    expect(f.published).toHaveLength(2);
+    expect(f.published[1].metadata.session_id).toBe('session-2');
+    expect(f.published[1].metadata.source_message_ids).toEqual(['m2']);
   });
 
   test('replays multiple pending messages once from an archived production-shaped binding', async () => {

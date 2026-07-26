@@ -233,9 +233,17 @@ describe("agent chat settings subscription selection", () => {
       workingDirectory: "/workspace/secondary",
       capabilities: ["chat_intercept", "task_dispatch"],
       enabled: true,
+      directChat: {
+        enabled: true,
+        sessionAgent: null,
+        directory: "/workspace/secondary",
+        model: null,
+        idleRetentionMinutes: 60,
+      },
     });
     expect(input).not.toHaveProperty("groupNpubs");
     expect(agentChatSectionSource).toContain("agentEditor.harnessSelect.value");
+    expect(agentChatSectionSource).toContain("agentEditor.directChatEnabledField.input.checked");
     expect(agentChatSectionSource).not.toContain("agentGroupsField");
   });
 

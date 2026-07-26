@@ -20,7 +20,7 @@ import {
 } from './direct-chat-contract';
 import { directChatTurnStore, type DirectChatTurnStore } from './direct-chat-turn-store';
 import { AgentActivityPublisher, type AgentActivityContext } from './agent-activity-publisher';
-import { awaitAcceptedFinalResponse, sendPromptAndAwaitFinalResponse } from './session-runtime-session-ops';
+import { awaitAcceptedFinalResponse, PromptBoundaryNotObservedError, sendPromptAndAwaitFinalResponse } from './session-runtime-session-ops';
 import { createFlightDeckPgChannelMessage, type FlightDeckPgChannel, type FlightDeckPgEvent, type FlightDeckPgMessage } from './tower-client';
 import type { AgentDefinitionRecord, RuntimeBotIdentity, WorkspaceSubscriptionRecord } from './types';
 import type { FlightDeckSessionTurnBridge } from './flightdeck-session-turn-bridge';
@@ -44,6 +44,7 @@ interface DirectChatRuntimeDependencies {
   getArchivedSession?: (sessionId: string) => ArchivedSession | null;
   log?: Pick<Console, 'error' | 'warn'>;
   turnBridge?: FlightDeckSessionTurnBridge;
+  sendFinalResponse?: typeof sendPromptAndAwaitFinalResponse;
 }
 
 interface MessageRevisionDispatch {
@@ -97,12 +98,14 @@ export class AgentDirectChatRuntime {
   private readonly publish: typeof createFlightDeckPgChannelMessage;
   private readonly createActivityPublisher: (context: AgentActivityContext) => AgentActivityPublisher;
   private readonly log: Pick<Console, 'error' | 'warn'>;
+  private readonly sendFinalResponse: typeof sendPromptAndAwaitFinalResponse;
 
   constructor(private readonly deps: DirectChatRuntimeDependencies) {
     this.turnStore = deps.turnStore ?? directChatTurnStore;
     this.publish = deps.publish ?? createFlightDeckPgChannelMessage;
     this.createActivityPublisher = deps.createActivityPublisher ?? ((context) => new AgentActivityPublisher(context));
     this.log = deps.log ?? console;
+    this.sendFinalResponse = deps.sendFinalResponse ?? sendPromptAndAwaitFinalResponse;
   }
 
   async handle(input: DirectChatRuntimeInput): Promise<{ handled: boolean; reason: string }> {
@@ -257,7 +260,7 @@ export class AgentDirectChatRuntime {
               : buildDirectChatBootstrapPrompt({ contextPrompt, subscription: input.subscription, intercept,
                   scopeId: input.channel.scope_id ?? null, history, nextMessages: delta });
           const recovered = sessionResolution.bootstrap
-            ? await sendPromptAndAwaitFinalResponse(this.deps.processManager, session.id, recoveryPrompt, {
+            ? await this.sendFinalResponse(this.deps.processManager, session.id, recoveryPrompt, {
                 onPoll: () => activity?.publishLatestCommentary(this.deps.processManager),
               })
             : await awaitAcceptedFinalResponse(
@@ -273,12 +276,12 @@ export class AgentDirectChatRuntime {
           await activity.publish('completed');
           continue;
         }
-        const sessionResolution = await this.resolveSession(agent, intercept, input.subscription, input.channel.scope_id ?? null);
-        const session = sessionResolution.session;
+        let sessionResolution = await this.resolveSession(agent, intercept, input.subscription, input.channel.scope_id ?? null);
+        let session = sessionResolution.session;
         intercept = this.deps.interceptStore.save({ ...intercept, sessionId: session.id,
           sessionGeneration: sessionResolution.generation, previousSessionIds: sessionResolution.previousSessionIds,
           state: 'active', pendingMessageCount: delta.length, lastDecision: 'pending', lastActivityAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
-        const prompt = sessionResolution.bootstrap
+        let prompt = sessionResolution.bootstrap
           ? buildDirectChatBootstrapPrompt({ contextPrompt, subscription: input.subscription, intercept,
               scopeId: input.channel.scope_id ?? null, history, nextMessages: delta, recovery: sessionResolution.recovery })
           : buildDirectChatFollowUpPrompt({ routingKey, threadId: intercept.threadId, history, actionableMessages: delta });
@@ -296,17 +299,47 @@ export class AgentDirectChatRuntime {
           triggerMessageId: sourceMessageIds.at(-1)!, sessionId: session.id,
           agentNpub: intercept.botNpub, turnId,
         });
-        const reply = await sendPromptAndAwaitFinalResponse(this.deps.processManager, session.id, prompt, {
-          onAccepted: () => {
+        const onAccepted = () => {
             this.turnStore.save({ turnId, routingKey, sourceMessageIds, clientRequestId, replyBody: null,
               publishedMessageId: null, state: 'accepted', createdAt: now, updatedAt: new Date().toISOString() });
             intercept = this.deps.interceptStore.save({ ...intercept,
               lastHumanMessageIdDelivered: sourceMessageIds.at(-1) ?? null, pendingMessageCount: 0,
               updatedAt: new Date().toISOString() });
             void activity?.publish('accepted');
-          },
-          onPoll: () => activity?.publishLatestCommentary(this.deps.processManager),
-        });
+          };
+        let reply;
+        try {
+          reply = await this.sendFinalResponse(this.deps.processManager, session.id, prompt, {
+            onAccepted, onPoll: () => activity?.publishLatestCommentary(this.deps.processManager),
+          });
+        } catch (error) {
+          if (!(error instanceof PromptBoundaryNotObservedError) || sessionResolution.bootstrap) throw error;
+          const rejectedSessionId = session.id;
+          await this.deps.processManager.stopSession(rejectedSessionId).catch((stopError) => {
+            this.log.warn('[agent-chat] failed to retire non-accepting direct chat session', {
+              routingKey, sessionId: rejectedSessionId,
+              error: stopError instanceof Error ? stopError.message : String(stopError),
+            });
+          });
+          sessionResolution = await this.resolveSession(agent, intercept, input.subscription, input.channel.scope_id ?? null,
+            { forceReplacementReason: 'previous session did not accept the submitted prompt' });
+          session = sessionResolution.session;
+          intercept = this.deps.interceptStore.save({ ...intercept, sessionId: session.id,
+            sessionGeneration: sessionResolution.generation, previousSessionIds: sessionResolution.previousSessionIds,
+            state: 'active', lastActivityAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+          prompt = buildDirectChatBootstrapPrompt({ contextPrompt, subscription: input.subscription, intercept,
+            scopeId: input.channel.scope_id ?? null, history, nextMessages: delta, recovery: sessionResolution.recovery });
+          activity = this.createActivityPublisher({
+            backendBaseUrl: input.subscription.backendBaseUrl, workspaceId: input.subscription.workspaceId!,
+            appNpub: input.subscription.sourceAppNpub, botIdentity: input.botIdentity,
+            channelId: intercept.channelId, threadId: intercept.threadId,
+            triggerMessageId: sourceMessageIds.at(-1)!, sessionId: session.id,
+            agentNpub: intercept.botNpub, turnId,
+          });
+          reply = await this.sendFinalResponse(this.deps.processManager, session.id, prompt, {
+            onAccepted, onPoll: () => activity?.publishLatestCommentary(this.deps.processManager),
+          });
+        }
         const body = reply.content;
         this.turnStore.save({ turnId, routingKey, sourceMessageIds, clientRequestId, replyBody: body,
           publishedMessageId: null, state: 'reply_ready', createdAt: now, updatedAt: new Date().toISOString() });
@@ -360,14 +393,15 @@ export class AgentDirectChatRuntime {
     this.idleTimers.set(routingKey, timer);
   }
 
-  private async resolveSession(agent: AgentDefinitionRecord, intercept: NonNullable<ReturnType<ChatInterceptStateStore['getByRoutingKey']>>, subscription: WorkspaceSubscriptionRecord, scopeId: string | null): Promise<{
+  private async resolveSession(agent: AgentDefinitionRecord, intercept: NonNullable<ReturnType<ChatInterceptStateStore['getByRoutingKey']>>, subscription: WorkspaceSubscriptionRecord, scopeId: string | null,
+    options?: { forceReplacementReason?: string }): Promise<{
     session: SessionSnapshot; bootstrap: boolean; generation: number; previousSessionIds: string[]; recovery: { previousSessionId: string; reason: string } | null;
   }> {
     const live = intercept.sessionId ? this.deps.processManager.getSession(intercept.sessionId) : null;
     const archived = !live && intercept.sessionId ? this.deps.getArchivedSession?.(intercept.sessionId) ?? null : null;
-    if (live?.status === 'running' || live?.status === 'starting') return { session: live, bootstrap: false, generation: intercept.sessionGeneration ?? 1, previousSessionIds: intercept.previousSessionIds ?? [], recovery: null };
+    if (!options?.forceReplacementReason && (live?.status === 'running' || live?.status === 'starting')) return { session: live, bootstrap: false, generation: intercept.sessionGeneration ?? 1, previousSessionIds: intercept.previousSessionIds ?? [], recovery: null };
     const resumeSource = live ?? (archived && isAgentType(archived.agent) ? { ...archived, agent: archived.agent } : null);
-    if (resumeSource) {
+    if (resumeSource && !options?.forceReplacementReason) {
       try {
         const launch = resolveNativeResumeLaunch(resumeSource, isAgentType, subscription.managedByNpub);
         const resumed = await this.deps.processManager.createSession(launch.agent, launch.workingDirectory, launch.name, launch.origin, undefined, launch.ownerNpub, launch.metadata, live?.model);
@@ -393,6 +427,7 @@ export class AgentDirectChatRuntime {
         flightdeckScopeId: scopeId ?? undefined, flightdeckChannelId: intercept.channelId, flightdeckThreadId: intercept.threadId,
         flightdeckAgentNpub: intercept.botNpub, flightdeckRoutingKey: intercept.routingKey, sessionGeneration: generation }, profile.model ?? undefined);
     return { session, bootstrap: true, generation, previousSessionIds,
-      recovery: previous ? { previousSessionId: previous, reason: resumeSource ? 'native resume unavailable' : 'session missing' } : null };
+      recovery: previous ? { previousSessionId: previous,
+        reason: options?.forceReplacementReason ?? (resumeSource ? 'native resume unavailable' : 'session missing') } : null };
   }
 }

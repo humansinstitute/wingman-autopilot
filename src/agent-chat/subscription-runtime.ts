@@ -3504,17 +3504,15 @@ export class WorkspaceSubscriptionManager {
           channel: hydrated.channel,
           messages: hydrated.messages,
         });
-        if (direct.reason !== 'channel_disabled') {
-          record.lastRoutingResult = buildSuccessDiagnostic('Flight Deck PG Agent Direct Chat event evaluated.', {
-            subscription_id: record.subscriptionId,
-            event_id: event.event_id ?? event.id ?? null,
-            record_id: message.id,
-            channel_id: channelId,
-            direct_chat_handled: direct.handled,
-            direct_chat_reason: direct.reason,
-          });
-          return this.saveRecord(this.recomputeHealth(record));
-        }
+        record.lastRoutingResult = buildSuccessDiagnostic('Flight Deck PG Agent Direct Chat event evaluated.', {
+          subscription_id: record.subscriptionId,
+          event_id: event.event_id ?? event.id ?? null,
+          record_id: message.id,
+          channel_id: channelId,
+          direct_chat_handled: direct.handled,
+          direct_chat_reason: direct.reason,
+        });
+        return this.saveRecord(this.recomputeHealth(record));
       }
 
       if (isFlightDeckPgMessageRevisionEvent(event)) {

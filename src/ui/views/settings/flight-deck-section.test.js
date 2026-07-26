@@ -223,7 +223,7 @@ describe("flight deck settings panel", () => {
       expect(text).toContain("Onboarding Ready");
       expect(text).toContain("Yoke Synced");
       expect(text).toContain("Default Dispatch Ready");
-      expect(text).toContain("7/10 enabled");
+      expect(text).toContain("5/8 enabled");
       expect(text).toContain("Workspace id");
       expect(text).toContain("workspace-swipeback");
       expect(text).toContain("Workspace service");
@@ -240,8 +240,8 @@ describe("flight deck settings panel", () => {
       expect(text).toContain("Chat");
       expect(text).toContain("Docs");
       expect(text).toContain("Tasks");
-      expect(text).toContain("Direct Message");
-      expect(text).toContain("Chat Tagged");
+      expect(text).not.toContain("Direct Message");
+      expect(text).not.toContain("Chat Tagged");
       expect(text).toContain("Chat Observed");
       expect(text).toContain("Doc Tagged");
       expect(text).toContain("Task Assigned");
@@ -249,8 +249,8 @@ describe("flight deck settings panel", () => {
       expect(text).toContain("FD Comment Dispatch");
       expect(text).toContain("FD Task Dispatch");
       expect(text).not.toContain("legacy-flow-pipeline");
-      expect(queryByTestId(panel, "flight-deck-dispatch-row-direct_message")).not.toBeNull();
-      expect(queryByTestId(panel, "flight-deck-dispatch-row-chat_mention")).not.toBeNull();
+      expect(queryByTestId(panel, "flight-deck-dispatch-row-direct_message")).toBeNull();
+      expect(queryByTestId(panel, "flight-deck-dispatch-row-chat_mention")).toBeNull();
       expect(queryByTestId(panel, "flight-deck-dispatch-row-chat_observe")).not.toBeNull();
       expect(queryByTestId(panel, "flight-deck-dispatch-row-task_assigned")).not.toBeNull();
       expect(queryByTestId(panel, "flight-deck-default-dispatch-card")).not.toBeNull();
@@ -296,12 +296,12 @@ describe("flight deck settings panel", () => {
 
       const text = collectText(panel);
       expect(queryByTestId(panel, "flight-deck-default-dispatch-card")).not.toBeNull();
-      expect(queryByTestId(panel, "flight-deck-dispatch-row-direct_message")).not.toBeNull();
+      expect(queryByTestId(panel, "flight-deck-dispatch-row-direct_message")).toBeNull();
       expect(queryByTestId(panel, "flight-deck-dispatch-row-document_comment_tagged")).not.toBeNull();
       expect(queryByTestId(panel, "flight-deck-dispatch-row-task_assigned")).not.toBeNull();
       expect(text).toContain("Selected workspace: Empty Routes");
       expect(text).toContain("Built-in default");
-      expect(text).toContain("7/10 enabled");
+      expect(text).toContain("5/8 enabled");
     });
   });
 
@@ -359,12 +359,8 @@ describe("flight deck settings panel", () => {
         },
       });
 
-      const enabled = queryByTestId(panel, "flight-deck-dispatch-enabled-chat_mention");
-      const action = queryByTestId(panel, "flight-deck-dispatch-action-chat_mention");
-      const pipeline = queryByTestId(panel, "flight-deck-dispatch-pipeline-chat_mention");
-      enabled.checked = false;
-      action.value = "ignore";
-      pipeline.value = "new-chat-pipeline";
+      expect(queryByTestId(panel, "flight-deck-dispatch-enabled-chat_mention")).toBeNull();
+      expect(queryByTestId(panel, "flight-deck-dispatch-pipeline-chat_mention")).toBeNull();
 
       queryByTestId(panel, "flight-deck-dispatch-save-sub-save-policies").click();
       await Promise.resolve();
@@ -373,9 +369,9 @@ describe("flight deck settings panel", () => {
       expect(saved.subscriptionId).toBe("sub-save-policies");
       expect(saved.input.policies).toContainEqual({
         eventType: "chat_mention",
-        enabled: false,
-        defaultAction: "ignore",
-        pipelineDefinitionId: "new-chat-pipeline",
+        enabled: true,
+        defaultAction: "respond",
+        pipelineDefinitionId: "old-chat-pipeline",
         pipelineVersionPolicy: "latest",
         promptContext: "",
         quietMode: false,
@@ -500,7 +496,7 @@ describe("flight deck settings panel", () => {
       expect(queryByTestId(panel, "flight-deck-connection-sub-wingmen")).not.toBeNull();
       expect(text).toContain("This Works");
       expect(text).toContain("Wingmen");
-      expect(queryByTestId(panel, "flight-deck-dispatch-pipeline-chat_mention").value).toBe("wingmen-chat-pipeline");
+      expect(queryByTestId(panel, "flight-deck-dispatch-pipeline-chat_mention")).toBeNull();
 
       queryByTestId(panel, "flight-deck-workspace-tab-sub-thisworks").click();
       expect(selectedSubscriptionId).toBe("sub-thisworks");

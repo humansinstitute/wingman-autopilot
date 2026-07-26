@@ -307,22 +307,6 @@ function countAppendedContext(subscription) {
 const FLIGHT_DECK_DISPATCH_ROWS = [
   {
     group: 'Chat',
-    eventType: 'direct_message',
-    label: 'Direct Message',
-    changeType: 'Message in a direct channel with the agent',
-    defaultAction: 'respond',
-    defaultEnabled: true,
-  },
-  {
-    group: 'Chat',
-    eventType: 'chat_mention',
-    label: 'Chat Tagged',
-    changeType: 'Message explicitly tags or addresses the agent',
-    defaultAction: 'respond',
-    defaultEnabled: true,
-  },
-  {
-    group: 'Chat',
     eventType: 'chat_observe',
     label: 'Chat Observed',
     changeType: 'Message in a channel the agent can see',
@@ -489,7 +473,7 @@ function createFlightDeckDispatchTable({ subscription, pipelineDefinitions, canM
 
   const note = document.createElement('p');
   note.className = 'wm-settings__port-note';
-  note.textContent = 'Manage which Flight Deck events dispatch to agents and which default pipeline each event uses.';
+  note.textContent = 'Choose pipelines for observed chat, document, and task events. Direct messages and tagged chat use Agent Direct Chat settings instead.';
 
   const wrapper = document.createElement('div');
   wrapper.style.cssText = 'overflow:auto;border:1px solid rgba(255,255,255,0.08);border-radius:8px;margin-top:10px;';

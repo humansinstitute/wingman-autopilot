@@ -77,6 +77,13 @@ export function buildAgentBindingInput(subscription, defaults) {
     workingDirectory: defaults.workingDirectory,
     capabilities: Array.isArray(defaults.capabilities) ? defaults.capabilities : ['chat_intercept'],
     enabled: true,
+    directChat: {
+      enabled: true,
+      sessionAgent: null,
+      directory: defaults.workingDirectory,
+      model: null,
+      idleRetentionMinutes: 60,
+    },
   };
 }
 

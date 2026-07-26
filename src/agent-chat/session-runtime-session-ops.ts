@@ -25,6 +25,14 @@ export interface AssistantReplyWaitOptions {
   decisionFallbackStablePolls?: number;
   onAccepted?: () => void | Promise<void>;
   onPoll?: () => void | Promise<void>;
+  promptBoundaryTimeoutMs?: number;
+}
+
+export class PromptBoundaryNotObservedError extends Error {
+  constructor(readonly sessionId: string) {
+    super(`Session ${sessionId} remained stable without exposing the submitted prompt boundary.`);
+    this.name = 'PromptBoundaryNotObservedError';
+  }
 }
 
 function sleep(ms: number): Promise<void> {
@@ -122,7 +130,7 @@ export async function sendPromptAndAwaitFinalResponse(
   manager: ProcessManager,
   sessionId: string,
   prompt: string,
-  waitOptions?: Pick<AssistantReplyWaitOptions, 'timeoutMs' | 'pollIntervalMs' | 'onAccepted' | 'onPoll'>,
+  waitOptions?: Pick<AssistantReplyWaitOptions, 'timeoutMs' | 'pollIntervalMs' | 'onAccepted' | 'onPoll' | 'promptBoundaryTimeoutMs'>,
 ): Promise<AssistantReplyResult> {
   const adapter = manager.getAdapter(sessionId);
   if (!adapter) throw new Error(`No adapter available for session ${sessionId}.`);
@@ -142,6 +150,8 @@ export async function sendPromptAndAwaitFinalResponse(
 
   const pollIntervalMs = Math.max(10, waitOptions?.pollIntervalMs ?? ASSISTANT_REPLY_POLL_INTERVAL_MS);
   const deadline = Date.now() + Math.max(pollIntervalMs, waitOptions?.timeoutMs ?? ASSISTANT_REPLY_TIMEOUT_MS);
+  const promptBoundaryDeadline = Date.now() + Math.max(pollIntervalMs, waitOptions?.promptBoundaryTimeoutMs ?? 15_000);
+  let observedActiveRuntime = false;
   while (Date.now() < deadline) {
     const session = manager.getSession(sessionId);
     const currentAdapter = manager.getAdapter(sessionId);
@@ -174,6 +184,12 @@ export async function sendPromptAndAwaitFinalResponse(
       : 0;
     const promptIndex = authoritativeMessages.findLastIndex((message, index) =>
       index >= promptBoundaryFloor && message.role === 'user' && message.content === prompt);
+    if (promptIndex < 0 && agentapiCodex) {
+      if (runtimeStatus !== 'stable') observedActiveRuntime = true;
+      if (!observedActiveRuntime && Date.now() >= promptBoundaryDeadline) {
+        throw new PromptBoundaryNotObservedError(sessionId);
+      }
+    }
     const turnMessages = promptIndex >= 0
       ? authoritativeMessages.slice(promptIndex + 1)
       : agentapiCodex

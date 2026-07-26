@@ -152,7 +152,7 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
         capabilities: agentEditor.capabilityPicker.getSelectedCapabilities(),
         enabled: agentEditor.enabledField.input.checked,
         directChat: {
-          enabled: editingAgent?.directChat?.enabled ?? true,
+          enabled: agentEditor.directChatEnabledField.input.checked,
           sessionAgent: agentEditor.harnessSelect.value || null,
           directory: workingDirectory,
           model: null,
@@ -247,6 +247,7 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
           agentEditor.approvalDispatchPromptTemplateField.input.value = agent.approvalDispatchPromptTemplate || defaults.approvalDispatchPromptTemplate || '';
           agentEditor.capabilityPicker.setSelectedCapabilities(agent.capabilities);
           agentEditor.enabledField.input.checked = agent.enabled !== false;
+          agentEditor.directChatEnabledField.input.checked = agent.directChat?.enabled !== false;
           agentEditor.applyInheritedIdentity(selectedSubscription);
           agentEditor.setAgentTypes(defaults.agentTypes, agent.directChat?.sessionAgent || '');
           agentEditor.open();

@@ -147,9 +147,14 @@ export function createPrimaryAgentEditorCard({ onBrowseDirectory } = {}) {
   const labelField = createInput('Agent Label', 'Wingman 21', 'agent-chat-agent-label', true);
   const agentBotField = createInput('Agent Bot npub', 'npub1bot...', 'agent-chat-agent-bot');
   const agentWorkspaceField = createInput('Agent Workspace Owner npub', 'npub1workspace...', 'agent-chat-agent-workspace-owner');
-  const workingDirectoryField = createInput('Working Directory', '/Users/mini/code/wingmen', 'agent-chat-agent-directory');
+  const workingDirectoryField = createInput('Direct Chat Directory', '/Users/mini/code/wingmen', 'agent-chat-agent-directory');
+  const directChatEnabledField = createCheckbox(
+    'Respond to direct chat',
+    'agent-chat-agent-direct-chat-enabled',
+    true,
+  );
   const harnessRow = document.createElement('label');
-  harnessRow.textContent = 'Harness';
+  harnessRow.textContent = 'Direct Chat Harness';
   harnessRow.style.cssText = 'display:grid;gap:6px;';
   const harnessSelect = document.createElement('select');
   harnessSelect.setAttribute('aria-label', 'Agent harness');
@@ -222,6 +227,14 @@ export function createPrimaryAgentEditorCard({ onBrowseDirectory } = {}) {
     heading.id = 'agent-chat-agent-editor-title';
     heading.textContent = 'Edit Workspace Binding';
   }
+
+  const directChatSection = createDisclosureSection(
+    'Agent Direct Chat',
+    'Handle direct messages and tagged chat in an agent session without starting a pipeline.',
+    'agent-chat-direct-chat-section',
+  );
+  directChatSection.setOpen(true);
+  directChatSection.body.append(directChatEnabledField.row, harnessRow, workingDirectoryField.row);
 
   const intro = document.createElement('p');
   intro.className = 'wm-settings__port-note';
@@ -374,8 +387,7 @@ export function createPrimaryAgentEditorCard({ onBrowseDirectory } = {}) {
   card.append(
     agentIdField.row,
     labelField.row,
-    harnessRow,
-    workingDirectoryField.row,
+    directChatSection.element,
     intro,
     identityNote,
     capabilityPicker.row,
@@ -429,6 +441,7 @@ export function createPrimaryAgentEditorCard({ onBrowseDirectory } = {}) {
     agentWorkspaceField,
     harnessSelect,
     workingDirectoryField,
+    directChatEnabledField,
     browseDirectoryButton,
     chatPromptTemplateField,
     taskPromptTemplateField,
