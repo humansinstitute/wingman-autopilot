@@ -33,9 +33,11 @@ export function normalizeUserVisibleActivity(value: string, maxLength = 4_000): 
 export class AgentActivityPublisher {
   private sequence: number;
   private lastBody = '';
+  private lastState: AgentActivityState | null = null;
   private latestCommentaryAt = Number.NEGATIVE_INFINITY;
   private terminal = false;
   private publishQueue = Promise.resolve();
+  private sessionId: string;
 
   constructor(
     private readonly context: AgentActivityContext,
@@ -45,6 +47,11 @@ export class AgentActivityPublisher {
     private readonly log: Pick<Console, 'error'> = console,
   ) {
     this.sequence = sequenceBase;
+    this.sessionId = context.sessionId;
+  }
+
+  bindSession(sessionId: string): void {
+    this.sessionId = sessionId;
   }
 
   async publish(state: AgentActivityState, body?: string): Promise<void> {
@@ -60,7 +67,7 @@ export class AgentActivityPublisher {
   private async publishNow(state: AgentActivityState, body?: string): Promise<void> {
     if (this.terminal) return;
     const normalized = body ? normalizeUserVisibleActivity(body) : null;
-    if (state === 'working' && (!normalized || normalized === this.lastBody)) return;
+    if (state === 'working' && normalized === this.lastBody && (normalized || this.lastState === 'working')) return;
     if (normalized) this.lastBody = normalized;
     const terminal = state === 'completed' || state === 'failed' || state === 'cancelled';
     const sequence = ++this.sequence;
@@ -70,7 +77,8 @@ export class AgentActivityPublisher {
         activityId: buildAgentActivityId(this.context),
         state,
         sequence,
-        label: state === 'accepted' ? 'Thinking' : state === 'working' ? 'Working' : undefined,
+        sessionId: this.sessionId,
+        label: state === 'accepted' ? 'Message received' : state === 'working' ? (normalized ? 'Working' : 'Thinking') : undefined,
         summary: normalized ? normalized.replace(/\s+/g, ' ').slice(0, 240) : undefined,
         body: normalized ?? undefined,
         expiresInSeconds: terminal ? 60 : 300,
@@ -99,6 +107,7 @@ export class AgentActivityPublisher {
         });
         return;
       }
+      this.lastState = state;
       if (terminal) this.terminal = true;
     } catch (error) {
       this.log.error('[agent-activity] advisory publication failed', {

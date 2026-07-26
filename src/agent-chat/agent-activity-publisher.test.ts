@@ -27,9 +27,25 @@ describe('Agent activity publisher', () => {
     expect(delivered.map((item) => [item.state, item.sequence])).toEqual([
       ['accepted', 1], ['working', 2], ['completed', 3],
     ]);
+    expect(delivered.map((item) => item.label)).toEqual(['Message received', 'Working', undefined]);
     expect(delivered[1]).toMatchObject({ channelId: 'channel-1', threadId: 'thread-1',
       triggerMessageId: 'message-1', sessionId: 'session-1', agentNpub: 'npub1agent' });
     expect(delivered[0].activityId).toBe(buildAgentActivityId(context));
+  });
+
+  test('advances one activity from receipt to session-open thinking', async () => {
+    const delivered: any[] = [];
+    const publisher = new AgentActivityPublisher({ ...context, sessionId: 'pending:turn-1' }, async (input) => {
+      delivered.push(input);
+      return {};
+    }, 0);
+    await publisher.publish('accepted');
+    publisher.bindSession('session-opened');
+    await publisher.publish('working');
+    expect(delivered.map((item) => ({ activityId: item.activityId, sessionId: item.sessionId, label: item.label }))).toEqual([
+      { activityId: buildAgentActivityId(context), sessionId: 'pending:turn-1', label: 'Message received' },
+      { activityId: buildAgentActivityId(context), sessionId: 'session-opened', label: 'Thinking' },
+    ]);
   });
 
   test('retries one delivery failure and never throws into the reply path', async () => {

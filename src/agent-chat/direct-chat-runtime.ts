@@ -252,6 +252,7 @@ export class AgentDirectChatRuntime {
             triggerMessageId: recoverySourceMessageIds.at(-1)!, sessionId: session.id,
             agentNpub: intercept.botNpub, turnId: pending.turnId,
           });
+          await activity.publish('working');
           const recoveryPrompt = sessionResolution.bootstrap
             ? buildDirectChatBootstrapPrompt({ contextPrompt, subscription: input.subscription, intercept,
                 scopeId: input.channel.scope_id ?? null, history, nextMessages: delta, recovery: sessionResolution.recovery })
@@ -276,15 +277,6 @@ export class AgentDirectChatRuntime {
           await activity.publish('completed');
           continue;
         }
-        let sessionResolution = await this.resolveSession(agent, intercept, input.subscription, input.channel.scope_id ?? null);
-        let session = sessionResolution.session;
-        intercept = this.deps.interceptStore.save({ ...intercept, sessionId: session.id,
-          sessionGeneration: sessionResolution.generation, previousSessionIds: sessionResolution.previousSessionIds,
-          state: 'active', pendingMessageCount: delta.length, lastDecision: 'pending', lastActivityAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
-        let prompt = sessionResolution.bootstrap
-          ? buildDirectChatBootstrapPrompt({ contextPrompt, subscription: input.subscription, intercept,
-              scopeId: input.channel.scope_id ?? null, history, nextMessages: delta, recovery: sessionResolution.recovery })
-          : buildDirectChatFollowUpPrompt({ routingKey, threadId: intercept.threadId, history, actionableMessages: delta });
         const sourceMessageIds = delta.map((message) => message.messageId);
         const revisionKeys = revisionDispatch
           ? sourceMessageIds.map((messageId) => `${messageId}:revision:${revisionDispatch.revision}`)
@@ -296,16 +288,27 @@ export class AgentDirectChatRuntime {
           backendBaseUrl: input.subscription.backendBaseUrl, workspaceId: input.subscription.workspaceId!,
           appNpub: input.subscription.sourceAppNpub, botIdentity: input.botIdentity,
           channelId: intercept.channelId, threadId: intercept.threadId,
-          triggerMessageId: sourceMessageIds.at(-1)!, sessionId: session.id,
+          triggerMessageId: sourceMessageIds.at(-1)!, sessionId: `pending:${turnId}`,
           agentNpub: intercept.botNpub, turnId,
         });
+        await activity.publish('accepted');
+        let sessionResolution = await this.resolveSession(agent, intercept, input.subscription, input.channel.scope_id ?? null);
+        let session = sessionResolution.session;
+        activity.bindSession(session.id);
+        await activity.publish('working');
+        intercept = this.deps.interceptStore.save({ ...intercept, sessionId: session.id,
+          sessionGeneration: sessionResolution.generation, previousSessionIds: sessionResolution.previousSessionIds,
+          state: 'active', pendingMessageCount: delta.length, lastDecision: 'pending', lastActivityAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+        let prompt = sessionResolution.bootstrap
+          ? buildDirectChatBootstrapPrompt({ contextPrompt, subscription: input.subscription, intercept,
+              scopeId: input.channel.scope_id ?? null, history, nextMessages: delta, recovery: sessionResolution.recovery })
+          : buildDirectChatFollowUpPrompt({ routingKey, threadId: intercept.threadId, history, actionableMessages: delta });
         const onAccepted = () => {
             this.turnStore.save({ turnId, routingKey, sourceMessageIds, clientRequestId, replyBody: null,
               publishedMessageId: null, state: 'accepted', createdAt: now, updatedAt: new Date().toISOString() });
             intercept = this.deps.interceptStore.save({ ...intercept,
               lastHumanMessageIdDelivered: sourceMessageIds.at(-1) ?? null, pendingMessageCount: 0,
               updatedAt: new Date().toISOString() });
-            void activity?.publish('accepted');
           };
         let reply;
         try {
@@ -329,13 +332,8 @@ export class AgentDirectChatRuntime {
             state: 'active', lastActivityAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
           prompt = buildDirectChatBootstrapPrompt({ contextPrompt, subscription: input.subscription, intercept,
             scopeId: input.channel.scope_id ?? null, history, nextMessages: delta, recovery: sessionResolution.recovery });
-          activity = this.createActivityPublisher({
-            backendBaseUrl: input.subscription.backendBaseUrl, workspaceId: input.subscription.workspaceId!,
-            appNpub: input.subscription.sourceAppNpub, botIdentity: input.botIdentity,
-            channelId: intercept.channelId, threadId: intercept.threadId,
-            triggerMessageId: sourceMessageIds.at(-1)!, sessionId: session.id,
-            agentNpub: intercept.botNpub, turnId,
-          });
+          activity.bindSession(session.id);
+          await activity.publish('working');
           reply = await this.sendFinalResponse(this.deps.processManager, session.id, prompt, {
             onAccepted, onPoll: () => activity?.publishLatestCommentary(this.deps.processManager),
           });

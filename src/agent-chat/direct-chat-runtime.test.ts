@@ -21,6 +21,8 @@ function fixture(options: {
   failNativeResume?: boolean;
   nativeResumeFinal?: string;
   failReusedPromptBoundary?: boolean;
+  failCreate?: boolean;
+  createGate?: Promise<void>;
 } = {}) {
   const db = join(tmpdir(), `agent-direct-${randomUUID()}.sqlite`);
   const agentStore = new AgentDefinitionStore(db);
@@ -44,6 +46,8 @@ function fixture(options: {
     }),
     createSession: async (...args: any[]) => {
       creates.push(args);
+      await options.createGate;
+      if (options.failCreate) throw new Error('session create failed');
       if (options.failNativeResume && args[3]?.type === 'native-resume') throw new Error('native session no longer resumable');
       const metadata = { ...(args[6] ?? {}), nativeAgentSession: args[6]?.nativeAgentSession ?? { agent: args[0], sessionId: `native-${creates.length}`, workingDirectory: args[1], capturedAt: new Date().toISOString(), source: 'manual' } };
       const messages = args[3]?.type === 'native-resume' && options.nativeResumeFinal
@@ -101,6 +105,32 @@ describe('Agent Direct Chat runtime', () => {
     expect(f.published[0].clientRequestId).toMatch(/^agentdirect:/);
     const state = f.interceptStore.listAll()[0]!;
     expect(state.lastHumanMessageIdDelivered).toBe('m1'); expect(state.lastAgentMessageIdPublished).toBe('agent-message-1'); expect(state.lastCompletedTurnId).toBeTruthy();
+  });
+
+  test('publishes receipt before session creation completes, then advances the same activity to thinking', async () => {
+    let releaseCreate!: () => void;
+    const createGate = new Promise<void>((resolve) => { releaseCreate = resolve; });
+    const f = fixture({ createGate });
+    const m1 = f.message('m1', '@Rick hello', true);
+    expect(await f.handle([m1], 'm1')).toEqual({ handled: true, reason: 'direct_chat_queued' });
+    await Bun.sleep(0);
+    expect(f.activities.map((activity) => activity.label)).toEqual(['Message received']);
+    releaseCreate();
+    await f.runtime.waitForIdle();
+    expect(f.activities.slice(0, 2).map((activity) => activity.label)).toEqual(['Message received', 'Thinking']);
+    expect(new Set(f.activities.map((activity) => activity.activityId)).size).toBe(1);
+  });
+
+  test('replay stays on one activity row and session-create failure clears receipt with failed state', async () => {
+    const f = fixture({ failCreate: true });
+    const m1 = f.message('m1', '@Rick hello', true);
+    expect(await f.handle([m1], 'm1')).toEqual({ handled: true, reason: 'direct_chat_queued' });
+    await f.runtime.waitForIdle();
+    expect(f.activities.map((activity) => activity.state)).toEqual(['accepted', 'failed']);
+    expect(new Set(f.activities.map((activity) => activity.activityId)).size).toBe(1);
+    expect(await f.handle([m1], 'm1')).toEqual({ handled: false, reason: 'not_activated' });
+    await f.runtime.waitForIdle();
+    expect(f.activities).toHaveLength(2);
   });
 
   test('publishes only the completed final card returned with the sessions API agent role', async () => {
