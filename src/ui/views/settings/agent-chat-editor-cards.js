@@ -147,8 +147,14 @@ export function createPrimaryAgentEditorCard({ onBrowseDirectory } = {}) {
   const labelField = createInput('Agent Label', 'Wingman 21', 'agent-chat-agent-label', true);
   const agentBotField = createInput('Agent Bot npub', 'npub1bot...', 'agent-chat-agent-bot');
   const agentWorkspaceField = createInput('Agent Workspace Owner npub', 'npub1workspace...', 'agent-chat-agent-workspace-owner');
-  const agentGroupsField = createInput('Group npubs', 'Leave blank to use the bot subscription groups', 'agent-chat-agent-groups', true);
   const workingDirectoryField = createInput('Working Directory', '/Users/mini/code/wingmen', 'agent-chat-agent-directory');
+  const harnessRow = document.createElement('label');
+  harnessRow.textContent = 'Harness';
+  harnessRow.style.cssText = 'display:grid;gap:6px;';
+  const harnessSelect = document.createElement('select');
+  harnessSelect.setAttribute('aria-label', 'Agent harness');
+  harnessSelect.setAttribute('data-testid', 'agent-chat-agent-harness');
+  harnessRow.append(harnessSelect);
   let browseDirectoryButton = null;
   if (typeof onBrowseDirectory === 'function') {
     browseDirectoryButton = createButton(
@@ -231,17 +237,6 @@ export function createPrimaryAgentEditorCard({ onBrowseDirectory } = {}) {
     'agent-chat-identity-overrides',
   );
   identitySection.body.append(agentBotField.row, agentWorkspaceField.row);
-
-  const advancedSection = createDisclosureSection(
-    'Advanced routing overrides',
-    'Leave groups blank in the normal path. Only override them if this agent should use a narrower routing scope than the shared connection.',
-    'agent-chat-advanced-routing',
-  );
-  const agentGroupsNote = document.createElement('p');
-  agentGroupsNote.className = 'wm-settings__port-note';
-  agentGroupsNote.style.marginTop = '10px';
-  agentGroupsNote.textContent = 'Leave group npubs blank to derive them from the bot groups already refreshed from Tower for this workspace subscription.';
-  advancedSection.body.append(agentGroupsField.row, agentGroupsNote);
 
   const chatTemplateSection = createDisclosureSection(
     'Chat Dispatch Template',
@@ -379,13 +374,13 @@ export function createPrimaryAgentEditorCard({ onBrowseDirectory } = {}) {
   card.append(
     agentIdField.row,
     labelField.row,
+    harnessRow,
     workingDirectoryField.row,
     intro,
     identityNote,
     capabilityPicker.row,
     enabledField.row,
     identitySection.element,
-    advancedSection.element,
     chatTemplateSection.element,
     taskTemplateSection.element,
     flowDispatchTemplateSection.element,
@@ -417,8 +412,6 @@ export function createPrimaryAgentEditorCard({ onBrowseDirectory } = {}) {
   }
 
   function setFocusState(focusField, options = {}) {
-    const shouldOpenAdvanced = Boolean(options.openAdvanced);
-    advancedSection.setOpen(shouldOpenAdvanced);
     chatTemplateSection.setOpen(focusField === 'chat-template');
     taskTemplateSection.setOpen(focusField === 'task-template');
     flowDispatchTemplateSection.setOpen(focusField === 'flow-template');
@@ -434,7 +427,7 @@ export function createPrimaryAgentEditorCard({ onBrowseDirectory } = {}) {
     labelField,
     agentBotField,
     agentWorkspaceField,
-    agentGroupsField,
+    harnessSelect,
     workingDirectoryField,
     browseDirectoryButton,
     chatPromptTemplateField,
@@ -445,6 +438,16 @@ export function createPrimaryAgentEditorCard({ onBrowseDirectory } = {}) {
     capabilityPicker,
     enabledField,
     applyInheritedIdentity,
+    setAgentTypes(agentTypes, selected = '') {
+      harnessSelect.replaceChildren();
+      (Array.isArray(agentTypes) ? agentTypes : []).forEach((agentType) => {
+        const option = document.createElement('option');
+        option.value = agentType.id;
+        option.textContent = agentType.label || agentType.id;
+        harnessSelect.append(option);
+      });
+      harnessSelect.value = selected || harnessSelect.options[0]?.value || '';
+    },
     setFocusState,
     open() {
       setModalVisible(modal.overlay, true);

@@ -477,6 +477,24 @@ describe('WorkspaceSubscriptionManager', () => {
     expect(record.groupNpubs).toEqual(['npub1groupa', 'npub1groupb']);
   });
 
+  test('saves a Flight Deck PG agent without legacy group keys', async () => {
+    const dbPath = makeTempDb();
+    const instanceIdentity = makeInstanceIdentity();
+    const { manager } = createTestManager(dbPath, new Map(), undefined, instanceIdentity);
+    await manager.createOrUpdate({
+      managedByNpub: 'npub1manager', workspaceOwnerNpub: 'npub1owner', workspaceServiceNpub: 'npub1workspace-service',
+      workspaceId: 'workspace-pg', backendBaseUrl: 'https://tower.example.com', sourceAppNpub: 'npub1sourceapp',
+      onboardingSource: 'nostr_33357',
+    });
+    const saved = await manager.saveAgentForManager({ managedByNpub: 'npub1manager', agentId: 'athena', label: 'Athena',
+      botNpub: instanceIdentity.npub, workspaceOwnerNpub: 'npub1workspace-service', workingDirectory: '/tmp/athena',
+      capabilities: ['chat_intercept', 'task_dispatch'], directChat: { enabled: true, sessionAgent: 'codex',
+        directory: '/tmp/athena', model: null, idleRetentionMinutes: 60 }, enabled: true });
+    expect(saved.groupNpubs).toEqual([]);
+    expect(saved.directChat).toMatchObject({ sessionAgent: 'codex', directory: '/tmp/athena' });
+    expect(saved.capabilities).toEqual(['chat_intercept', 'task_dispatch']);
+  });
+
   test('imports the same Agent Connect workspace for two owned profiles with separate bot identities', async () => {
     const dbPath = makeTempDb();
     const botKeys = new Map([
@@ -834,6 +852,7 @@ describe('WorkspaceSubscriptionManager', () => {
             thread_id: 'thread-1',
             body,
             metadata: {
+              mentions: [{ npub: instanceIdentity.npub, type: 'agent' }],
               agent_instruction_signature: makeInstructionSignature({
                 body,
                 signer,
@@ -945,6 +964,7 @@ describe('WorkspaceSubscriptionManager', () => {
             thread_id: 'thread-unauthorized-1',
             body,
             metadata: {
+              mentions: [{ npub: instanceIdentity.npub, type: 'agent' }],
               agent_instruction_signature: makeInstructionSignature({
                 body,
                 signer: outsideSigner,
@@ -1033,6 +1053,7 @@ describe('WorkspaceSubscriptionManager', () => {
             thread_id: 'thread-tampered-1',
             body: 'Tampered body',
             metadata: {
+              mentions: [{ npub: instanceIdentity.npub, type: 'agent' }],
               agent_instruction_signature: makeInstructionSignature({
                 body: 'Original signed body',
                 signer,
@@ -1323,6 +1344,7 @@ describe('WorkspaceSubscriptionManager', () => {
             thread_id: 'thread-live-1',
             body,
             metadata: {
+              mentions: [{ npub: instanceIdentity.npub, type: 'agent' }],
               agent_instruction_signature: makeInstructionSignature({
                 body,
                 signer,
@@ -1413,6 +1435,7 @@ describe('WorkspaceSubscriptionManager', () => {
             thread_id: 'thread-dupe-1',
             body,
             metadata: {
+              mentions: [{ npub: instanceIdentity.npub, type: 'agent' }],
               agent_instruction_signature: makeInstructionSignature({
                 body,
                 signer,

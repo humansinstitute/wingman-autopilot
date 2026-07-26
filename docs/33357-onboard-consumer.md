@@ -3,6 +3,29 @@
 Status: implemented
 Last updated: 2026-06-09
 
+## Current Flight Deck PG agent model
+
+Current Flight Deck exports use Agent Connect version 6 with
+`protocol: "flightdeck_pg"`. Autopilot preserves manual v6 import and kind
+`33357` onboarding, verifies Tower access with the configured bot's NIP-98
+identity, and binds the resulting agent profile to the stable Tower workspace
+identity.
+
+Tower groups and typed permission grants are authoritative for PG workspaces.
+Autopilot does not expose or require legacy group npubs or wrapped group keys in
+the PG agent editor. Structured npub mentions target one agent. Non-mention chat
+participation requires an explicit scope or channel pipeline override using the
+stable PG identity; workspace membership alone does not enable every channel.
+
+Edit Agent configures the immutable binding id/bot identity, display label,
+available local harness, absolute working directory, enabled capabilities, and
+the existing prompt/behavior settings. Changing the bot npub requires a new
+Flight Deck connection/agent binding so Tower can verify that actor independently.
+
+Version 5 encrypted-record Agent Connect and group-key routing remain isolated
+as compatibility behavior for non-PG subscriptions. They are not part of the
+current Flight Deck settings workflow.
+
 ## Purpose
 
 Autopilot should be able to consume Flight Deck kind `33357` onboarding events

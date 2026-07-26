@@ -2723,6 +2723,7 @@ const handleApi = createApiRouteHandler({
   },
   agentChatApiContext: {
     manager: workspaceSubscriptionManager,
+    agentTypes: Object.entries(config.agents).map(([id, definition]) => ({ id, label: definition.label })),
     adminNpub,
     sharedAgentDispatch: sharedAgentDispatchEnabled,
     isAdminContext,

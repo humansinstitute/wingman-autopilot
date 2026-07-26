@@ -214,7 +214,7 @@ describe("agent chat settings subscription selection", () => {
   });
 
   test("builds agent binding input from the selected subscription", () => {
-    expect(buildAgentBindingInput({
+    const input = buildAgentBindingInput({
       subscriptionId: "sub-secondary",
       workspaceOwnerNpub: "npub1owner",
       workspaceServiceNpub: "npub1workspace-service",
@@ -224,7 +224,8 @@ describe("agent chat settings subscription selection", () => {
       label: "Secondary",
       workingDirectory: "/workspace/secondary",
       capabilities: ["chat_intercept", "task_dispatch"],
-    })).toMatchObject({
+    });
+    expect(input).toMatchObject({
       agentId: "agent-secondary",
       label: "Secondary",
       botNpub: "npub1bot-secondary",
@@ -233,6 +234,9 @@ describe("agent chat settings subscription selection", () => {
       capabilities: ["chat_intercept", "task_dispatch"],
       enabled: true,
     });
+    expect(input).not.toHaveProperty("groupNpubs");
+    expect(agentChatSectionSource).toContain("agentEditor.harnessSelect.value");
+    expect(agentChatSectionSource).not.toContain("agentGroupsField");
   });
 
   test("builds secondary subscription input from a selected backend connection", () => {

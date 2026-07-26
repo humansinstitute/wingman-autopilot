@@ -11,6 +11,7 @@ import { createStatusLine } from './agent-chat-shared-ui.js';
 import { createAgentDispatchSetupCards } from './agent-chat-setup-cards.js';
 import { createAgentConnectImportModal } from './agent-chat-connect-import-card.js';
 import {
+  createPrimaryAgentEditorCard,
   createPrimaryAgentNameModal,
   createSubscriptionEditorCard,
 } from './agent-chat-editor-cards.js';
@@ -29,7 +30,7 @@ async function loadOperatorState(selectedSubscriptionId = null) {
     listAgentChatBackendConnections().catch(() => []),
   ]);
   const onboardedSubscriptions = Array.isArray(subscriptions)
-    ? subscriptions.filter((subscription) => subscription?.onboardingSource === 'nostr_33357')
+    ? subscriptions.filter((subscription) => subscription?.workspaceId && subscription?.workspaceServiceNpub)
     : [];
   const subscriptionPermissions = subscriptions?.permissions;
   const effectiveSelectedSubscriptionId = resolveSelectedSubscriptionId(onboardedSubscriptions, selectedSubscriptionId);
@@ -41,6 +42,7 @@ async function loadOperatorState(selectedSubscriptionId = null) {
     selectedSubscription,
     selectedSubscriptionId: effectiveSelectedSubscriptionId,
     backendConnections: Array.isArray(backendConnections) ? backendConnections : [],
+    defaults: agentPayload?.defaults || {},
   };
 }
 
@@ -128,6 +130,49 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
       await refreshList();
     },
   });
+  const agentEditor = createPrimaryAgentEditorCard({ onBrowseDirectory: openDirectoryBrowser });
+  let editingAgent = null;
+  agentEditor.saveButton.addEventListener('click', async () => {
+    const agentId = agentEditor.agentIdField.input.value.trim();
+    const botNpub = agentEditor.agentBotField.input.value.trim();
+    const workspaceOwnerNpub = agentEditor.agentWorkspaceField.input.value.trim();
+    const workingDirectory = agentEditor.workingDirectoryField.input.value.trim();
+    if (!agentId || !botNpub || !workspaceOwnerNpub || !workingDirectory) {
+      statusLine.textContent = 'Agent identity, workspace identity, and an absolute working directory are required.';
+      return;
+    }
+    agentEditor.saveButton.disabled = true;
+    try {
+      await saveAgentChatAgent({
+        agentId,
+        label: agentEditor.labelField.input.value.trim(),
+        botNpub,
+        workspaceOwnerNpub,
+        workingDirectory,
+        capabilities: agentEditor.capabilityPicker.getSelectedCapabilities(),
+        enabled: agentEditor.enabledField.input.checked,
+        directChat: {
+          enabled: editingAgent?.directChat?.enabled ?? true,
+          sessionAgent: agentEditor.harnessSelect.value || null,
+          directory: workingDirectory,
+          model: null,
+          idleRetentionMinutes: 60,
+        },
+        chatPromptTemplate: agentEditor.chatPromptTemplateField.input.value,
+        taskPromptTemplate: agentEditor.taskPromptTemplateField.input.value,
+        flowDispatchPromptTemplate: agentEditor.flowDispatchPromptTemplateField.input.value,
+        taskReviewPromptTemplate: agentEditor.taskReviewPromptTemplateField.input.value,
+        approvalDispatchPromptTemplate: agentEditor.approvalDispatchPromptTemplateField.input.value,
+      });
+      agentEditor.close();
+      statusLine.textContent = 'Agent configuration saved.';
+      await refreshList();
+    } catch (error) {
+      statusLine.textContent = error instanceof Error ? error.message : 'Failed to save agent configuration.';
+    } finally {
+      agentEditor.saveButton.disabled = false;
+    }
+  });
   const setupPanel = document.createElement('div');
   setupPanel.setAttribute('data-testid', 'agent-chat-setup-panel');
   const setupHeading = document.createElement('h3');
@@ -151,6 +196,7 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
         selectedSubscription,
         selectedSubscriptionId: effectiveSelectedSubscriptionId,
         backendConnections,
+        defaults,
       } = await loadOperatorState(selectedSubscriptionId);
       selectedSubscriptionId = effectiveSelectedSubscriptionId;
       const selectedAgent = getAgentForSubscription(agents, selectedSubscription);
@@ -188,7 +234,24 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
           saveAgentChatBackendConnectionAvailability(backendConnection.backendConnectionId, input)
         ),
         onCreateAgent: () => agentNameModal.open(selectedSubscription?.profileWorkspace?.workspace?.workspaceTitle || ''),
-        onEditAgent: null,
+        onEditAgent: (agent) => {
+          editingAgent = agent;
+          agentEditor.agentIdField.input.value = agent.agentId || '';
+          agentEditor.agentIdField.input.readOnly = true;
+          agentEditor.labelField.input.value = agent.label || '';
+          agentEditor.workingDirectoryField.input.value = agent.workingDirectory || '';
+          agentEditor.chatPromptTemplateField.input.value = agent.chatPromptTemplate || defaults.chatPromptTemplate || '';
+          agentEditor.taskPromptTemplateField.input.value = agent.taskPromptTemplate || defaults.taskPromptTemplate || '';
+          agentEditor.flowDispatchPromptTemplateField.input.value = agent.flowDispatchPromptTemplate || defaults.flowDispatchPromptTemplate || '';
+          agentEditor.taskReviewPromptTemplateField.input.value = agent.taskReviewPromptTemplate || defaults.taskReviewPromptTemplate || '';
+          agentEditor.approvalDispatchPromptTemplateField.input.value = agent.approvalDispatchPromptTemplate || defaults.approvalDispatchPromptTemplate || '';
+          agentEditor.capabilityPicker.setSelectedCapabilities(agent.capabilities);
+          agentEditor.enabledField.input.checked = agent.enabled !== false;
+          agentEditor.applyInheritedIdentity(selectedSubscription);
+          agentEditor.setAgentTypes(defaults.agentTypes, agent.directChat?.sessionAgent || '');
+          agentEditor.open();
+          agentEditor.labelField.input.focus();
+        },
         onRefresh: refreshList,
       }));
     } catch (error) {
@@ -225,7 +288,7 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
     subscriptionEditor.card.style.display = 'none';
   });
   container.append(setupPanel);
-  container.append(connectImportModal.element, agentNameModal.element);
+  container.append(connectImportModal.element, agentNameModal.element, agentEditor.card);
   void refreshList();
   return container;
 }

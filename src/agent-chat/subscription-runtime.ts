@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { isAbsolute } from 'node:path';
 import { nip19, verifyEvent, type Event as NostrEvent } from 'nostr-tools';
 import { normaliseNpub } from '../identity/npub-utils';
 import { generateBotKey, unlockViaEscrow } from '../identity/bot-key-manager';
@@ -75,6 +76,7 @@ import {
 import { loadYokeBotHelpers } from './yoke-bot-helpers';
 import { decryptRecordPayloadWithYoke } from './yoke-record-payload';
 import { hydrateDirectChatThread } from './direct-chat-tower-hydration';
+import { normaliseDirectChatMessage } from './direct-chat-contract';
 import {
   DEFAULT_APPROVAL_DISPATCH_PROMPT_TEMPLATE,
   DEFAULT_CHAT_DISPATCH_PROMPT_TEMPLATE,
@@ -336,14 +338,38 @@ function profilePolicyAllowsDispatch(decision: AgentProfileRuntimeDecision | nul
   return action !== 'ignore' && action !== 'observe' && action !== 'index';
 }
 
+function flightDeckPgChatTargetsAgent(input: {
+  message: FlightDeckPgMessage;
+  botNpub: string;
+  profileDecision: AgentProfileRuntimeDecision | null;
+}): { eligible: boolean; reason: string; mentionedNpubs: string[] } {
+  const mentionedNpubs = [...new Set(normaliseDirectChatMessage(input.message).mentions
+    .map((mention) => mention.npub?.trim() ?? '')
+    .filter(Boolean))].sort();
+  if (mentionedNpubs.length > 0) {
+    return {
+      eligible: mentionedNpubs.includes(input.botNpub),
+      reason: mentionedNpubs.includes(input.botNpub) ? 'explicit_agent_mention' : 'different_agent_mentioned',
+      mentionedNpubs,
+    };
+  }
+  const source = input.profileDecision?.settings.pipeline.source;
+  const participatesByStableContext = source === 'channel_override' || source === 'scope_override';
+  return {
+    eligible: participatesByStableContext,
+    reason: participatesByStableContext ? `${source}_participation` : 'mention_or_channel_policy_required',
+    mentionedNpubs,
+  };
+}
+
 function isRevokedWorkspaceSubscription(record: WorkspaceSubscriptionRecord): boolean {
   return record.wsKeyStatus === 'revoked'
-    || record.groupKeyStatus === 'revoked'
+    || (!isFlightDeckPgSubscription(record) && record.groupKeyStatus === 'revoked')
     || record.lastErrorCode === 'workspace_access_revoked';
 }
 
 function isFlightDeckPgSubscription(record: WorkspaceSubscriptionRecord): boolean {
-  return record.onboardingSource === 'nostr_33357' && Boolean(record.workspaceId);
+  return Boolean(record.workspaceId && record.workspaceServiceNpub);
 }
 
 function isFlightDeckPgMessageRevisionEvent(event: FlightDeckPgEvent): boolean {
@@ -1689,7 +1715,10 @@ export class WorkspaceSubscriptionManager {
     botIdentity: RuntimeBotIdentity;
   }): Promise<AgentDefinitionRecord | null> {
     const subscription = input.subscription;
-    if (subscription.onboardingSource !== 'nostr_33357' || !subscription.managedByNpub) {
+    if (
+      (subscription.onboardingSource !== 'nostr_33357' && !isFlightDeckPgSubscription(subscription))
+      || !subscription.managedByNpub
+    ) {
       return null;
     }
 
@@ -1758,7 +1787,7 @@ export class WorkspaceSubscriptionManager {
     const botNpub = input.botNpub.trim();
     const workspaceOwnerNpub = input.workspaceOwnerNpub.trim();
     const workingDirectory = input.workingDirectory.trim();
-    const requestedGroupNpubs = [...new Set(input.groupNpubs.map((value) => value.trim()).filter((value) => value.length > 0))].sort();
+    const requestedGroupNpubs = [...new Set((input.groupNpubs ?? []).map((value) => value.trim()).filter((value) => value.length > 0))].sort();
     const capabilities = this.normaliseAgentCapabilities(input.capabilities);
     const chatPromptTemplate = normalisePromptTemplate(input.chatPromptTemplate, DEFAULT_CHAT_DISPATCH_PROMPT_TEMPLATE);
     const taskPromptTemplate = normalisePromptTemplate(input.taskPromptTemplate, DEFAULT_TASK_DISPATCH_PROMPT_TEMPLATE);
@@ -1778,14 +1807,24 @@ export class WorkspaceSubscriptionManager {
     if (!agentId || !botNpub || !workspaceOwnerNpub || !workingDirectory) {
       throw new Error('agentId, botNpub, workspaceOwnerNpub, and workingDirectory are required.');
     }
+    if (!isAbsolute(workingDirectory)) {
+      throw new Error('workingDirectory must be an absolute path.');
+    }
 
-    const groupNpubs = await this.resolveAgentGroupNpubs({
-      requestedGroupNpubs,
-      workspaceOwnerNpub,
-      botNpub,
-      managedByNpub: input.managedByNpub,
-    });
-    if (groupNpubs.length === 0) {
+    const pgSubscription = this.store.listForManagerNpub(input.managedByNpub).find((subscription) => (
+      isFlightDeckPgSubscription(subscription)
+      && this.getEffectiveWorkspaceNpub(subscription) === workspaceOwnerNpub
+      && subscription.botNpub === botNpub
+    ));
+    const groupNpubs = pgSubscription
+      ? []
+      : await this.resolveAgentGroupNpubs({
+          requestedGroupNpubs,
+          workspaceOwnerNpub,
+          botNpub,
+          managedByNpub: input.managedByNpub,
+        });
+    if (!pgSubscription && groupNpubs.length === 0) {
       throw new Error('No readable Flight Deck groups are available for this bot. Add the Wingman bot to at least one workspace group, then try again; Wingman will refresh groups automatically.');
     }
 
@@ -3563,6 +3602,32 @@ export class WorkspaceSubscriptionManager {
         channelId,
         builtInDefaultPipelineId: 'fd-agent-dispatch-chat',
       });
+      const targetDecision = flightDeckPgChatTargetsAgent({
+        message,
+        botNpub: record.botNpub,
+        profileDecision,
+      });
+      if (!targetDecision.eligible) {
+        return this.appendDispatchHistory(record, {
+          at: new Date().toISOString(),
+          kind: 'chat',
+          action: 'chat_skip_not_targeted',
+          agentId: record.agentProfileId ?? record.botNpub,
+          sessionId: null,
+          recordId,
+          bindingId: threadId,
+          bindingType: 'thread',
+          details: {
+            workspace_id: workspaceId,
+            scope_id: scopeId,
+            channel_id: channelId,
+            thread_id: threadId,
+            mentioned_npubs: targetDecision.mentionedNpubs,
+            suppression_reason: targetDecision.reason,
+            source: 'flightdeck_pg',
+          },
+        });
+      }
       if (!profilePolicyAllowsDispatch(profileDecision)) {
         return this.appendProfilePolicySuppression({
           record,
@@ -5602,11 +5667,12 @@ export class WorkspaceSubscriptionManager {
       record.healthStatus = 'unhealthy';
       return record;
     }
-    if (record.groupKeyStatus === 'failed' || record.sseStatus === 'backoff' || record.groupKeyStatus === 'refresh_required') {
+    const groupStateHealthy = isFlightDeckPgSubscription(record) || record.groupKeyStatus === 'active';
+    if ((!groupStateHealthy && (record.groupKeyStatus === 'failed' || record.groupKeyStatus === 'refresh_required')) || record.sseStatus === 'backoff') {
       record.healthStatus = 'degraded';
       return record;
     }
-    if (record.sseStatus === 'connected' && record.wsKeyStatus === 'active' && record.groupKeyStatus === 'active') {
+    if (record.sseStatus === 'connected' && record.wsKeyStatus === 'active' && groupStateHealthy) {
       record.healthStatus = 'healthy';
       return record;
     }

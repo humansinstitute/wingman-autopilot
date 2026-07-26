@@ -661,7 +661,6 @@ function isRevokedOrDeletedWorkspace(subscription) {
   return onboardingStatus === 'revoked'
     || onboardingStatus === 'deleted'
     || subscription?.wsKeyStatus === 'revoked'
-    || subscription?.groupKeyStatus === 'revoked'
     || subscription?.lastErrorCode === 'workspace_access_revoked';
 }
 

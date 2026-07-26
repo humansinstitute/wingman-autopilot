@@ -51,6 +51,35 @@ function createSubscription(overrides: Partial<WorkspaceSubscriptionRecord> = {}
 }
 
 describe('AgentChatRoutingEvaluator', () => {
+  test('routes a PG message only to its explicitly mentioned agent in the verified workspace', async () => {
+    const dbPath = makeTempDb();
+    const agentStore = new AgentDefinitionStore(dbPath);
+    const interceptStore = new ChatInterceptStateStore(dbPath);
+    const now = new Date().toISOString();
+    for (const [agentId, botNpub] of [['athena', 'npub1athena'], ['rick', 'npub1rick']] as Array<[string, string]>) {
+      agentStore.save({ agentId, label: agentId, botNpub, workspaceOwnerNpub: 'npub1workspace-service', groupNpubs: [],
+        workingDirectory: `/tmp/${agentId}`, capabilities: ['chat_intercept'], enabled: true, createdAt: now, updatedAt: now,
+        managedByNpub: 'npub1manager' });
+    }
+    const evaluator = new AgentChatRoutingEvaluator({
+      agentStore,
+      interceptStore,
+      resolveRoutingContext: async () => ({ recordId: 'msg-pg', workspaceId: 'workspace-pg', channelId: 'channel-pg',
+        scopeId: 'scope-pg', threadId: 'thread-pg', participantNpubs: [], mentionedNpubs: ['npub1athena'],
+        towerAccessVerified: true }),
+    });
+    const input = {
+      subscription: createSubscription({ onboardingSource: 'nostr_33357', workspaceId: 'workspace-pg',
+        workspaceServiceNpub: 'npub1workspace-service', botNpub: 'npub1athena' }),
+      wsSession: { npub: 'npub1workspacekey', secret: new Uint8Array([1]) }, groupKeys: {}, chatRecordId: 'msg-pg',
+      chatRecord: {}, chatMessage: { record_id: 'msg-pg', mentions: [{ npub: 'npub1athena' }] },
+    };
+    expect((await evaluator.evaluate(input)).assignments.map((row) => row.agent.agentId)).toEqual(['athena']);
+    expect((await evaluator.evaluate({ ...input, subscription: { ...input.subscription, workspaceId: 'workspace-other' } })).assignments).toEqual([]);
+    expect((await evaluator.evaluate({ ...input, chatMessage: { record_id: 'msg-pg-2', mentions: [{ npub: 'npub1rick' }] },
+      chatRecordId: 'msg-pg-2' })).assignments).toEqual([]);
+  });
+
   test('creates one intercept per matching agent without trigger linkage', async () => {
     const dbPath = makeTempDb();
     const agentStore = new AgentDefinitionStore(dbPath);

@@ -17,10 +17,13 @@ import { decryptRecordPayloadWithYoke } from './yoke-record-payload';
 
 interface RoutingContext {
   recordId: string;
+  workspaceId?: string | null;
   channelId: string;
   scopeId?: string | null;
   threadId: string;
   participantNpubs: string[];
+  mentionedNpubs?: string[];
+  towerAccessVerified?: boolean;
 }
 
 export interface ChatDispatchRoutingContext extends RoutingContext {
@@ -119,7 +122,16 @@ export class AgentChatRoutingEvaluator {
     const enabledAgents = configuredAgents.filter((agent) => agent.enabled);
     const candidateAgents = enabledAgents.filter((agent) => agent.capabilities.includes('chat_intercept'));
     const messageGroupNpubs = routingContext.messageGroupNpubs;
-    const matchedAgents = candidateAgents.filter((agent) => intersectsSorted(agent.groupNpubs, messageGroupNpubs));
+    const isFlightDeckPg = Boolean(input.subscription.workspaceId && input.subscription.workspaceServiceNpub);
+    const mentionedNpubs = routingContext.mentionedNpubs ?? extractMentionedNpubs(input.chatMessage);
+    const pgContextMatches = isFlightDeckPg
+      && routingContext.towerAccessVerified === true
+      && routingContext.workspaceId === input.subscription.workspaceId;
+    const matchedAgents = candidateAgents.filter((agent) => (
+      isFlightDeckPg
+        ? pgContextMatches && mentionedNpubs.includes(agent.botNpub)
+        : intersectsSorted(agent.groupNpubs, messageGroupNpubs)
+    ));
     const senderNpub = routingContext.senderNpub;
     const updaterNpub = routingContext.updaterNpub;
 
@@ -185,6 +197,9 @@ export class AgentChatRoutingEvaluator {
         thread_id: routingContext.threadId,
         participant_npubs: routingContext.participantNpubs,
         message_group_npubs: messageGroupNpubs,
+        mentioned_npubs: mentionedNpubs,
+        flightdeck_pg: isFlightDeckPg,
+        tower_access_verified: routingContext.towerAccessVerified ?? false,
         sender_npub: senderNpub,
         updater_npub: updaterNpub,
         configured_agent_ids: configuredAgents.map((agent) => agent.agentId),
@@ -344,6 +359,20 @@ function normaliseNpubList(values: unknown): string[] {
     set.add(value);
   }
   return [...set].sort();
+}
+
+function extractMentionedNpubs(message: Record<string, unknown>): string[] {
+  const metadata = message.metadata && typeof message.metadata === 'object' && !Array.isArray(message.metadata)
+    ? message.metadata as Record<string, unknown>
+    : {};
+  const mentions = Array.isArray(message.mentions)
+    ? message.mentions
+    : Array.isArray(metadata.mentions) ? metadata.mentions : [];
+  return [...new Set(mentions.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
+    const npub = (entry as Record<string, unknown>).npub;
+    return typeof npub === 'string' && npub.trim() ? [npub.trim()] : [];
+  }))].sort();
 }
 
 function getScopeId(record: Record<string, unknown>): string | null {

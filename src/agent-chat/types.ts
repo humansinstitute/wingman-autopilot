@@ -263,7 +263,8 @@ export interface CreateAgentDefinitionInput {
   label: string;
   botNpub: string;
   workspaceOwnerNpub: string;
-  groupNpubs: string[];
+  /** Legacy encrypted-record routing only. Flight Deck PG agents leave this empty. */
+  groupNpubs?: string[];
   workingDirectory: string;
   capabilities?: AgentCapability[];
   chatPromptTemplate?: string;

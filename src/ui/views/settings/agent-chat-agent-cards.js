@@ -91,14 +91,14 @@ export function createAgentRegistryPanel(agents, handlers, options = {}) {
 
     const status = document.createElement('p');
     status.className = 'wm-settings__port-note';
-    status.textContent = `enabled=${agent.enabled ? 'yes' : 'no'}, groups=${agent.operator?.groupCount ?? agent.groupNpubs?.length ?? 0}, capabilities=${(agent.capabilities || []).length}`;
+    status.textContent = `enabled=${agent.enabled ? 'yes' : 'no'}, capabilities=${(agent.capabilities || []).length}`;
     card.append(status);
 
     card.append(createDetailList([
       ['Workspace Owner', agent.workspaceOwnerNpub || 'None'],
       ['Bot npub', agent.botNpub || 'None'],
       ['Working Directory', agent.workingDirectory || 'None'],
-      ['Groups', Array.isArray(agent.groupNpubs) && agent.groupNpubs.length > 0 ? agent.groupNpubs.join(', ') : 'None'],
+      ['Harness', agent.directChat?.sessionAgent || 'Default'],
       ['Updated', agent.updatedAt || 'None'],
     ]));
     card.append(createCapabilityList(agent.capabilities));

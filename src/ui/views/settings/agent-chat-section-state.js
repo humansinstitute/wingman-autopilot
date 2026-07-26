@@ -75,7 +75,6 @@ export function buildAgentBindingInput(subscription, defaults) {
     botNpub: subscription?.botNpub || '',
     workspaceOwnerNpub: getEffectiveWorkspaceNpub(subscription),
     workingDirectory: defaults.workingDirectory,
-    groupNpubs: [],
     capabilities: Array.isArray(defaults.capabilities) ? defaults.capabilities : ['chat_intercept'],
     enabled: true,
   };

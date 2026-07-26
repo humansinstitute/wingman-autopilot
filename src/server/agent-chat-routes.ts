@@ -32,6 +32,7 @@ type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
 
 export interface AgentChatApiContext {
   manager: WorkspaceSubscriptionManager;
+  agentTypes?: Array<{ id: string; label: string }>;
   adminNpub?: string | null;
   sharedAgentDispatch?: boolean;
   isAdminContext?: (authContext: RequestAuthContext) => boolean;
@@ -81,7 +82,7 @@ function buildOperatorRecommendations(record: WorkspaceSubscriptionRecord, inter
   if (record.wsKeyStatus !== 'active' || hasBlockedAuth) {
     addRecommendation('refresh-keys', 'Refresh workspace key', 'Workspace auth is stale, revoked, or otherwise blocked.');
   }
-  if (record.groupKeyStatus === 'refresh_required' || record.groupKeyStatus === 'failed' || hasBlockedDecrypt) {
+  if (!record.workspaceId && (record.groupKeyStatus === 'refresh_required' || record.groupKeyStatus === 'failed' || hasBlockedDecrypt)) {
     addRecommendation('refresh-keys', 'Refresh wrapped group keys', 'Decrypt or group membership state needs to be refreshed.');
   }
   if (hasInterruptFailure) {
@@ -92,11 +93,11 @@ function buildOperatorRecommendations(record: WorkspaceSubscriptionRecord, inter
 }
 
 function serialiseAgent(record: AgentDefinitionRecord) {
+  const { groupNpubs: _legacyGroupNpubs, ...visibleRecord } = record;
   return {
-    ...record,
+    ...visibleRecord,
     operator: {
       enabled: record.enabled,
-      groupCount: record.groupNpubs.length,
       capabilityCount: record.capabilities.length,
     },
   };
@@ -240,8 +241,10 @@ function serialiseSubscription(
   options: { canManage?: boolean; shared?: boolean } = {},
 ) {
   const recommendations = buildOperatorRecommendations(record, intercepts);
+  const { wrappedGroupKeysJson: _legacyWrappedGroupKeys, ...visibleRecord } = record;
   return {
-    ...record,
+    ...visibleRecord,
+    ...(record.workspaceId ? {} : { wrappedGroupKeysJson: record.wrappedGroupKeysJson }),
     workspaceName: getBackendWorkspaceName(backendConnection),
     profileWorkspace: serialiseProfileWorkspace(profileWorkspace ?? null, record),
     backend: backendConnection
@@ -573,6 +576,7 @@ export async function handleAgentChatApi(
       },
       agents: ctx.manager.listAgentsForManager(scope.managerNpub).map(serialiseAgent),
       defaults: {
+        agentTypes: ctx.agentTypes ?? [],
         chatPromptTemplate: DEFAULT_CHAT_DISPATCH_PROMPT_TEMPLATE,
         taskPromptTemplate: DEFAULT_TASK_DISPATCH_PROMPT_TEMPLATE,
         flowDispatchPromptTemplate: DEFAULT_FLOW_DISPATCH_PROMPT_TEMPLATE,
@@ -862,9 +866,6 @@ export async function handleAgentChatApi(
     const workspaceOwnerNpub = typeof body.workspaceOwnerNpub === 'string' ? body.workspaceOwnerNpub.trim() : '';
     const workingDirectory = typeof body.workingDirectory === 'string' ? body.workingDirectory.trim() : '';
     const enabled = body.enabled !== false;
-    const groupNpubs = Array.isArray(body.groupNpubs)
-      ? body.groupNpubs.filter((value): value is string => typeof value === 'string').map((value) => value.trim()).filter(Boolean)
-      : [];
     const capabilityInput = Array.isArray(body.capabilities)
       ? body.capabilities.filter((value): value is string => typeof value === 'string')
       : [];
@@ -909,6 +910,14 @@ export async function handleAgentChatApi(
         : 60,
     } : undefined;
 
+    if (
+      directChat?.sessionAgent
+      && ctx.agentTypes
+      && !ctx.agentTypes.some((agentType) => agentType.id === directChat.sessionAgent)
+    ) {
+      return Response.json({ error: `Unknown agent harness: ${directChat.sessionAgent}.` }, { status: 400 });
+    }
+
     if (!agentId || !botNpub || !workspaceOwnerNpub || !workingDirectory) {
       return Response.json(
         { error: 'agentId, botNpub, workspaceOwnerNpub, and workingDirectory are required.' },
@@ -923,7 +932,6 @@ export async function handleAgentChatApi(
         label,
         botNpub,
         workspaceOwnerNpub,
-        groupNpubs,
         workingDirectory,
         capabilities: [...capabilities],
         chatPromptTemplate,

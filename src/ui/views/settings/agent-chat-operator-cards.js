@@ -636,7 +636,7 @@ function createCandidateAgentTable(subscription) {
     const capabilities = Array.isArray(agent.capabilities) && agent.capabilities.length > 0
       ? agent.capabilities.join(', ')
       : 'no capabilities';
-    meta.textContent = `${agent.agentId || 'unknown'} · ${agent.enabled ? 'enabled' : 'disabled'} · ${capabilities} · ${agent.groupNpubs?.length ?? 0} groups`;
+    meta.textContent = `${agent.agentId || 'unknown'} · ${agent.enabled ? 'enabled' : 'disabled'} · ${capabilities}`;
 
     const directory = document.createElement('div');
     directory.style.cssText = 'margin-top:6px;font-size:0.92em;word-break:break-word;';
