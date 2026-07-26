@@ -49,7 +49,7 @@ interface DirectChatRuntimeDependencies {
 
 interface MessageRevisionDispatch {
   revision: number;
-  newlyAddedAgentNpubs: Set<string>;
+  newlyAddedMentionNpubs: Set<string>;
 }
 
 function messageRevisionDispatch(event: FlightDeckPgEvent): MessageRevisionDispatch | null {
@@ -68,10 +68,10 @@ function messageRevisionDispatch(event: FlightDeckPgEvent): MessageRevisionDispa
   const mentions = Array.isArray(payload.newly_added_mentions) ? payload.newly_added_mentions : [];
   return {
     revision,
-    newlyAddedAgentNpubs: new Set(mentions.flatMap((entry) => {
+    newlyAddedMentionNpubs: new Set(mentions.flatMap((entry) => {
       if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
       const mention = entry as Record<string, unknown>;
-      return mention.type === 'agent' && typeof mention.npub === 'string' ? [mention.npub] : [];
+      return typeof mention.npub === 'string' ? [mention.npub] : [];
     })),
   };
 }
@@ -125,7 +125,7 @@ export class AgentDirectChatRuntime {
     if (isRevisionEvent && !revisionDispatch) {
       return { handled: false, reason: 'invalid_message_revision_event' };
     }
-    if (revisionDispatch?.newlyAddedAgentNpubs.size === 0) {
+    if (revisionDispatch?.newlyAddedMentionNpubs.size === 0) {
       return { handled: false, reason: 'no_new_agent_mentions' };
     }
     const workspaceIdentity = input.subscription.workspaceServiceNpub?.trim() || input.subscription.workspaceOwnerNpub;
@@ -138,7 +138,7 @@ export class AgentDirectChatRuntime {
     for (const agent of agents) {
       if (!eventMessage || eventMessage.userNpub === agent.botNpub || eventMessage.userNpub === input.subscription.wsKeyNpub) continue;
       if (revisionDispatch
-        ? !revisionDispatch.newlyAddedAgentNpubs.has(agent.botNpub)
+        ? !revisionDispatch.newlyAddedMentionNpubs.has(agent.botNpub)
         : !isAgentDirectMessageEligible(input.channel, eventMessage, agent.botNpub)) continue;
       const threadId = input.messages.find((message) => message.id === eventMessage.messageId)?.thread_id
         ?? input.messages.find((message) => message.id === eventMessage.messageId)?.thread_source_message_id

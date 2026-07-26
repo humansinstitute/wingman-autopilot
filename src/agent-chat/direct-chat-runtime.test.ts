@@ -11,6 +11,8 @@ import { buildDirectChatClientRequestId, buildDirectChatRoutingKey, buildDirectC
 import { PromptBoundaryNotObservedError, sendPromptAndAwaitFinalResponse } from './session-runtime-session-ops';
 import type { FlightDeckPgMessage } from './tower-client';
 
+const ATHENA_BOT_NPUB = 'npub1v6p0js8rs76cfpde03lxmyxnsyrafs27xhxs5h82zlqvaxynzfuqydnvzt';
+
 function fixture(options: {
   publish?: (input: any, attempt: number) => Promise<any>;
   directChat?: { enabled: boolean; sessionAgent: string | null; directory: string; model: string | null; idleRetentionMinutes: number } | null;
@@ -23,6 +25,7 @@ function fixture(options: {
   failReusedPromptBoundary?: boolean;
   failCreate?: boolean;
   createGate?: Promise<void>;
+  botNpub?: string;
 } = {}) {
   const db = join(tmpdir(), `agent-direct-${randomUUID()}.sqlite`);
   const agentStore = new AgentDefinitionStore(db);
@@ -79,12 +82,13 @@ function fixture(options: {
   const runtime = makeRuntime();
   const now = new Date().toISOString();
   const defaultDirectChat = { enabled: true, sessionAgent: 'codex', directory: '/Users/mini/wingmen/wingman21', model: null, idleRetentionMinutes: 60 };
-  agentStore.save({ agentId: 'rick', label: 'Rick', botNpub: 'npub1rick', workspaceOwnerNpub: 'npub1workspace', groupNpubs: [], workingDirectory: '/legacy', capabilities: ['chat_intercept'],
+  const botNpub = options.botNpub ?? 'npub1rick';
+  agentStore.save({ agentId: 'rick', label: 'Rick', botNpub, workspaceOwnerNpub: 'npub1workspace', groupNpubs: [], workingDirectory: '/legacy', capabilities: ['chat_intercept'],
     directChat: options.directChat === null ? undefined : options.directChat ?? defaultDirectChat, enabled: true, createdAt: now, updatedAt: now, managedByNpub: 'npub1manager' });
-  const subscription: any = { subscriptionId: 'sub1', workspaceOwnerNpub: 'npub1owner', workspaceServiceNpub: 'npub1workspace', workspaceId: 'workspace-1', towerServiceNpub: 'npub1tower', backendBaseUrl: 'https://tower', sourceAppNpub: 'npub1app', botNpub: 'npub1rick', wsKeyNpub: 'npub1mapped', managedByNpub: 'npub1manager' };
+  const subscription: any = { subscriptionId: 'sub1', workspaceOwnerNpub: 'npub1owner', workspaceServiceNpub: 'npub1workspace', workspaceId: 'workspace-1', towerServiceNpub: 'npub1tower', backendBaseUrl: 'https://tower', sourceAppNpub: 'npub1app', botNpub, wsKeyNpub: 'npub1mapped', managedByNpub: 'npub1manager' };
   const channel: any = { id: 'channel-1', scope_id: 'scope-1', kind: 'channel', participant_npubs: [], metadata: { agent_chat: { enabled: true, activation: 'mention_then_continue', context_prompt: 'Context' } }, ...(options.channel ?? {}) };
-  const botIdentity: any = { botNpub: 'npub1rick', botPubkeyHex: '00', botSecret: new Uint8Array([1]) };
-  const message = (id: string, body: string, mention: false | { type?: string; npub?: string } | true = false, authorNpub = 'npub1human'): FlightDeckPgMessage => ({ id, workspace_id: 'workspace-1', channel_id: 'channel-1', thread_id: 'thread-1', body, created_at: `2026-01-01T00:00:0${id.slice(-1)}Z`, created_by_actor_id: `actor-${id}`, created_by_actor_npub: authorNpub, metadata: mention ? { mentions: [{ type: mention === true ? 'agent' : mention.type ?? '', npub: mention === true ? 'npub1rick' : mention.npub ?? 'npub1rick', label: 'Rick' }] } : {} });
+  const botIdentity: any = { botNpub, botPubkeyHex: '00', botSecret: new Uint8Array([1]) };
+  const message = (id: string, body: string, mention: false | { type?: string; npub?: string } | true = false, authorNpub = 'npub1human'): FlightDeckPgMessage => ({ id, workspace_id: 'workspace-1', channel_id: 'channel-1', thread_id: 'thread-1', body, created_at: `2026-01-01T00:00:0${id.slice(-1)}Z`, created_by_actor_id: `actor-${id}`, created_by_actor_npub: authorNpub, metadata: mention ? { mentions: [{ type: mention === true ? 'agent' : mention.type ?? '', npub: mention === true ? botNpub : mention.npub ?? botNpub, label: 'Rick' }] } : {} });
   const handle = (messages: FlightDeckPgMessage[], entityId: string, event: Record<string, unknown> = {}) => runtime.handle({
     subscription,
     botIdentity,
@@ -176,7 +180,9 @@ describe('Agent Direct Chat runtime', () => {
   });
 
   test('activates by matching mention npub even when Tower classifies the actor as a person', async () => {
-    const f = fixture(); const m1 = f.message('m1', '@Rick hello', { type: 'person' });
+    const f = fixture({ botNpub: ATHENA_BOT_NPUB });
+    const m1 = f.message('m1', '@Athena Lumia hello', { type: 'person', npub: ATHENA_BOT_NPUB });
+    m1.mentions = [{ type: 'person', npub: ATHENA_BOT_NPUB, label: 'Athena Lumia' }];
     expect(await f.handle([m1], 'm1')).toEqual({ handled: true, reason: 'direct_chat_queued' });
     await f.runtime.waitForIdle();
     expect(f.creates).toHaveLength(1); expect(f.published).toHaveLength(1);
@@ -226,7 +232,26 @@ describe('Agent Direct Chat runtime', () => {
     expect(f.published[1].clientRequestId).not.toBe(f.published[0].clientRequestId);
   });
 
-  test('does not dispatch text-only revisions or existing agent mentions', async () => {
+  test('dispatches a newly added person mention when its npub is the agent identity', async () => {
+    const f = fixture();
+    const revised = f.message('m1', 'Initial text @Athena Lumia', { type: 'person', npub: 'npub1rick' });
+    expect(await f.handle([revised], 'm1', {
+      event_type: 'flightdeck_pg.message.revised',
+      entity_row_version: 2,
+      payload: {
+        event_type: 'message.revised',
+        message_id: 'm1',
+        revision: 2,
+        revision_idempotency_key: 'message:m1:revision:2',
+        newly_added_mentions: [{ type: 'person', npub: 'npub1rick', label: 'Athena Lumia' }],
+      },
+    })).toEqual({ handled: true, reason: 'direct_chat_queued' });
+    await f.runtime.waitForIdle();
+    expect(f.creates).toHaveLength(1);
+    expect(f.published).toHaveLength(1);
+  });
+
+  test('does not dispatch text-only revisions or newly mentioned people with another npub', async () => {
     const f = fixture();
     const revised = f.message('m1', 'Edited wording @Rick', true);
     const baseEvent = { event_type: 'flightdeck_pg.message.revised', entity_row_version: 2, payload: { event_type: 'message.revised',
@@ -235,7 +260,7 @@ describe('Agent Direct Chat runtime', () => {
     expect(await f.handle([revised], 'm1', { event_type: 'flightdeck_pg.message.revised', entity_row_version: 3, payload: { revision: 3,
       event_type: 'message.revised', message_id: 'm1', revision_idempotency_key: 'message:m1:revision:3',
       newly_added_mentions: [{ type: 'person', npub: 'npub1human', label: 'Pete' }] } }))
-      .toEqual({ handled: false, reason: 'no_new_agent_mentions' });
+      .toEqual({ handled: false, reason: 'not_activated' });
     expect(f.creates).toHaveLength(0);
     expect(f.prompts).toHaveLength(0);
   });

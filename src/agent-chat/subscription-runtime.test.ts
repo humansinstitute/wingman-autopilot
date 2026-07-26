@@ -170,6 +170,8 @@ function makeInstanceIdentity(overrides: Partial<WingmanInstanceIdentity> = {}):
   };
 }
 
+const ATHENA_BOT_NPUB = 'npub1v6p0js8rs76cfpde03lxmyxnsyrafs27xhxs5h82zlqvaxynzfuqydnvzt';
+
 function createTestManager(
   dbPath: string,
   botKeys: Map<string, BotKeyStoreRecord>,
@@ -803,6 +805,61 @@ describe('WorkspaceSubscriptionManager', () => {
     });
 
     expect(agentStore.getByAgentId(agentId)?.workingDirectory).toBe(join(tmpdir(), 'wingman-dispatch-agent'));
+  });
+
+  test('routes the live Athena person mention shape into Agent Direct Chat', async () => {
+    const dbPath = makeTempDb();
+    const directInputs: unknown[] = [];
+    const instanceIdentity = makeInstanceIdentity({ npub: ATHENA_BOT_NPUB });
+    const workspaceId = '6b39f051-3833-46e6-8a59-be9b4eb57639';
+    const channelId = 'b59adb00-50a3-4f5e-92db-5831a4d31a95';
+    const threadId = 'b6139d72-b6a0-4ca7-ae75-f114c48e11b6';
+    const messageId = 'd3afc187-3ef1-4f1b-a7a5-25a35793d95e';
+    const message = {
+      id: messageId,
+      workspace_id: workspaceId,
+      channel_id: channelId,
+      thread_id: threadId,
+      body: '@Athena Lumia please handle this',
+      mentions: [{ type: 'person', npub: ATHENA_BOT_NPUB, label: 'Athena Lumia' }],
+      created_by_actor_id: 'actor-user',
+      created_by_actor_npub: 'npub1human',
+      created_at: '2026-07-26T00:00:00.000Z',
+    };
+    const { manager, store } = createTestManager(dbPath, new Map(), undefined, instanceIdentity, undefined, {
+      chatRuntime: {
+        handleDirectChat: async (input: unknown) => {
+          directInputs.push(input);
+          return { handled: true, reason: 'direct_chat_queued' };
+        },
+      } as never,
+      fetchFlightDeckPgChannel: async () => ({ id: channelId, workspace_id: workspaceId, kind: 'channel', metadata: {} }),
+      fetchFlightDeckPgChannelMessages: async () => ({ messages: [message], next_cursor: null }),
+    });
+    const imported = await manager.importAgentConnectPackage({
+      managedByNpub: 'npub1manager',
+      packageJson: makeConnectPackageForWorkspace(workspaceId, 'npub1workspaceservice'),
+      onboardingSource: 'nostr_33357',
+    });
+
+    const next = await (manager as unknown as {
+      handleFlightDeckPgEvent: (record: WorkspaceSubscriptionRecord, event: Record<string, unknown>) => Promise<WorkspaceSubscriptionRecord>;
+    }).handleFlightDeckPgEvent(imported.subscription, {
+      id: '112', event_id: '112', cursor: encodeFlightDeckPgEventCursor(112), workspace_id: workspaceId,
+      channel_id: channelId, actor_id: 'actor-user', event_type: 'flightdeck_pg.message.created',
+      entity_type: 'message', entity_id: messageId, operation: 'created', entity_row_version: 1, row_version: 112,
+      created_at: '2026-07-26T00:00:00.000Z', payload: {},
+    });
+
+    expect(directInputs).toHaveLength(1);
+    expect(directInputs[0]).toMatchObject({
+      subscription: { workspaceId, botNpub: ATHENA_BOT_NPUB },
+      channel: { id: channelId },
+      messages: [{ id: messageId, thread_id: threadId, mentions: [{ type: 'person', npub: ATHENA_BOT_NPUB, label: 'Athena Lumia' }] }],
+    });
+    expect(next.lastRoutingResult?.details).toMatchObject({ direct_chat_handled: true, direct_chat_reason: 'direct_chat_queued' });
+    expect(store.getBySubscriptionId(imported.subscription.subscriptionId)?.lastRoutingResult?.details)
+      .toMatchObject({ direct_chat_handled: true });
   });
 
   test('dispatches a Flight Deck PG message event to the chat pipeline route', async () => {

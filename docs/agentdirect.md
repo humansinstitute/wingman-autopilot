@@ -51,7 +51,7 @@ tower_service_npub + workspace_id + channel_id + thread_id + agent_npub
 
 Do not use only channel/thread IDs. IDs can collide across Towers or workspaces, and one thread may eventually contain more than one agent.
 
-The target agent is resolved from the canonical structured mentions stored by Tower and the registered Autopilot agent definition. Visible `@Name` text is not authoritative.
+The target agent is resolved from the canonical npub in structured mentions stored by Tower and the registered Autopilot agent definition. Flight Deck may present that identity with either `type: "agent"` or `type: "person"`; presentation type does not change routing. Visible `@Name` text is not authoritative.
 
 ## Activation Rules
 
