@@ -306,6 +306,82 @@ describe('sendPromptAndAwaitFinalResponse', () => {
     }
   });
 
+  test('keeps retrying AgentAPI Codex discovery until a delayed native session appears', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'direct-delayed-native-'));
+    const previousCodexHome = process.env.CODEX_HOME;
+    process.env.CODEX_HOME = codexHome;
+    const prompt = 'AGENT DIRECT CHAT\nNEXT MESSAGE\nmessage: delayed capture';
+    const nativeId = 'native-direct-delayed';
+    try {
+      const sessionDir = join(codexHome, 'sessions', '2026', '07', '27');
+      await mkdir(sessionDir, { recursive: true });
+      const transcriptPath = join(sessionDir, `rollout-${nativeId}.jsonl`);
+      const session = { id: 'agentapi-delayed-direct', agent: 'codex', port: 1, name: 'Direct', status: 'running',
+        startedAt: new Date(), command: [], workingDirectory: '/repo', logs: [], metadata: {} } as unknown as SessionSnapshot;
+      const rawMessages = [
+        { role: 'agent', content: `terminal screen\n${prompt}\nClean delayed final.`, createdAt: new Date().toISOString() },
+      ];
+      const adapter = {
+        waitForReady: async () => {}, sendMessage: async () => {}, fetchStatus: async () => 'stable',
+        fetchMessages: async () => rawMessages, deliversPromptsDirectly: () => false,
+        interruptCurrentTurn: async () => false, getEventsUrl: () => null, dispose: async () => {},
+      } as AgentAdapter;
+      let captureCalls = 0;
+      const manager = {
+        getSession: () => session,
+        getAdapter: () => adapter,
+        captureAgentapiCodexSessionIdFromPrompt: async () => {
+          captureCalls += 1;
+          if (captureCalls < 2) return false;
+          await writeFile(transcriptPath, [
+            JSON.stringify({ type: 'session_meta', timestamp: new Date().toISOString(), payload: { id: nativeId, cwd: '/repo' } }),
+            JSON.stringify({ type: 'event_msg', timestamp: new Date().toISOString(), payload: { type: 'user_message', message: prompt } }),
+            JSON.stringify({ type: 'event_msg', timestamp: new Date().toISOString(), payload: { type: 'agent_message', phase: 'final_answer', message: 'Clean delayed final.' } }),
+          ].join('\n'));
+          session.metadata = { nativeAgentSession: { agent: 'codex', sessionId: nativeId, workingDirectory: '/repo',
+            capturedAt: new Date().toISOString(), source: 'agentapi' } };
+          return true;
+        },
+      } as unknown as ProcessManager;
+
+      const reply = await sendPromptAndAwaitFinalResponse(manager, session.id, prompt, {
+        timeoutMs: 1_500,
+        pollIntervalMs: 10,
+      });
+      expect(captureCalls).toBeGreaterThanOrEqual(2);
+      expect(reply.content).toBe('Clean delayed final.');
+      expect(reply.content).not.toContain('terminal screen');
+    } finally {
+      if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = previousCodexHome;
+      await rm(codexHome, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects AgentAPI terminal output when native Codex discovery never succeeds', async () => {
+    const prompt = 'AGENT DIRECT CHAT\nNEXT MESSAGE\nmessage: never captured';
+    const session = { id: 'agentapi-uncaptured-direct', agent: 'codex', port: 1, name: 'Direct', status: 'running',
+      startedAt: new Date(), command: [], workingDirectory: '/repo', logs: [], metadata: {} } as unknown as SessionSnapshot;
+    const adapter = {
+      waitForReady: async () => {}, sendMessage: async () => {}, fetchStatus: async () => 'stable',
+      fetchMessages: async () => [
+        { role: 'agent', content: `terminal screen\n${prompt}\nMalformed combined final.`, createdAt: new Date().toISOString() },
+      ],
+      deliversPromptsDirectly: () => false,
+      interruptCurrentTurn: async () => false, getEventsUrl: () => null, dispose: async () => {},
+    } as AgentAdapter;
+    const manager = {
+      getSession: () => session,
+      getAdapter: () => adapter,
+      captureAgentapiCodexSessionIdFromPrompt: async () => false,
+    } as unknown as ProcessManager;
+
+    await expect(sendPromptAndAwaitFinalResponse(manager, session.id, prompt, {
+      timeoutMs: 40,
+      pollIntervalMs: 10,
+    })).rejects.toThrow('native Codex session was not captured; terminal output was rejected');
+  });
+
   test('waits for the new native prompt boundary instead of returning a stale callback final', async () => {
     const codexHome = await mkdtemp(join(tmpdir(), 'direct-native-boundary-'));
     const previousCodexHome = process.env.CODEX_HOME;

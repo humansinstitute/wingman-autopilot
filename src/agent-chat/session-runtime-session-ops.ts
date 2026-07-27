@@ -11,6 +11,7 @@ const ASSISTANT_REPLY_TIMEOUT_MS = 300_000;
 const ASSISTANT_REPLY_POLL_INTERVAL_MS = 250;
 const ASSISTANT_REPLY_STABLE_POLLS = 2;
 const ASSISTANT_REPLY_DECISION_FALLBACK_STABLE_POLLS = 5;
+const NATIVE_SESSION_DISCOVERY_RETRY_MS = 1_000;
 
 export interface AssistantReplyResult {
   content: string;
@@ -146,16 +147,31 @@ export async function sendPromptAndAwaitFinalResponse(
   const sentAtMs = Date.now();
   await adapter.sendMessage(prompt, 'user');
   await waitOptions?.onAccepted?.();
-  await manager.captureAgentapiCodexSessionIdFromPrompt?.(sessionId, prompt, { sentAtMs });
+  await manager.captureAgentapiCodexSessionIdFromPrompt?.(sessionId, prompt, { sentAtMs, attempts: 1, retryMs: 0 });
 
   const pollIntervalMs = Math.max(10, waitOptions?.pollIntervalMs ?? ASSISTANT_REPLY_POLL_INTERVAL_MS);
   const deadline = Date.now() + Math.max(pollIntervalMs, waitOptions?.timeoutMs ?? ASSISTANT_REPLY_TIMEOUT_MS);
   const promptBoundaryDeadline = Date.now() + Math.max(pollIntervalMs, waitOptions?.promptBoundaryTimeoutMs ?? 15_000);
+  let nextNativeDiscoveryAt = Date.now() + NATIVE_SESSION_DISCOVERY_RETRY_MS;
   let observedActiveRuntime = false;
   while (Date.now() < deadline) {
-    const session = manager.getSession(sessionId);
+    let session = manager.getSession(sessionId);
     const currentAdapter = manager.getAdapter(sessionId);
     if (!currentAdapter) throw new Error(`Session ${sessionId} no longer has an adapter.`);
+    const agentapiCodex = session?.agent === 'codex' && !currentAdapter.deliversPromptsDirectly?.();
+    const nativeCodexMissing = agentapiCodex && !(
+      session?.metadata?.nativeAgentSession?.agent === 'codex'
+      && session.metadata.nativeAgentSession.sessionId
+    );
+    if (nativeCodexMissing && Date.now() >= nextNativeDiscoveryAt) {
+      await manager.captureAgentapiCodexSessionIdFromPrompt?.(sessionId, prompt, {
+        sentAtMs,
+        attempts: 1,
+        retryMs: 0,
+      });
+      nextNativeDiscoveryAt = Date.now() + NATIVE_SESSION_DISCOVERY_RETRY_MS;
+      session = manager.getSession(sessionId);
+    }
     let messages: Array<{ role: string; content: string; createdAt: string }>;
     let runtimeStatus: Awaited<ReturnType<typeof currentAdapter.fetchStatus>>;
     try {
@@ -167,7 +183,6 @@ export async function sendPromptAndAwaitFinalResponse(
       await sleep(pollIntervalMs);
       continue;
     }
-    const agentapiCodex = session?.agent === 'codex' && !currentAdapter.deliversPromptsDirectly?.();
     const nativeCodexReady = session?.metadata?.nativeAgentSession?.agent === 'codex'
       && Boolean(session.metadata.nativeAgentSession.sessionId);
     const authoritativeMessages = agentapiCodex
@@ -209,6 +224,14 @@ export async function sendPromptAndAwaitFinalResponse(
     }
     await sleep(pollIntervalMs);
   }
+  const finalSession = manager.getSession(sessionId);
+  const finalAdapter = manager.getAdapter(sessionId);
+  if (finalSession?.agent === 'codex'
+    && !finalAdapter?.deliversPromptsDirectly?.()
+    && !(finalSession.metadata?.nativeAgentSession?.agent === 'codex'
+      && finalSession.metadata.nativeAgentSession.sessionId)) {
+    throw new Error(`Timed out waiting for session ${sessionId}: native Codex session was not captured; terminal output was rejected.`);
+  }
   throw new Error(`Timed out waiting for session ${sessionId} to produce a final response.`);
 }
 
@@ -220,15 +243,30 @@ export async function awaitAcceptedFinalResponse(
   waitOptions?: Pick<AssistantReplyWaitOptions, 'timeoutMs' | 'pollIntervalMs' | 'onPoll'> & { acceptedAt?: string },
 ): Promise<AssistantReplyResult> {
   const acceptedAtMs = Date.parse(waitOptions?.acceptedAt ?? '');
-  await manager.captureAgentapiCodexSessionIdFromPrompt?.(sessionId, prompt, {
-    sentAtMs: Number.isFinite(acceptedAtMs) ? acceptedAtMs : Date.now(), attempts: 2,
-  });
+  const sentAtMs = Number.isFinite(acceptedAtMs) ? acceptedAtMs : Date.now();
+  await manager.captureAgentapiCodexSessionIdFromPrompt?.(sessionId, prompt, { sentAtMs, attempts: 1, retryMs: 0 });
   const pollIntervalMs = Math.max(10, waitOptions?.pollIntervalMs ?? ASSISTANT_REPLY_POLL_INTERVAL_MS);
   const deadline = Date.now() + Math.max(pollIntervalMs, waitOptions?.timeoutMs ?? ASSISTANT_REPLY_TIMEOUT_MS);
+  let nextNativeDiscoveryAt = Date.now() + NATIVE_SESSION_DISCOVERY_RETRY_MS;
   while (Date.now() < deadline) {
-    const session = manager.getSession(sessionId);
+    let session = manager.getSession(sessionId);
     if (!session) throw new Error(`Accepted Direct Chat session ${sessionId} is missing.`);
     const adapter = manager.getAdapter(sessionId);
+    const nativeCodexMissing = session.agent === 'codex'
+      && !adapter?.deliversPromptsDirectly?.()
+      && !(
+        session.metadata?.nativeAgentSession?.agent === 'codex'
+        && session.metadata.nativeAgentSession.sessionId
+      );
+    if (nativeCodexMissing && Date.now() >= nextNativeDiscoveryAt) {
+      await manager.captureAgentapiCodexSessionIdFromPrompt?.(sessionId, prompt, {
+        sentAtMs,
+        attempts: 1,
+        retryMs: 0,
+      });
+      nextNativeDiscoveryAt = Date.now() + NATIVE_SESSION_DISCOVERY_RETRY_MS;
+      session = manager.getSession(sessionId) ?? session;
+    }
     let liveMessages: Array<{ role: string; content: string; createdAt: string }> = [];
     let runtimeStatus: Awaited<ReturnType<NonNullable<typeof adapter>['fetchStatus']>> | null = null;
     if (adapter) {
@@ -258,6 +296,14 @@ export async function awaitAcceptedFinalResponse(
       throw new Error(`Accepted Direct Chat session ${sessionId} stopped without a recoverable final response.`);
     }
     await sleep(pollIntervalMs);
+  }
+  const finalSession = manager.getSession(sessionId);
+  const finalAdapter = manager.getAdapter(sessionId);
+  if (finalSession?.agent === 'codex'
+    && !finalAdapter?.deliversPromptsDirectly?.()
+    && !(finalSession.metadata?.nativeAgentSession?.agent === 'codex'
+      && finalSession.metadata.nativeAgentSession.sessionId)) {
+    throw new Error(`Timed out waiting for accepted Direct Chat session ${sessionId}: native Codex session was not captured; terminal output was rejected.`);
   }
   throw new Error(`Timed out waiting for accepted Direct Chat session ${sessionId} to produce a final response.`);
 }
