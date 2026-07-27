@@ -483,6 +483,40 @@ describe('Agent Direct Chat runtime', () => {
     expect(f.interceptStore.getByRoutingKey(routingKey)?.lastCompletedTurnId).toBe(turnId);
   });
 
+  test('starts a distinct turn when a new human message arrives after an accepted turn timed out', async () => {
+    const f = fixture();
+    const original = f.message('m1', '@Rick original request', true);
+    const followUp = f.message('m2', '@Rick change the current viewed scope only', true);
+    const routingKey = buildDirectChatRoutingKey({ towerServiceNpub: 'npub1tower', workspaceId: 'workspace-1',
+      channelId: 'channel-1', threadId: 'thread-1', agentNpub: 'npub1rick' });
+    const staleTurnId = buildDirectChatTurnId(routingKey, ['m1']);
+    const now = new Date().toISOString();
+    const seeded = f.interceptStore.upsertMessage({ routingKey, subscriptionId: 'sub1', agentId: 'rick', workspaceOwnerNpub: 'npub1workspace',
+      sourceAppNpub: 'npub1app', towerServiceNpub: 'npub1tower', workspaceId: 'workspace-1', channelId: 'channel-1', threadId: 'thread-1',
+      botNpub: 'npub1rick', messageId: 'm2', eventCursor: 'cursor-m2', at: now }).record;
+    f.interceptStore.save({ ...seeded, sessionId: 'surviving-session', state: 'pending', lastHumanMessageIdDelivered: 'm1',
+      pendingMessageCount: 1 });
+    f.turnStore.save({ turnId: staleTurnId, routingKey, sourceMessageIds: ['m1'],
+      clientRequestId: buildDirectChatClientRequestId(routingKey, staleTurnId), replyBody: null,
+      publishedMessageId: null, state: 'accepted', createdAt: now, updatedAt: now });
+    f.sessions.set('surviving-session', { id: 'surviving-session', agent: 'codex', workingDirectory: '/Users/mini/wingmen/wingman21',
+      name: 'Rick Direct Chat', status: 'running', startedAt: now, port: 1, command: [], logs: [], metadata: {}, messages: [
+        { role: 'user', content: 'old prompt containing m1', createdAt: now },
+        { role: 'assistant', content: 'Duplicate callback verified and skipped.', createdAt: now },
+      ] });
+
+    expect(f.runtime.recover({ subscription: f.subscription, botIdentity: f.botIdentity, channel: f.channel,
+      messages: [original, followUp], event: { entity_id: 'm2', channel_id: 'channel-1', cursor: 'cursor-m2' } }, routingKey).handled).toBe(true);
+    await f.runtime.waitForIdle();
+
+    expect(f.prompts).toHaveLength(1);
+    expect(f.prompts[0]).toContain('"message_id": "m2"');
+    expect(f.published).toHaveLength(1);
+    expect(f.published[0].body).not.toContain('Duplicate callback');
+    expect(f.published[0].metadata.source_message_ids).toEqual(['m2']);
+    expect(f.published[0].metadata.turn_id).not.toBe(staleTurnId);
+  });
+
   test('native-resumes a production-shaped accepted turn whose bound session was archived', async () => {
     const f = fixture({ nativeResumeFinal: 'Recovered archived final.' });
     const m1 = f.message('m1', '@Rick original', true);
@@ -512,7 +546,7 @@ describe('Agent Direct Chat runtime', () => {
     expect(f.interceptStore.getByRoutingKey(routingKey)?.sessionId).toBe('session-1');
   });
 
-  test('replays one accepted turn into a generation-two replacement with full history and pending messages', async () => {
+  test('supersedes an accepted turn when replaying a newer message into a generation-two replacement', async () => {
     const f = fixture({ failNativeResume: true });
     const m1 = f.message('m1', '@Rick original', true);
     const a1 = f.message('a1', 'First answer', false, 'npub1rick');
@@ -545,10 +579,10 @@ describe('Agent Direct Chat runtime', () => {
     expect(prompt).toContain('THREAD HISTORY JSON');
     expect(['m1', 'a1', 'm2', 'm3'].every((id) => prompt.includes(`"messageId": "${id}"`))).toBe(true);
     const undeliveredSection = prompt.split('UNDELIVERED MESSAGES JSON\n')[1]!.split('\n\nNEXT MESSAGE')[0]!;
-    expect(JSON.parse(undeliveredSection).map((message: any) => message.messageId)).toEqual(['m2', 'm3']);
+    expect(JSON.parse(undeliveredSection).map((message: any) => message.messageId)).toEqual(['m3']);
     const state = f.interceptStore.getByRoutingKey(routingKey)!;
     expect(state.sessionGeneration).toBe(2); expect(state.previousSessionIds).toEqual(['archived-session']);
-    expect(f.published[0].metadata.source_message_ids).toEqual(['m2', 'm3']);
+    expect(f.published[0].metadata.source_message_ids).toEqual(['m3']);
   });
 
   test('blocks on Tower auth failure without publishing speculative output', async () => {

@@ -233,6 +233,12 @@ export class AgentDirectChatRuntime {
           : undelivered.filter((message) => isAgentDirectMessageEligible(input.channel, message, agent.botNpub));
         if (delta.length === 0) continue;
         if (pending?.state === 'accepted') {
+          const hasNewerHumanMessage = delta.some((message) => !pending.sourceMessageIds.includes(message.messageId));
+          if (hasNewerHumanMessage) {
+            this.turnStore.save({ ...pending, state: 'completed', updatedAt: new Date().toISOString() });
+            this.queued.set(routingKey, input);
+            continue;
+          }
           if (!intercept.sessionId) throw new Error('Accepted Agent Direct Chat turn has no bound session.');
           const recoverySourceMessageIds = delta.map((message) => message.messageId);
           const recoverableTurn = this.turnStore.save({ ...pending, sourceMessageIds: recoverySourceMessageIds,
