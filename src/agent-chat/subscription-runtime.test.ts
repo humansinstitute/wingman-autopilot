@@ -1327,6 +1327,55 @@ describe('WorkspaceSubscriptionManager', () => {
     expect(next.lastAuthResult?.details?.retryable).toBe(true);
   });
 
+  test('keeps Flight Deck PG workspace access retryable after local helper load failure', async () => {
+    const dbPath = makeTempDb();
+    const instanceIdentity = makeInstanceIdentity();
+    const { manager, store } = createTestManager(
+      dbPath,
+      new Map(),
+      undefined,
+      instanceIdentity,
+      undefined,
+      {
+        fetchFlightDeckPgWorkspaceMe: async () => {
+          throw new Error("Cannot find module '@runwingman/flightdeck-cli/src/bot-helpers.js'");
+        },
+      },
+    );
+    const record = store.save({
+      ...store.createDefault({
+        managedByNpub: 'npub1manager',
+        workspaceOwnerNpub: 'npub1workspace',
+        workspaceServiceNpub: 'npub1workspaceservice',
+        workspaceId: 'workspace-1',
+        backendBaseUrl: 'https://tower.example.com',
+        sourceAppNpub: 'npub1sourceapp',
+        botNpub: 'npub1wingmanbot',
+        onboardingSource: 'nostr_33357',
+      }),
+      wsKeyStatus: 'active',
+      groupKeyStatus: 'active',
+      sseStatus: 'connected',
+      healthStatus: 'healthy',
+    });
+
+    const next = await (manager as unknown as {
+      verifyFlightDeckPgWorkspaceAccess: (
+        record: WorkspaceSubscriptionRecord,
+        botIdentity: RuntimeBotIdentity,
+      ) => Promise<WorkspaceSubscriptionRecord>;
+    }).verifyFlightDeckPgWorkspaceAccess(record, {
+      botNpub: 'npub1wingmanbot',
+      botPubkeyHex: 'f'.repeat(64),
+      botSecret: new Uint8Array(32),
+    });
+
+    expect(next.wsKeyStatus).toBe('active');
+    expect(next.sseStatus).toBe('backoff');
+    expect(next.healthStatus).toBe('degraded');
+    expect(next.lastAuthResult?.details?.retryable).toBe(true);
+  });
+
   test('dispatches a Flight Deck PG message from the live event stream', async () => {
     const dbPath = makeTempDb();
     const routeStore = new DispatchRouteStore(dbPath);

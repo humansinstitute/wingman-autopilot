@@ -983,7 +983,13 @@ function isRetryableTowerAccessError(error: unknown): boolean {
     return true;
   }
   const message = error instanceof Error ? error.message : String(error ?? '');
-  return /"retryable"\s*:\s*true/.test(message) || /bad gateway|gateway timeout|service unavailable/i.test(message);
+  if (/"retryable"\s*:\s*true/.test(message) || /bad gateway|gateway timeout|service unavailable/i.test(message)) {
+    return true;
+  }
+  if (status == null) {
+    return /cannot find module|module not found|failed to resolve|import failed|fetch failed|network error|econnreset|etimedout/i.test(message);
+  }
+  return false;
 }
 
 function canUseBackendConnection(
