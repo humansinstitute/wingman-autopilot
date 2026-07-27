@@ -52,7 +52,9 @@ function matchesCodexPrompt(recordedPrompt: string, expectedPrompt: string): boo
   if (!recorded || !expected) {
     return false;
   }
-  return recorded === expected || recorded === `${expected} ${expected}`;
+  return recorded === expected
+    || recorded === `${expected} ${expected}`
+    || recorded === `${expected}${expected}`;
 }
 
 export async function discoverCodexSessionIdForPrompt(
