@@ -89,10 +89,13 @@ export class InstanceSettingsService {
   constructor(private readonly store: InstanceSettingsStore = instanceSettingsStore) {}
 
   get(key: string, env: EnvLike = process.env): string | null {
-    const record = this.store.getRecord(key);
-    if (record) return record.value;
     const definition = INSTANCE_SETTING_DEFINITIONS.find((item) => item.key === key);
     if (!definition) return null;
+    if (definition.bootstrapOnly) {
+      return readEnvValueForDefinition(definition, env)?.value ?? null;
+    }
+    const record = this.store.getRecord(key);
+    if (record) return record.value;
     return readEnvValueForDefinition(definition, env)?.value ?? null;
   }
 
@@ -103,7 +106,7 @@ export class InstanceSettingsService {
   listMaskedSettings(env: EnvLike = process.env): MaskedInstanceSetting[] {
     const records = new Map(this.store.getAllRecords().map((record) => [record.key, record]));
     return INSTANCE_SETTING_DEFINITIONS.map((definition) => {
-      const record = records.get(definition.key) ?? null;
+      const record = definition.bootstrapOnly ? null : records.get(definition.key) ?? null;
       const envValue = readEnvValueForDefinition(definition, env)?.value ?? null;
       const value = record?.value ?? null;
       const displayValue = value ?? (record ? "" : envValue);

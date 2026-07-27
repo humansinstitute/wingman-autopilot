@@ -43,6 +43,42 @@ describe("InstanceSettingsService", () => {
     expect(store.get("integrations.gitea_url")).toBe("https://git.example.test");
   });
 
+  test("keeps admin npubs and the identity session secret environment-managed", () => {
+    store.set({
+      key: "identity.admin_npubs",
+      value: "npub1staleadmin",
+      valueKind: "list",
+      source: "app",
+      sourceDetail: null,
+    });
+    store.set({
+      key: "runtime.identity_session_secret",
+      value: "stale-session-secret",
+      valueKind: "secret",
+      source: "app",
+      sourceDetail: null,
+    });
+
+    const env = {
+      ADMIN_NPUB: "npub1freshadmin",
+      IDENTITY_SESSION_SECRET: "fresh-session-secret",
+    };
+
+    expect(service.get("identity.admin_npubs", env)).toBe("npub1freshadmin");
+    expect(service.get("runtime.identity_session_secret", env)).toBe("fresh-session-secret");
+    expect(service.buildRuntimeEnv(env)).not.toHaveProperty("ADMIN_NPUB");
+
+    const result = service.autoImportMissing(env);
+    expect(result.imported.some((item) => item.key === "identity.admin_npubs")).toBe(false);
+    expect(result.imported.some((item) => item.key === "runtime.identity_session_secret")).toBe(false);
+  });
+
+  test("does not allow admin npubs to be saved in app settings", () => {
+    expect(() => service.set("identity.admin_npubs", "npub1admin")).toThrow(
+      "Bootstrap-only settings cannot be saved in app settings",
+    );
+  });
+
   test("does not auto-import conflicting aliases", async () => {
     const result = service.autoImportMissing({
       IDENTITY_SESSION_SECRET: Bun.env.IDENTITY_SESSION_SECRET,

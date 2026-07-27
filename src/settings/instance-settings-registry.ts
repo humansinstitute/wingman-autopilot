@@ -532,14 +532,13 @@ export const INSTANCE_SETTING_DEFINITIONS: InstanceSettingDefinition[] = [
   {
     key: "identity.admin_npubs",
     label: "Admin Npubs",
-    description: "Comma-separated admin npubs.",
+    description: "Comma-separated admin npubs. This remains environment-managed.",
     category: "identity",
     type: "list",
     envAliases: ["ADMIN_NPUBS", "ADMIN_NPUB", "WINGMAN_ADMIN_NPUB"],
-    autoImport: true,
+    bootstrapOnly: true,
     requiresRestart: true,
-    cleanupAllowed: true,
-    compatibilityEnvName: "ADMIN_NPUB",
+    cleanupAllowed: false,
   },
   {
     key: "identity.registration_enabled",
