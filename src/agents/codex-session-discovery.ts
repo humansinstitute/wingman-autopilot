@@ -46,7 +46,7 @@ export function fingerprintCodexPrompt(value: string): string {
   return createHash("sha256").update(normaliseCodexPromptForMatch(value)).digest("hex");
 }
 
-function matchesCodexPrompt(recordedPrompt: string, expectedPrompt: string): boolean {
+export function matchesCodexPrompt(recordedPrompt: string, expectedPrompt: string): boolean {
   const recorded = normaliseCodexPromptForMatch(recordedPrompt);
   const expected = normaliseCodexPromptForMatch(expectedPrompt);
   if (!recorded || !expected) {

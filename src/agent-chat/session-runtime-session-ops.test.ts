@@ -343,6 +343,98 @@ describe('sendPromptAndAwaitFinalResponse', () => {
     }
   });
 
+  test('finds the turn boundary when AgentAPI records the submitted prompt twice', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'direct-doubled-prompt-'));
+    const previousCodexHome = process.env.CODEX_HOME;
+    process.env.CODEX_HOME = codexHome;
+    const prompt = 'AGENT DIRECT CHAT\nNEXT MESSAGE\nmessage: doubled by AgentAPI';
+    const nativeId = 'native-doubled-prompt';
+    try {
+      const sessionDir = join(codexHome, 'sessions', '2026', '07', '27');
+      await mkdir(sessionDir, { recursive: true });
+      const transcriptPath = join(sessionDir, `rollout-${nativeId}.jsonl`);
+      await writeFile(transcriptPath, [
+        JSON.stringify({ type: 'session_meta', timestamp: '2026-07-27T08:52:02.000Z', payload: { id: nativeId, cwd: '/repo' } }),
+      ].join('\n') + '\n');
+
+      const session = { id: 'agentapi-doubled-prompt', agent: 'codex', port: 1, name: 'Direct', status: 'running',
+        startedAt: new Date(), command: [], workingDirectory: '/repo', logs: [], metadata: { nativeAgentSession: {
+          agent: 'codex', sessionId: nativeId, workingDirectory: '/repo', capturedAt: new Date().toISOString(), source: 'agentapi',
+        } } } as unknown as SessionSnapshot;
+      const adapter = {
+        waitForReady: async () => {},
+        sendMessage: async () => {
+          await appendFile(transcriptPath, [
+            JSON.stringify({ type: 'event_msg', timestamp: '2026-07-27T08:52:02.100Z', payload: { type: 'user_message', message: `${prompt}${prompt}` } }),
+            JSON.stringify({ type: 'event_msg', timestamp: '2026-07-27T08:52:44.290Z', payload: { type: 'agent_message', phase: 'final_answer', message: 'The doubled prompt answer was recovered.' } }),
+          ].join('\n') + '\n');
+        },
+        fetchStatus: async () => 'stable', fetchMessages: async () => [], deliversPromptsDirectly: () => false,
+        interruptCurrentTurn: async () => false, getEventsUrl: () => null, dispose: async () => {},
+      } as AgentAdapter;
+      const manager = { getSession: () => session, getAdapter: () => adapter,
+        captureAgentapiCodexSessionIdFromPrompt: async () => true } as unknown as ProcessManager;
+
+      const reply = await sendPromptAndAwaitFinalResponse(manager, session.id, prompt, { timeoutMs: 100, pollIntervalMs: 10 });
+      expect(reply.content).toBe('The doubled prompt answer was recovered.');
+    } finally {
+      if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = previousCodexHome;
+      await rm(codexHome, { recursive: true, force: true });
+    }
+  });
+
+  test('returns an authoritative native Codex final when AgentAPI status times out', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'direct-status-timeout-'));
+    const previousCodexHome = process.env.CODEX_HOME;
+    process.env.CODEX_HOME = codexHome;
+    const prompt = 'AGENT DIRECT CHAT\nNEXT MESSAGE\nmessage: publish this answer';
+    const nativeId = 'native-status-timeout';
+    try {
+      const sessionDir = join(codexHome, 'sessions', '2026', '07', '27');
+      await mkdir(sessionDir, { recursive: true });
+      const transcriptPath = join(sessionDir, `rollout-${nativeId}.jsonl`);
+      await writeFile(transcriptPath, [
+        JSON.stringify({ type: 'session_meta', timestamp: '2026-07-27T08:52:02.000Z', payload: { id: nativeId, cwd: '/repo' } }),
+      ].join('\n') + '\n');
+
+      const session = { id: 'agentapi-status-timeout', agent: 'codex', port: 1, name: 'Direct', status: 'running',
+        startedAt: new Date(), command: [], workingDirectory: '/repo', logs: [], metadata: { nativeAgentSession: {
+          agent: 'codex', sessionId: nativeId, workingDirectory: '/repo', capturedAt: new Date().toISOString(), source: 'agentapi',
+        } } } as unknown as SessionSnapshot;
+      let statusCalls = 0;
+      let sent = false;
+      const adapter = {
+        waitForReady: async () => {},
+        sendMessage: async () => {
+          await appendFile(transcriptPath, [
+            JSON.stringify({ type: 'event_msg', timestamp: '2026-07-27T08:52:02.100Z', payload: { type: 'user_message', message: prompt } }),
+            JSON.stringify({ type: 'event_msg', timestamp: '2026-07-27T08:52:44.290Z', payload: { type: 'agent_message', phase: 'final_answer', message: 'This answer must reach Flight Deck.' } }),
+          ].join('\n') + '\n');
+          sent = true;
+        },
+        fetchStatus: async () => {
+          statusCalls += 1;
+          if (!sent) return 'stable';
+          throw new Error('status request timed out');
+        },
+        fetchMessages: async () => { throw new Error('messages request timed out'); },
+        deliversPromptsDirectly: () => false,
+        interruptCurrentTurn: async () => false, getEventsUrl: () => null, dispose: async () => {},
+      } as AgentAdapter;
+      const manager = { getSession: () => session, getAdapter: () => adapter,
+        captureAgentapiCodexSessionIdFromPrompt: async () => true } as unknown as ProcessManager;
+
+      const reply = await sendPromptAndAwaitFinalResponse(manager, session.id, prompt, { timeoutMs: 100, pollIntervalMs: 10 });
+      expect(statusCalls).toBeGreaterThan(0);
+      expect(reply.content).toBe('This answer must reach Flight Deck.');
+    } finally {
+      if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = previousCodexHome;
+      await rm(codexHome, { recursive: true, force: true });
+    }
+  });
+
   test('keeps retrying AgentAPI Codex discovery until a delayed native session appears', async () => {
     const codexHome = await mkdtemp(join(tmpdir(), 'direct-delayed-native-'));
     const previousCodexHome = process.env.CODEX_HOME;
