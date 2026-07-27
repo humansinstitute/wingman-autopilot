@@ -9,12 +9,12 @@ function resolveYokeBotHelpersUrl(): string {
   if (override) {
     return pathToFileURL(override).href;
   }
-  return new URL('../../../wingman-yoke/src/bot-helpers.js', import.meta.url).href;
+  return import.meta.resolve('@runwingman/flightdeck-cli/src/bot-helpers.js');
 }
 
 export async function loadYokeBotHelpers(): Promise<YokeBotHelpersModule> {
   if (!cachedModule) {
-    cachedModule = import(resolveYokeBotHelpersUrl()).then((module) => {
+    const pendingModule = import(resolveYokeBotHelpersUrl()).then((module) => {
       const required = [
         'createBotWorkspaceKey',
         'loadBotWorkspaceKey',
@@ -33,6 +33,10 @@ export async function loadYokeBotHelpers(): Promise<YokeBotHelpersModule> {
         }
       }
       return module as unknown as YokeBotHelpersModule;
+    });
+    cachedModule = pendingModule;
+    pendingModule.catch(() => {
+      if (cachedModule === pendingModule) cachedModule = null;
     });
   }
   return cachedModule;
