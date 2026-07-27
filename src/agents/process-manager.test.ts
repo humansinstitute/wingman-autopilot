@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import {
   ProcessManager,
+  buildBunAgentLaunchCommand,
   normalizeAgentModelOverride,
   resolveNativeOpenCodeCommand,
   shouldCleanupMcpFiles,
@@ -16,6 +17,35 @@ describe("pm2StopShouldMarkStopped", () => {
 
   test("returns false when PM2 delete failed and process is still present", () => {
     expect(pm2StopShouldMarkStopped({ deletedFromPm2: false })).toBe(false);
+  });
+});
+
+describe("buildBunAgentLaunchCommand", () => {
+  test("matches the PM2 shell boundary and closes stdin", () => {
+    expect(buildBunAgentLaunchCommand([
+      "/app/out/agentapi",
+      "server",
+      "--type=codex",
+      "--",
+      "/usr/local/bin/codex",
+    ])).toEqual([
+      "bash",
+      "-lc",
+      "exec '/app/out/agentapi' 'server' '--type=codex' '--' '/usr/local/bin/codex' < /dev/null",
+    ]);
+  });
+
+  test("preserves shell-sensitive command arguments verbatim", () => {
+    expect(buildBunAgentLaunchCommand([
+      "agentapi",
+      "value with spaces",
+      "it's literal",
+      "$HOME",
+    ])).toEqual([
+      "bash",
+      "-lc",
+      "exec 'agentapi' 'value with spaces' 'it'\"'\"'s literal' '$HOME' < /dev/null",
+    ]);
   });
 });
 

@@ -68,6 +68,22 @@ const CODEX_AGENTAPI_DISCOVERY_RETRY_MS = 500;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function shellQuoteAgentArgument(value: string): string {
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
+}
+
+/**
+ * Keep direct Bun-spawned AgentAPI sessions on the same process boundary as
+ * PM2 sessions. In particular, run through a login shell and close stdin so
+ * AgentAPI cannot inherit the Autopilot server's input stream. Athena exposed
+ * a failure where the direct process bridge delivered a Direct Chat bootstrap
+ * to Codex twice, while the equivalent PM2 wrapper delivered it once.
+ */
+export function buildBunAgentLaunchCommand(command: string[]): string[] {
+  const quotedCommand = command.map(shellQuoteAgentArgument).join(" ");
+  return ["bash", "-lc", `exec ${quotedCommand} < /dev/null`];
+}
+
 export type SessionStatus = "starting" | "running" | "stopped" | "error";
 
 export interface SessionOrigin {
@@ -1201,9 +1217,12 @@ export class ProcessManager {
   private spawnAgentProcess(session: AgentSession): Bun.Subprocess {
     const env = this.buildAgentProcessEnv(session);
 
-    const proc = Bun.spawn(session.command, {
+    const launchCommand = buildBunAgentLaunchCommand(session.command);
+
+    const proc = Bun.spawn(launchCommand, {
       cwd: session.workingDirectory,
       env,
+      stdin: null,
       stdout: "pipe",
       stderr: "pipe",
     });
