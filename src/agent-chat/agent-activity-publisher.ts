@@ -81,7 +81,7 @@ export class AgentActivityPublisher {
         // activity_id. Keep the originally published value when the pending
         // turn later binds to its concrete runtime session.
         sessionId: this.context.sessionId,
-        label: state === 'accepted' ? 'Message received' : state === 'working' ? (normalized ? 'Working' : 'Thinking') : undefined,
+        label: state === 'accepted' ? 'Message received' : state === 'working' ? (normalized ? 'Working' : 'Agent started') : undefined,
         summary: normalized ? normalized.replace(/\s+/g, ' ').slice(0, 240) : undefined,
         body: normalized ?? undefined,
         expiresInSeconds: terminal ? 60 : 300,

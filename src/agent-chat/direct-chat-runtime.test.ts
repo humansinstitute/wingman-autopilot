@@ -125,7 +125,7 @@ describe('Agent Direct Chat runtime', () => {
     expect(f.activities.map((activity) => activity.label)).toEqual(['Message received']);
     releaseCreate();
     await f.runtime.waitForIdle();
-    expect(f.activities.slice(0, 2).map((activity) => activity.label)).toEqual(['Message received', 'Thinking']);
+    expect(f.activities.slice(0, 2).map((activity) => activity.label)).toEqual(['Message received', 'Agent started']);
     expect(new Set(f.activities.map((activity) => activity.activityId)).size).toBe(1);
   });
 

@@ -44,7 +44,7 @@ describe('Agent activity publisher', () => {
     await publisher.publish('working');
     expect(delivered.map((item) => ({ activityId: item.activityId, sessionId: item.sessionId, label: item.label }))).toEqual([
       { activityId: buildAgentActivityId(context), sessionId: 'pending:turn-1', label: 'Message received' },
-      { activityId: buildAgentActivityId(context), sessionId: 'pending:turn-1', label: 'Thinking' },
+      { activityId: buildAgentActivityId(context), sessionId: 'pending:turn-1', label: 'Agent started' },
     ]);
   });
 
