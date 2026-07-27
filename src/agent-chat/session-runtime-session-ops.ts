@@ -5,6 +5,7 @@ import { scheduleSessionArchive } from '../storage/session-archiver';
 import { parseAgentChatReply } from './session-runtime-decision';
 import type { ChatInterceptStateStore } from './chat-intercept-state-store';
 import type { AgentDefinitionRecord, ChatInterceptStateRecord, WorkspaceSubscriptionRecord } from './types';
+import { waitForSessionPromptReadiness } from '../server/session-readiness';
 
 const SESSION_READY_TIMEOUT_MS = 120_000;
 const ASSISTANT_REPLY_TIMEOUT_MS = 300_000;
@@ -38,6 +39,20 @@ export class PromptBoundaryNotObservedError extends Error {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForDirectChatPromptReadiness(manager: ProcessManager, sessionId: string): Promise<void> {
+  const session = manager.getSession(sessionId);
+  await waitForSessionPromptReadiness({
+    getSession: (id) => manager.getSession(id),
+    getAdapter: (id) => manager.getAdapter(id),
+    sessionId,
+    host: '127.0.0.1',
+    timeoutMs: session?.agent === 'codex' ? SESSION_READY_TIMEOUT_MS : 60_000,
+    pollIntervalMs: 250,
+    requiredStablePolls: session?.agent === 'codex' ? 3 : 2,
+    requestTimeoutMs: 750,
+  });
 }
 
 function truncateText(value: string, maxLength = 120): string {
@@ -135,7 +150,7 @@ export async function sendPromptAndAwaitFinalResponse(
 ): Promise<AssistantReplyResult> {
   const adapter = manager.getAdapter(sessionId);
   if (!adapter) throw new Error(`No adapter available for session ${sessionId}.`);
-  await adapter.waitForReady({ timeoutMs: SESSION_READY_TIMEOUT_MS, pollIntervalMs: 250 });
+  await waitForDirectChatPromptReadiness(manager, sessionId);
   const initialMessages = await adapter.fetchMessages().catch(() => []);
   const initialSession = manager.getSession(sessionId);
   const initialNativeSessionId = initialSession?.metadata?.nativeAgentSession?.agent === 'codex'

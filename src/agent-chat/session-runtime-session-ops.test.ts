@@ -213,6 +213,43 @@ describe('sendPromptAndAwaitFinalResponse', () => {
     expect(reply.content).toBe(markdown);
   });
 
+  test('uses the same stable startup readiness gate as manual prompt dispatch', async () => {
+    const prompt = 'AGENT DIRECT CHAT\nNEXT MESSAGE\nmessage: wait until stable';
+    const session = { id: 'direct-startup-readiness', agent: 'codex', port: 1, name: 'Direct', status: 'running',
+      startedAt: new Date(), command: [], workingDirectory: '/repo', logs: [], metadata: { nativeAgentSession: {
+        agent: 'codex', sessionId: 'native-ready', workingDirectory: '/repo', capturedAt: new Date().toISOString(), source: 'manual',
+      } } } as unknown as SessionSnapshot;
+    let statusPolls = 0;
+    let sentAfterStatusPolls = 0;
+    let sent = false;
+    const adapter = {
+      waitForReady: async () => {},
+      getPromptReadiness: async () => {
+        statusPolls += 1;
+        return statusPolls === 1
+          ? { state: 'starting', reason: 'codex-starting', retryAfterMs: 10, observedAt: Date.now() }
+          : { state: 'ready', reason: 'agentapi-status-stable', retryAfterMs: 10, observedAt: Date.now() };
+      },
+      sendMessage: async () => { sent = true; sentAfterStatusPolls = statusPolls; },
+      fetchStatus: async () => 'stable',
+      fetchMessages: async () => sent ? [
+        { role: 'user', content: prompt, createdAt: new Date().toISOString() },
+        { role: 'agent', content: 'Ready response.', createdAt: new Date().toISOString() },
+      ] : [],
+      deliversPromptsDirectly: () => true,
+      interruptCurrentTurn: async () => false, getEventsUrl: () => null, dispose: async () => {},
+    } as AgentAdapter;
+    const manager = buildManager(session, adapter);
+
+    const reply = await sendPromptAndAwaitFinalResponse(manager, session.id, prompt, {
+      timeoutMs: 100,
+      pollIntervalMs: 10,
+    });
+
+    expect(sentAfterStatusPolls).toBe(4);
+    expect(reply.content).toBe('Ready response.');
+  });
+
   test('accepts assistant as the other canonical final role', async () => {
     const { session, manager } = finalManager([{ role: 'assistant', content: 'Done', createdAt: '2026-01-01T00:00:01Z' }]);
     expect((await sendPromptAndAwaitFinalResponse(manager, session.id, 'prompt', { timeoutMs: 100, pollIntervalMs: 10 })).content).toBe('Done');
