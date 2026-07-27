@@ -33,7 +33,7 @@ describe('Agent activity publisher', () => {
     expect(delivered[0].activityId).toBe(buildAgentActivityId(context));
   });
 
-  test('advances one activity from receipt to session-open thinking', async () => {
+  test('advances one activity without changing its published session correlation', async () => {
     const delivered: any[] = [];
     const publisher = new AgentActivityPublisher({ ...context, sessionId: 'pending:turn-1' }, async (input) => {
       delivered.push(input);
@@ -44,7 +44,40 @@ describe('Agent activity publisher', () => {
     await publisher.publish('working');
     expect(delivered.map((item) => ({ activityId: item.activityId, sessionId: item.sessionId, label: item.label }))).toEqual([
       { activityId: buildAgentActivityId(context), sessionId: 'pending:turn-1', label: 'Message received' },
-      { activityId: buildAgentActivityId(context), sessionId: 'session-opened', label: 'Thinking' },
+      { activityId: buildAgentActivityId(context), sessionId: 'pending:turn-1', label: 'Thinking' },
+    ]);
+  });
+
+  test('reads successive commentary from the bound runtime session while replacing one published activity', async () => {
+    const delivered: any[] = [];
+    const lookedUpSessionIds: string[] = [];
+    const commentary = [
+      { content: 'First update', createdAt: '2026-07-24T00:00:01.000Z' },
+      { content: 'Latest update', createdAt: '2026-07-24T00:00:02.000Z' },
+    ];
+    const publisher = new AgentActivityPublisher(
+      { ...context, sessionId: 'pending:turn-1' },
+      async (input) => { delivered.push(input); return {}; },
+      0,
+      async () => commentary.shift() ?? null,
+    );
+    publisher.bindSession('session-opened');
+    const manager = { getSession: (sessionId: string) => {
+      lookedUpSessionIds.push(sessionId);
+      return { agent: 'codex', metadata: { nativeAgentSession: {
+        agent: 'codex', sessionId: 'native-1', workingDirectory: '/repo',
+      } } };
+    } } as any;
+
+    await publisher.publishLatestCommentary(manager);
+    await publisher.publishLatestCommentary(manager);
+
+    expect(lookedUpSessionIds).toEqual(['session-opened', 'session-opened']);
+    expect(delivered.map((item) => ({
+      activityId: item.activityId, sessionId: item.sessionId, sequence: item.sequence, body: item.body,
+    }))).toEqual([
+      { activityId: buildAgentActivityId(context), sessionId: 'pending:turn-1', sequence: 1, body: 'First update' },
+      { activityId: buildAgentActivityId(context), sessionId: 'pending:turn-1', sequence: 2, body: 'Latest update' },
     ]);
   });
 

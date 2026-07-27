@@ -37,7 +37,7 @@ export class AgentActivityPublisher {
   private latestCommentaryAt = Number.NEGATIVE_INFINITY;
   private terminal = false;
   private publishQueue = Promise.resolve();
-  private sessionId: string;
+  private runtimeSessionId: string;
 
   constructor(
     private readonly context: AgentActivityContext,
@@ -47,11 +47,11 @@ export class AgentActivityPublisher {
     private readonly log: Pick<Console, 'error'> = console,
   ) {
     this.sequence = sequenceBase;
-    this.sessionId = context.sessionId;
+    this.runtimeSessionId = context.sessionId;
   }
 
   bindSession(sessionId: string): void {
-    this.sessionId = sessionId;
+    this.runtimeSessionId = sessionId;
   }
 
   async publish(state: AgentActivityState, body?: string): Promise<void> {
@@ -77,7 +77,10 @@ export class AgentActivityPublisher {
         activityId: buildAgentActivityId(this.context),
         state,
         sequence,
-        sessionId: this.sessionId,
+        // Tower treats session_id as immutable correlation data for one
+        // activity_id. Keep the originally published value when the pending
+        // turn later binds to its concrete runtime session.
+        sessionId: this.context.sessionId,
         label: state === 'accepted' ? 'Message received' : state === 'working' ? (normalized ? 'Working' : 'Thinking') : undefined,
         summary: normalized ? normalized.replace(/\s+/g, ' ').slice(0, 240) : undefined,
         body: normalized ?? undefined,
@@ -118,7 +121,7 @@ export class AgentActivityPublisher {
   }
 
   async publishLatestCommentary(manager: ProcessManager): Promise<void> {
-    const session = manager.getSession(this.context.sessionId);
+    const session = manager.getSession(this.runtimeSessionId);
     const native = session?.metadata?.nativeAgentSession;
     if (session?.agent !== 'codex' || native?.agent !== 'codex' || !native.sessionId || !native.workingDirectory) return;
     const activity = await this.readLatestActivity({
