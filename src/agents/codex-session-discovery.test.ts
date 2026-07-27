@@ -94,6 +94,31 @@ describe("Codex session discovery", () => {
     });
   });
 
+  test("matches an AgentAPI rollout that records the submitted prompt twice", async () => {
+    const codexHome = await createCodexHome();
+    const prompt = "AGENT DIRECT CHAT\n\nAnswer the latest Flight Deck message.";
+    const matchedFile = await writeRollout(codexHome, "rollout-duplicated-prompt.jsonl", [
+      sessionMeta("codex-session-duplicated"),
+      userMessage(`${prompt}\n\n${prompt}`),
+    ]);
+
+    const result = await discoverCodexSessionIdForPrompt({
+      codexHome,
+      workingDirectory: "/tmp/project",
+      prompt,
+      sessionStartedAtMs: Date.parse("2026-05-31T00:59:00.000Z"),
+      sentAtMs: Date.parse("2026-05-31T01:00:04.000Z"),
+      nowMs: Date.parse("2026-05-31T01:00:10.000Z"),
+    });
+
+    expect(result).toEqual({
+      sessionId: "codex-session-duplicated",
+      filePath: matchedFile,
+      reason: "matched",
+      candidateCount: 1,
+    });
+  });
+
   test("does not guess when multiple Codex rollouts match", async () => {
     const codexHome = await createCodexHome();
     await writeRollout(codexHome, "rollout-one.jsonl", [

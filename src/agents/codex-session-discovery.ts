@@ -46,6 +46,15 @@ export function fingerprintCodexPrompt(value: string): string {
   return createHash("sha256").update(normaliseCodexPromptForMatch(value)).digest("hex");
 }
 
+function matchesCodexPrompt(recordedPrompt: string, expectedPrompt: string): boolean {
+  const recorded = normaliseCodexPromptForMatch(recordedPrompt);
+  const expected = normaliseCodexPromptForMatch(expectedPrompt);
+  if (!recorded || !expected) {
+    return false;
+  }
+  return recorded === expected || recorded === `${expected} ${expected}`;
+}
+
 export async function discoverCodexSessionIdForPrompt(
   input: CodexSessionDiscoveryInput,
 ): Promise<CodexSessionDiscoveryResult> {
@@ -67,7 +76,7 @@ export async function discoverCodexSessionIdForPrompt(
   for (const file of files) {
     const candidate = await readCandidateFromFile(file.path, {
       expectedCwd: input.workingDirectory,
-      promptFingerprint,
+      expectedPrompt: input.prompt,
       earliestMatchMs: input.sentAtMs - SENT_AT_SKEW_MS,
       latestMatchMs,
       fileModifiedMs: file.modifiedMs,
@@ -137,7 +146,7 @@ async function readCandidateFromFile(
   filePath: string,
   options: {
     expectedCwd: string;
-    promptFingerprint: string;
+    expectedPrompt: string;
     earliestMatchMs: number;
     latestMatchMs: number;
     fileModifiedMs: number;
@@ -166,7 +175,7 @@ async function readCandidateFromFile(
     }
 
     const promptText = extractUserPromptText(record);
-    if (!promptText || fingerprintCodexPrompt(promptText) !== options.promptFingerprint) {
+    if (!promptText || !matchesCodexPrompt(promptText, options.expectedPrompt)) {
       continue;
     }
     const timestampMs = parseTimestampMs(record.timestamp);
