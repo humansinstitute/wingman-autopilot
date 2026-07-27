@@ -9,6 +9,7 @@ import {
   getAdditionalAgents,
   getAgentForSubscription,
   hasDuplicateWorkspaceAppOnAnotherTower,
+  resolveAgentEditorDirectory,
   resolveSelectedSubscriptionId,
 } from "./agent-chat-section-state.js";
 import { createAgentDispatchSetupCards } from "./agent-chat-setup-cards.js";
@@ -175,6 +176,18 @@ describe("agent chat settings subscription selection", () => {
     expect(getAgentForSubscription(agents, subscriptions[1])?.agentId).toBe("agent-secondary");
     expect(getAgentForSubscription(agents, null)).toBeNull();
     expect(getAdditionalAgents(agents, agents[1]).map((agent) => agent.agentId)).toEqual(["agent-primary"]);
+  });
+
+  test("hydrates the editor from the direct chat directory with a working-directory fallback", () => {
+    expect(resolveAgentEditorDirectory({
+      workingDirectory: "/root",
+      directChat: { directory: "/root/code/kato" },
+    })).toBe("/root/code/kato");
+    expect(resolveAgentEditorDirectory({ workingDirectory: "/root" })).toBe("/root");
+    expect(resolveAgentEditorDirectory({
+      workingDirectory: "/root",
+      directChat: { directory: "   " },
+    })).toBe("/root");
   });
 
   test("filters dispatch routes to the selected subscription", () => {

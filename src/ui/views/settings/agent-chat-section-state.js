@@ -38,6 +38,13 @@ export function getAdditionalAgents(agents, selectedAgent) {
     : [];
 }
 
+export function resolveAgentEditorDirectory(agent) {
+  const directChatDirectory = typeof agent?.directChat?.directory === 'string'
+    ? agent.directChat.directory.trim()
+    : '';
+  return directChatDirectory || agent?.workingDirectory || '';
+}
+
 export function getRoutesForSubscription(routes, subscriptionId) {
   return Array.isArray(routes)
     ? routes.filter((route) => route?.subscriptionId === subscriptionId)

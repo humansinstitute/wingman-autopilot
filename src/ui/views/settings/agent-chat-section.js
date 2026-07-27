@@ -20,6 +20,7 @@ import {
   buildBackendSubscriptionInput,
   getAgentForSubscription,
   getSubscriptionById,
+  resolveAgentEditorDirectory,
   resolveSelectedSubscriptionId,
 } from './agent-chat-section-state.js';
 
@@ -239,7 +240,7 @@ export function createAgentChatSection({ standalone = false, openDirectoryBrowse
           agentEditor.agentIdField.input.value = agent.agentId || '';
           agentEditor.agentIdField.input.readOnly = true;
           agentEditor.labelField.input.value = agent.label || '';
-          agentEditor.workingDirectoryField.input.value = agent.workingDirectory || '';
+          agentEditor.workingDirectoryField.input.value = resolveAgentEditorDirectory(agent);
           agentEditor.chatPromptTemplateField.input.value = agent.chatPromptTemplate || defaults.chatPromptTemplate || '';
           agentEditor.taskPromptTemplateField.input.value = agent.taskPromptTemplate || defaults.taskPromptTemplate || '';
           agentEditor.flowDispatchPromptTemplateField.input.value = agent.flowDispatchPromptTemplate || defaults.flowDispatchPromptTemplate || '';
